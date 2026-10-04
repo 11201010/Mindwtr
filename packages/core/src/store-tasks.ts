@@ -1,8 +1,5 @@
 import { mapSqliteTaskRow, rawReadTaskSnapshot } from './sqlite-adapter';
-import { readReferenceTasksMoveEnvelope, referenceTasksMoveAuthorityMatches } from './native-host-contract-reference-bulk-status';
-import { NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { rawReadProjectSnapshot } from './sqlite-raw-snapshot';
-import { historyRowLoadProjection } from './native-host-contract-task-checklist';
 import { buildNewTask } from './task-creation';
 import { TASK_SQLITE_COLUMNS, taskFromSqliteRow, taskToSqliteRow } from './task-sync-schema';
 import { taskEditValuesEqual } from './json-value-equality';
@@ -1812,7 +1809,18 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
     commitPreparedReferenceTasksMove: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Reference Move conflicts with saved data' };
         const adapter = getStorage();
-        if (!(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
+        // Native validation imports the store; load it after store initialization.
+        // Every adapter, memory and durable authority guard remains after the await.
+        const [{ readReferenceTasksMoveEnvelope, referenceTasksMoveAuthorityMatches }, { historyRowLoadProjection }, { NativeReceiptSqliteAdapter }] =
+            await Promise.all([import('./native-host-contract-reference-bulk-status'),
+                import('./native-host-contract-task-checklist'), import('./native-request-receipts')]);
+        try {
+            logInfo('Reference bulk action module loaded', {
+                scope: 'store', category: 'storage',
+                context: { releaseCheck: 'v1.3.4/ios-reference-bulk-init', outcome: 'loaded' },
+            });
+        } catch { /* Diagnostics must not affect the guarded action. */ }
+        if (getStorage() !== adapter || !(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
             || !readReferenceTasksMoveEnvelope({ request: input.request, prepared: input })) return result;
         set((memory) => {
             const before = authority.state;

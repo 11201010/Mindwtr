@@ -3,8 +3,9 @@ import { createReferenceTasksMoveMethods, type NativeReferenceTasksMoveEnvelope 
 import { join } from 'node:path';
 import { openScratchSqlite, openSqliteHost as openHost } from './screen-parity.replay';
 const openSqliteHost: typeof openHost = (seed, wrap, bindings) => openHost(seed, wrap, bindings, { rejectConcurrentWrites: true });
-import { taskRevisionOf } from './native-request-receipts';
-import { flushPendingSave, getStorageAdapter, resetForTests, useTaskStore } from './store';
+import { NativeReceiptSqliteAdapter, taskRevisionOf } from './native-request-receipts';
+import { readAreaDurableData } from './native-host-contract-area-durable';
+import { flushPendingSave, getStorageAdapter, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { buildSaveSnapshot } from './store-helpers';
 import { getBulkMoveStatusOptions } from './task-list-bulk-actions';
 import * as uuid from './uuid';
@@ -274,6 +275,26 @@ describe('guarded Reference bulk Move status', () => {
             } finally { other.close(); await sqlite.close(); }
         }
     }, 30_000);
+
+    it('refuses an adapter switch during deferred module loading without changing memory or durable data', async () => {
+        clock(); const sqlite = await openSqliteHost(seed());
+        const adapter = getStorageAdapter();
+        try {
+            await canonical(); const command = await prepare();
+            const read = value(await readAreaDurableData(false, true));
+            const before = await raw(sqlite); const memory = useTaskStore.getState();
+            const replacement = new NativeReceiptSqliteAdapter(sqlite.client(), { rejectConcurrentWrites: true });
+            const committing = memory.commitPreparedReferenceTasksMove(command.prepared, read.authority);
+            // The commit has yielded at import(), with no store or database changes.
+            setStorageAdapter(replacement);
+            expect(useTaskStore.getState()).toBe(memory);
+            expect(await committing).toMatchObject({ success: false, reason: 'conflict' });
+            await flushPendingSave();
+            expect(useTaskStore.getState()).toBe(memory);
+            expect(read.authority.saveBoundary).toBeUndefined();
+            expect(await raw(sqlite)).toEqual(before); expect(await sqlite.receiptIds()).toEqual([]);
+        } finally { setStorageAdapter(adapter); await flushPendingSave(); await sqlite.close(); }
+    });
 
     it('fails closed on an unsupported unguarded SQLite adapter without changing old helper defaults', async () => {
         clock(); const sqlite = await openHost(seed());

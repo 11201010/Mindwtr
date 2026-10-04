@@ -12,8 +12,9 @@
  * Not on this host yet, and refused the way an unbound port is: File Sync's folder and its immutable publication (S5), Dropbox
  * (S4), the streamed upload (a WebDAV or cloud upload sends its bytes in one PUT, as RN does where expo has no upload task).
  */
+// Load this leaf directly across deferred store imports and the iOS core alias.
+import { createMobileAttachmentAvailability } from '../../../packages/core/src/mobile-attachment-availability';
 import {
-    createMobileAttachmentAvailability,
     createMobileAttachmentBackends,
     createMobileAttachmentCommon,
     createMobileAttachmentFiles,

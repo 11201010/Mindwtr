@@ -22,6 +22,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/ios-reference-bulk-init`** — `packages/core/src/store-tasks.ts`. `Reference bulk action module loaded` with `outcome=loaded` proves the Reference validator loaded at action time after store initialization. It can appear on an attempt or retry and does not claim a saved change; the separate bulk-status confirmation proves durability. No task content, identifiers or input values are logged.
+
 - **`v1.3.4/ios-reference-bulk-status`** — `packages/core/src/native-host-contract-reference-bulk-status.ts`. `Native Reference bulk status confirmed` with aggregate `count`, requested `status` and `outcome=moved` proves the selected batch and any shared recurring children reached durable storage with its exact request receipt. Cancel, hidden or stale selection, failed saves and unproven retries do not claim success. No task text, identifiers, dates, attachment details or URLs are logged.
 
 - **`v1.3.4/ios-reference-bulk-refresh`** — `apps/ios-native/App/ReferenceScreen.swift`. `Native iOS Reference periodic refresh deferred` with `outcome=selection` proves the minute timer deferred its reread while bulk selection was active, avoiding transiently disabled controls during the interaction. Keep selection active across a minute, then use Range or Exit. No task content, identifiers or settings are logged.
