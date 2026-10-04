@@ -5,12 +5,67 @@ test "${GITHUB_ACTIONS:-}" = true
 
 cache_root="$RUNNER_TEMP/mindwtr-native"
 if [ "${RUNNER_ENVIRONMENT:-}" = self-hosted ]; then
+  cache_root="$HOME/Library/Caches/MindwtrNativeCI"
+  minimum_available_kib=$((12 * 1024 * 1024))
+  fail_cache() { echo "prepare-apple-cache: $*" >&2; exit 1; }
+  available_kib() {
+    local available
+    if ! available="$(LC_ALL=C df -Pk "$HOME" | awk '
+      NR == 1 { if ($1 != "Filesystem" || $4 != "Available") exit 1 }
+      NR == 2 {
+        if (NF < 6 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ || length($4) > 15 || $5 !~ /^[0-9]+%$/) exit 1
+        value = $4
+      }
+      END { if (NR != 2 || value == "") exit 1; print value }
+    ')"; then
+      fail_cache 'Cannot measure available HOME volume space; refusing cache cleanup.'
+    fi
+    echo "$available"
+  }
+  validate_cache_paths() {
+    local version child
+    [ ! -L "${HOME%/}" ] && [ ! -L "$HOME/Library" ] && [ ! -L "$HOME/Library/Caches" ] || fail_cache 'Refusing symlinked owned cache parent.'
+    [ ! -L "$cache_root" ] || fail_cache 'Refusing symlinked owned cache root.'
+    for version in "$cache_root"/*; do
+      [[ "${version##*/}" =~ ^[0-9a-f]{16}$ ]] || continue
+      [ ! -L "$version" ] || fail_cache 'Refusing symlinked compiler cache.'
+      [ -d "$version" ] || continue
+      for child in swift simulator archive; do
+        [ ! -L "$version/$child" ] || fail_cache 'Refusing symlinked generated cache child.'
+        if [ -e "$version/$child" ] && [ ! -d "$version/$child" ]; then
+          fail_cache 'Refusing unexpected generated cache child type.'
+        fi
+      done
+    done
+  }
+  validate_cache_paths
+  before_kib="$(available_kib)"
+  trimmed_entries=0
+  after_kib="$before_kib"
+  if [ "$before_kib" -lt "$minimum_available_kib" ]; then
+    # Validate the entire bounded set before removing anything. Unknown version
+    # names and unknown children are never cleanup candidates.
+    validate_cache_paths
+    for version in "$cache_root"/*; do
+      [[ "${version##*/}" =~ ^[0-9a-f]{16}$ ]] || continue
+      [ -d "$version" ] || continue
+      for child in swift simulator archive; do
+        if [ -d "$version/$child" ]; then
+          [ ! -L "$cache_root" ] && [ ! -L "$version" ] && [ ! -L "$version/$child" ] || fail_cache 'Refusing symlinked generated cache path.'
+          rm -rf -- "$version/$child"
+          trimmed_entries=$((trimmed_entries + 1))
+        fi
+      done
+    done
+    after_kib="$(available_kib)"
+  fi
+  echo "Apple CI disk headroom: before_kib=$before_kib after_kib=$after_kib trimmed_entries=$trimmed_entries"
+  [ "$after_kib" -ge "$minimum_available_kib" ] || fail_cache 'At least 12 GiB available on the HOME volume is required. Owned generated cache cleanup was insufficient; free runner disk space before retrying.'
   # Preserve installed dependencies and their mtimes, but remove all other
   # untracked/ignored files so deleted sources and local config cannot leak in.
   git clean -ffdx -e node_modules/
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
-  cache_root="$HOME/Library/Caches/MindwtrNativeCI"
   gem_home="$HOME/.local/share/gems/ruby-3.3"
   mkdir -p "$gem_home"
   echo "GEM_HOME=$gem_home" >> "$GITHUB_ENV"

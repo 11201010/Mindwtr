@@ -360,6 +360,7 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
         await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), text })).rejects.toThrow('INVALID_INPUT:');
         expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     });
+    // Real 16 MiB boundary fixtures need headroom under coverage instrumentation.
     it('bounds decoded bytes before allocating and preserves the shared 8 MiB text limit inside the 16 MiB transport', async () => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
         const tooLarge = 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3));
@@ -368,7 +369,7 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
         await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), text: exactLimit })).rejects.toThrow('INVALID_INPUT: Invalid backup document input');
         const preview = inspectNativeBackupDocument(exactLimit, csvInput().metadata, t, 'csv'); expect(preview.valid).toBe(false); expect(preview.errorMessage).toBe(formatImportDiagnostic(parseImportSource('mindwtr-csv', { bytes: new Uint8Array(16 * 1024 * 1024), fileName: 'owned.csv' }).diagnostics.find((item) => item.severity === 'error')!, t));
         expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
-    });
+    }, 15_000);
     it('refuses complete over-64KiB warnings before returning a plan, with no discarded warnings or document writes', async () => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
         const source = csvInput(csvFile(['Title','Recurrence'], [['Large warning', 'invalid rule ' + '私'.repeat(23_000)]]));
@@ -540,6 +541,7 @@ describe('native Todoist CSV and ZIP prepared import', () => {
     it.each(['TR==','TWF=','TQ=','====','VGl0bGUs\n','VGl0bGUs_'])('Todoist rejects noncanonical base64 %s before adapter operations', async (text) => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     });
+    // Real 16 MiB boundary fixtures need headroom under coverage instrumentation.
     it('Todoist bounds decoded bytes before allocation and retains shared8MiB text and ZIP entry/expanded limits', async () => {
         const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
         await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text: 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3)) })).rejects.toThrow('Todoist source exceeds 16 MiB');
@@ -547,7 +549,7 @@ describe('native Todoist CSV and ZIP prepared import', () => {
         expect(inspectNativeBackupDocument(exact, todoistInput().metadata, t, 'todoist').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         const largeZip = bytesToBase64(zipSync({ 'large.csv': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(largeZip, todoistInput().metadata, t, 'todoist').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
         expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
-    });
+    }, 15_000);
     it('refuses oversized complete Todoist execution warnings before returning a plan or journal', async () => {
         const base = clone(original); const files: Record<string, Uint8Array> = {};
         for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); files[`${name}.csv`] = strToU8('TYPE,CONTENT\ntask,Imported'); }
