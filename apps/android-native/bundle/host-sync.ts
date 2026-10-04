@@ -265,6 +265,8 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             loadSyncEncryptionLocalState: () => encryptionState.loadSyncEncryptionLocalState(),
             logSyncEncryptionEvent: (event, extra, options) => encryptionState.logSyncEncryptionEvent(event, extra, options),
             syncEncryptionLocalState: encryptionState.syncEncryptionLocalState,
+            // A WebDAV attachment pass with no key first asks whether the location holds ciphertext (core's rule).
+            probeLocationCiphertext: () => transitions.probeSyncLocationCiphertext(),
         },
         ensureWebdavCapabilityProof: (config, probe, options) => capabilityProof.ensureWebdavCapabilityProof(config, probe, options),
         dropboxAuth: {
@@ -377,6 +379,7 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
                 provide: (passphrase) => transitions.provideSyncEncryptionPassphrase(passphrase),
                 decline: () => transitions.declineSyncEncryptionPassphrase(),
                 abandon: () => transitions.abandonSyncEncryptionTransition(),
+                recheck: () => transitions.recheckPartlyEncryptedLocation(),
                 randomBytes: (length) => crypto.randomBytes(length),
             },
             isBackendPending: () => transitions.isSyncEncryptionBackendPending(),

@@ -3737,6 +3737,10 @@ const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + r
 const syncOnly = [...new Set([...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1])))]
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');
+// S4b final pass: core's partly-encrypted rule runs only when the host gives the sync service the location probe; without it a
+// device with encryption off would upload plain attachments beside ciphertext. The card's "Check this location again" needs recheck.
+assert(/probeLocationCiphertext: \(\) => transitions\.probeSyncLocationCiphertext\(\),/.test(hostSyncTs), 'the native sync service asks whether the location holds ciphertext');
+assert(/recheck: \(\) => transitions\.recheckPartlyEncryptedLocation\(\),/.test(hostSyncTs), 'the native encryption card rechecks a partly encrypted location');
 const fakeCoreWithSync = `${fakeCore}\n${syncOnly.map((name) => `export const ${name} = () => { throw new Error('${name}: sync is not bound in the gates'); };`).join('\n')}\n`;
 const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
