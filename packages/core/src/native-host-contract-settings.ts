@@ -62,6 +62,9 @@
  * import cycle between the two files is safe.
  */
 import { AREA_PRESET_COLORS, DEFAULT_AREA_COLOR } from './color-constants';
+import { createBackupFileName, serializeBackupData } from './backup-transfer';
+import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
+import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
 import { buildDataSettingsModel, buildDataSettingsUpdate, isDataSettingStored, type DataSettingsEdit, type DataSettingsModel } from './data-settings-model';
 import {
@@ -126,7 +129,7 @@ import {
     type SettingsMenuRow,
     type SettingsSyncBadgeState,
 } from './settings-menu-model';
-import { useTaskStore } from './store';
+import { getPersistenceStatus, useTaskStore } from './store';
 import { normalizeTagId } from './store-helpers';
 import { formatTagIdPreservingCase } from './store-projects/shared';
 import { DEFAULT_TASK_EDITOR_ORDER, isTaskEditorSectionableField, TASK_EDITOR_SECTION_ORDER } from './task-editor-layout';
@@ -964,6 +967,28 @@ export function createSettingsMethods(deps: SettingsDeps) {
             if (!ready.ok) return ready;
             const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t());
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
+        },
+
+        /** RN's JSON export snapshot and serializer. Never flushes or acknowledges an owed save. */
+        getDataBackup(): NativeHostResult<{ fileName: string; json: string }> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            if (isSandboxMode() || isWorkspaceTransitionActive()) {
+                return fail('NOT_READY', 'Backup export requires a stable personal workspace');
+            }
+            const persistence = getPersistenceStatus();
+            if (persistence.queued || persistence.inFlight || persistence.immediate || persistence.retrying || persistence.failed) {
+                return fail('NOT_READY', 'Backup export is unavailable while saving is pending');
+            }
+            try {
+                return { ok: true, value: {
+                    fileName: createBackupFileName(),
+                    json: serializeBackupData(getInMemoryAppDataSnapshot()),
+                } };
+            } catch {
+                // Serialization errors can contain data; the host receives only a fixed message.
+                return fail('ACTION_FAILED', 'Could not prepare the backup');
+            }
         },
 
         /**

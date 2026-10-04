@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import MindwtrNativeCore
 
 struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
@@ -1865,10 +1866,40 @@ struct DiagnosticsCard: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     let owner: UUID
+    @State private var backupOpen = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if owner == model.settingsDiagnosticsOwner {
+                    let backup = model.dataSettings.object("backup")
+                    Button { backupOpen.toggle() } label: {
+                        HStack {
+                            Text(backup.text("title")).rnFont(18, .bold)
+                            Spacer()
+                            Image(systemName: backupOpen ? "chevron.down" : "chevron.forward")
+                                .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                        }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("backup-disclosure")
+                    if backupOpen {
+                        Button { Task { await model.exportDataBackup() } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(backup.text("exportLabel")).rnFont(15, .semibold)
+                                Text(backup.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .disabled(!model.backupExportEnabled)
+                        .accessibilityIdentifier("data-transfer-export")
+                        if model.backupExportBusy { ProgressView().accessibilityIdentifier("backup-export-progress") }
+                        if let failure = model.backupExportError {
+                            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                                .accessibilityIdentifier("backup-export-error")
+                        }
+                    }
+                }
                 Text(model.diagnosticsLabels.text("title")).rnFont(18, .bold)
                     .accessibilityAddTraits(.isHeader).accessibilityIdentifier("diagnostics-title")
                 let logging = model.diagnosticsLabels.object("debugLogging")
@@ -1916,6 +1947,10 @@ struct DiagnosticsCard: View {
                     }
                 }
                 #if DEBUG && targetEnvironment(simulator)
+                if !model.backupExportTestState.isEmpty {
+                    Text(model.backupExportTestState).font(.caption)
+                        .accessibilityIdentifier("backup-export-test-state")
+                }
                 if !model.diagnosticsShareTestState.isEmpty {
                     Text(model.diagnosticsShareTestState).font(.caption)
                         .accessibilityIdentifier("diagnostics-test-share-state")
@@ -1931,6 +1966,10 @@ struct DiagnosticsCard: View {
                   model.diagnosticsCurrent(owner: owner, session: payload.id) else { return nil }
             return payload
         }, set: { (_: DiagnosticsSharePayload?) in model.dismissDiagnosticsShare(owner: owner) })) { payload in
+            DiagnosticsActivitySheet(url: payload.url)
+        }
+        .sheet(item: Binding(get: { owner == model.settingsDiagnosticsOwner ? model.backupShare : nil },
+                             set: { (_: NativeBackupExport?) in model.dismissBackupShare() })) { payload in
             DiagnosticsActivitySheet(url: payload.url)
         }
     }

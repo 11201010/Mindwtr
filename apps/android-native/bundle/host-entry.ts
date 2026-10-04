@@ -750,6 +750,7 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     },
     somedaySections: (input) => contract.getSomedaySections(input),
     dataSettings: () => contract.getDataSettings(),
+    dataBackup: () => contract.getDataBackup(),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
@@ -2788,6 +2789,20 @@ globalThis.MindwtrHost = {
     inboxEnd(sessionId: string): string {
         return submit(async () => {
             unwrap(contract.endInboxProcessing({ sessionId }));
+            return {};
+        });
+    },
+    /** Called by iOS only after the immutable JSON file has been written and closed. */
+    backupExportPrepared(): string {
+        return submit(() => {
+            if (globalThis.__mindwtrHostPlatform === 'ios') {
+                try {
+                    logInfo('Native iOS backup file prepared', {
+                        scope: 'native-ios', force: true,
+                        context: { releaseCheck: 'v1.3.4/ios-backup-export', outcome: 'prepared' },
+                    });
+                } catch { /* Optional diagnostics cannot prevent sharing a completed file. */ }
+            }
             return {};
         });
     },

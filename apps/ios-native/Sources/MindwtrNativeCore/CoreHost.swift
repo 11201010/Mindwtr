@@ -51,6 +51,14 @@ public final class CoreHost: @unchecked Sendable {
         try await perform { try $0.validatedDiagnosticsShareURL(path) }
     }
 
+    public func prepareDataBackup() async throws -> NativeBackupExport {
+        try await perform { try $0.prepareDataBackup() }
+    }
+
+    public func discardDataBackup(_ id: UUID) async {
+        _ = try? await perform { $0.backupExportFile.discard(id) }
+    }
+
     public func readEditorDraft() async throws -> EditorDraftSnapshot? {
         try await perform { try $0.readEditorDraft() }
     }
@@ -128,6 +136,7 @@ private final class Engine: @unchecked Sendable {
     private let databaseURL: URL
     private let bundleURL: URL
     private let diagnosticsFile: NativeDiagnosticsLogFile
+    let backupExportFile: NativeBackupExportFile
     private let journalURL: URL
     private let editorDrafts: EditorDraftStore
     private let legacyStorage: LegacyRNStorage?
@@ -360,6 +369,7 @@ private final class Engine: @unchecked Sendable {
         self.databaseURL = databaseURL
         self.bundleURL = bundleURL
         diagnosticsFile = NativeDiagnosticsLogFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupExportFile = NativeBackupExportFile(libraryRoot: databaseURL.deletingLastPathComponent())
         self.legacyStorage = legacyStorage
         journalURL = databaseURL.appendingPathExtension("pending.json")
         editorDrafts = EditorDraftStore(databaseURL: databaseURL)
@@ -407,6 +417,8 @@ private final class Engine: @unchecked Sendable {
             try DurableFile.sync(databaseURL.deletingLastPathComponent().deletingLastPathComponent(), directory: true)
             lockFD = open(databaseURL.appendingPathExtension("host-lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
             guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw HostFailure("Native database is already in use or cannot be locked") }
+            // Optional cache cleanup cannot block startup or change an owed command.
+            try? backupExportFile.discardInterruptedExports()
             if pending == nil { pending = try loadPendingJournal() }
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
@@ -1248,6 +1260,19 @@ private final class Engine: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Diagnostics file action unavailable") }
         return try diagnosticsFile.validatedShareURL(path)
+    }
+
+    func prepareDataBackup() throws -> NativeBackupExport {
+        // Use the normal read gate. Unlike Diagnostics, export cannot bypass pending work.
+        let encoded = try call("menuRead", argumentsJSON: #"["dataBackup","{}"]"#)
+        guard let reply = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Set(reply.keys) == Set(["fileName", "json"]),
+              let fileName = reply["fileName"] as? String, let json = reply["json"] as? String else {
+            throw HostFailure("Backup reply unavailable")
+        }
+        let prepared = try backupExportFile.prepare(fileName: fileName, json: json)
+        _ = try? invoke("backupExportPrepared", arguments: [])
+        return prepared
     }
 
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
@@ -10459,12 +10484,12 @@ private final class Engine: @unchecked Sendable {
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
             }
-            if name == "dataSettings", !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
+            if ["dataSettings", "dataBackup"].contains(name), !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
             if name == "bulk" {
                 let referenceSelection = input["list"] as? String == "reference"
                 // Both lists expose only the revision-bound Remove tag picker validated below.

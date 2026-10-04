@@ -304,12 +304,18 @@ final class CoreModel: ObservableObject {
     @Published private(set) var diagnosticsMessage: String?
     @Published private(set) var diagnosticsReadError: String?
     @Published private(set) var diagnosticsShare: DiagnosticsSharePayload?
+    @Published private(set) var backupShare: NativeBackupExport?
+    @Published private(set) var backupExportBusy = false
+    @Published private(set) var backupExportError: String?
+    private var backupShareHost: CoreHost?
     let settingsDiagnosticsOwner = UUID()
     private var diagnosticsCacheHost: ObjectIdentifier?
     private var diagnosticsLockObserver: AnyCancellable?
     #if DEBUG && targetEnvironment(simulator)
     @Published private(set) var diagnosticsShareTestState = ""
     private var diagnosticsShareTestHoldOnce = false
+    @Published private(set) var backupExportTestState = ""
+    private var backupExportTestHoldOnce = false
     #endif
     private var dataSettingRequest: String?
     private var dataSettingAwaitingRefresh = false
@@ -2862,6 +2868,7 @@ final class CoreModel: ObservableObject {
                     manageAreaEditTestReadFailures = arguments.contains("--native-manage-area-edit-read-failure") ? 2 : 0
                     manageAreaEditTestRefusals = arguments.contains("--native-manage-area-edit-refusal") ? 1 : 0
                     diagnosticsShareTestHoldOnce = arguments.contains("--native-diagnostics-share-hold-once")
+                    backupExportTestHoldOnce = arguments.contains("--native-backup-export-hold-once")
                     taskRecoveryResolverTestFailure = arguments.contains("--native-task116-resolver-failure-once")
                     #endif
                     host = CoreHost(databaseURL: directory.appendingPathComponent("mindwtr.sqlite"), bundleURL: bundle)
@@ -3695,6 +3702,9 @@ final class CoreModel: ObservableObject {
     }
 
     func invalidateDiagnostics(dropCache: Bool = false) {
+        dismissBackupShare()
+        backupExportBusy = false
+        backupExportError = nil
         diagnosticsSession = nil
         diagnosticsOwner = nil
         diagnosticsShare = nil
@@ -3728,6 +3738,61 @@ final class CoreModel: ObservableObject {
     func diagnosticsFileActionsEnabled(owner: UUID) -> Bool {
         diagnosticsOwner == owner && diagnosticsSession != nil && diagnosticsCacheIsCurrent
             && ready && !appLock.concealed && !busy && !diagnosticsFileBusy && diagnosticsShare == nil
+            && !backupExportBusy && backupShare == nil
+    }
+
+    var backupExportEnabled: Bool {
+        settingsDataPresented && diagnosticsOwner == settingsDiagnosticsOwner
+            && diagnosticsFileActionsEnabled(owner: settingsDiagnosticsOwner)
+            && !retryNeeded && diagnosticsReadError == nil && dataSettingRequest == nil
+            && !dataSettingAwaitingRefresh
+    }
+
+    func exportDataBackup() async {
+        guard backupExportEnabled, let session = diagnosticsSession, let currentHost = host else { return }
+        backupExportBusy = true
+        backupExportError = nil
+        defer {
+            if host === currentHost, diagnosticsCurrent(owner: settingsDiagnosticsOwner, session: session) {
+                backupExportBusy = false
+            }
+        }
+        do {
+            let prepared = try await currentHost.prepareDataBackup()
+            #if DEBUG && targetEnvironment(simulator)
+            if backupExportTestHoldOnce {
+                backupExportTestHoldOnce = false
+                backupExportTestState = "held"
+                let until = ProcessInfo.processInfo.systemUptime + 900
+                while (diagnosticsSession == nil || diagnosticsSession == session), host === currentHost,
+                      !appLock.concealed, ProcessInfo.processInfo.systemUptime < until, !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+            }
+            #endif
+            guard host === currentHost, settingsDataPresented,
+                  diagnosticsCurrent(owner: settingsDiagnosticsOwner, session: session), !retryNeeded, !Task.isCancelled else {
+                await currentHost.discardDataBackup(prepared.id)
+                #if DEBUG && targetEnvironment(simulator)
+                if backupExportTestState == "held" { backupExportTestState = "discarded" }
+                #endif
+                return
+            }
+            backupShareHost = currentHost
+            backupShare = prepared
+        } catch {
+            if host === currentHost, diagnosticsCurrent(owner: settingsDiagnosticsOwner, session: session) {
+                backupExportError = dataSettings.object("backup").text("failed")
+            }
+        }
+    }
+
+    func dismissBackupShare() {
+        if let prepared = backupShare, let owner = backupShareHost {
+            Task { await owner.discardDataBackup(prepared.id) }
+        }
+        backupShare = nil
+        backupShareHost = nil
     }
 
     func openDataSettings() async {
@@ -3748,7 +3813,9 @@ final class CoreModel: ObservableObject {
         guard let currentHost = host, let session = diagnosticsSession, !appLock.concealed else { throw CocoaError(.coderInvalidValue) }
         let result = try await query("menuRead", ["dataSettings", "{}"])
         let labels = result.object("diagnostics")
+        let backup = result.object("backup")
         guard result["version"] is NSNumber, !result.text("revision").isEmpty, !result.text("title").isEmpty,
+              ["title", "exportLabel", "description", "failed"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
               !labels.text("title").isEmpty, labels.object("debugLogging")["value"] is Bool,
               ["toastTitle", "logMissing", "shareUnavailable", "logCleared", "logClearFailed"].allSatisfy({ labels[$0] is String }),
               labels["shareLog"] is NSNull || labels["shareLog"] is CoreObject,
