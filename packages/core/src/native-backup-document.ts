@@ -17,13 +17,13 @@ export const MAX_NATIVE_BACKUP_PLAN_BYTES = 512 * 1024 * 1024;
 export type NativeBackupDocumentMetadata = { fileName: string; lastModified: number; appVersion: string };
 export type NativeBackupOperationReference = { id: string; sha256: string; byteCount: number };
 export type NativeBackupJsonDocumentReply = {
-    version: 1; operation: 'merge' | 'restore'; snapshotName: string; added: number; updated: number;
+    version: 1; operation: 'merge' | 'restore' | 'replace'; snapshotName: string; added: number; updated: number;
 };
 export type NativeBackupCsvImportResult = Omit<MindwtrCsvImportExecutionResult, 'data'>;
 export type NativeBackupDocumentReply = NativeBackupJsonDocumentReply | {
     version: 1; operation: 'csv'; snapshotName: string; result: NativeBackupCsvImportResult;
 };
-type Operation = 'merge' | 'restore' | 'csv';
+type Operation = 'merge' | 'restore' | 'replace' | 'csv';
 export type NativeBackupDocumentPrepareInput = {
     requestId: string; mode: Operation; snapshotName: string;
     text: string; metadata: NativeBackupDocumentMetadata;
@@ -40,7 +40,7 @@ const exact = (value: unknown, fields: string[]): value is Record<string, unknow
     && Object.keys(value).length === fields.length && fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
 const uuid = (value: unknown): value is string => typeof value === 'string'
     && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(value);
-const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'csv';
+const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'replace' || value === 'csv';
 const snapshotPattern = /^data\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:\.(\d{3})(?:\.\d+)?)?\.snapshot\.json$/u;
 const snapshot = (value: unknown): value is string => {
     if (typeof value !== 'string' || value.length > 128) return false;
@@ -122,11 +122,13 @@ const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: Imp
 };
 
 /** RN's immutable inspection preview. Invalid files are ordinary localized values. */
-export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'csv' = 'json') {
+export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'json-restore' | 'csv' = 'json') {
     if (format === 'csv') return inspectCsv(text, metadata, t);
-    if (format !== 'json') invalid();
+    if (format !== 'json' && format !== 'json-restore') invalid();
+    const replacing = format === 'json-restore';
     const model = {
-        valid: false, title: t('settings.mergeBackup'), summary: '', confirmLabel: t('settings.mergeBackupAction'),
+        valid: false, title: t(replacing ? 'settings.backupMobile.restoreBackup' : 'settings.mergeBackup'), summary: '',
+        confirmLabel: t(replacing ? 'markdown.referenceRestore' : 'settings.mergeBackupAction'),
         cancelLabel: t('common.cancel'), errorTitle: t('settings.backupMobile.invalidBackup'),
         errorMessage: t('settings.backupMobile.thisFileIsNotAValidMindwtrBackup'),
     };
@@ -146,7 +148,7 @@ export function inspectNativeBackupDocument(text: string, metadata: NativeBackup
                 ? t('settings.backupMobile.backupDateLabel', { backupDate: new Date(validation.metadata.backupAt).toLocaleString() })
                 : validation.metadata?.fileName ? t('settings.backupMobile.fileLabel', { fileName: validation.metadata.fileName }) : null,
             t('settings.backupMobile.backupPreviewCounts', { taskCount: validation.metadata?.taskCount ?? 0, projectCount: validation.metadata?.projectCount ?? 0 }),
-            t('settings.mergeBackupConfirm'), ...(warnings.length ? ['', ...warnings] : []),
+            t(replacing ? 'settings.backupMobile.thisWillReplaceAllCurrentLocalDataARecoverySnapshot' : 'settings.mergeBackupConfirm'), ...(warnings.length ? ['', ...warnings] : []),
         ].filter(Boolean);
         return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
     } catch { return model; }
@@ -193,7 +195,7 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
                     importedProjectCount: result.importedProjectCount, importedSectionCount: result.importedSectionCount,
                     importedStandaloneTaskCount: result.importedStandaloneTaskCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
                 } };
-            } else reply = { version: 1, operation: operation as 'merge' | 'restore', snapshotName, ...counts };
+            } else reply = { version: 1, operation: operation as 'merge' | 'restore' | 'replace', snapshotName, ...counts };
             validateReply(reply);
             const plan: Plan = { version: 1, requestId, mode: operation, preparedAt: new Date().toISOString(),
                 expectedCurrent, data, reply };
@@ -224,7 +226,7 @@ const validateReply = (value: unknown, snapshotName?: string, operation?: Operat
             || !result.warnings.every((warning) => typeof warning === 'string')) invalid();
         if (!withinUtf8Limit(JSON.stringify(value), MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES)) invalid('CSV import result exceeds 64 KiB');
     } else if (!exact(value, ['version', 'operation', 'snapshotName', 'added', 'updated']) || !count(value.added) || !count(value.updated)
-        || value.operation === 'restore' && (value.added !== 0 || value.updated !== 0)) invalid();
+        || (value.operation === 'restore' || value.operation === 'replace') && (value.added !== 0 || value.updated !== 0)) invalid();
     return value as NativeBackupDocumentReply;
 };
 const readPlan = (reference: NativeBackupOperationReference, planJSON: string, snapshotName: string): Plan => {
@@ -311,8 +313,9 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
         message: reply.operation === 'merge' ? [
             t('settings.mergeBackupSummary', { addedCount: reply.added, updatedCount: reply.updated }),
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-        ].join('\n') : t('settings.backupMobile.recoverySnapshotRestored'),
-        undoLabel: reply.operation === 'merge' ? t('settings.undoImport') : '', doneLabel: t('common.done'),
+        ].join('\n') : reply.operation === 'replace' ? t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: reply.snapshotName })
+            : t('settings.backupMobile.recoverySnapshotRestored'),
+        undoLabel: reply.operation !== 'restore' ? t('settings.undoImport') : '', doneLabel: t('common.done'),
     };
 }
 

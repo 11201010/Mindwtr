@@ -22234,6 +22234,18 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask204JSONRestoreNormal() {
+        task202RecoveryFlow("0bcd30f4-46e1-46fd-b298-92abc0fc3172", replacePicker: true)
+    }
+
+    func testTask204JSONRestoreLargestText() {
+        task202RecoveryFlow("83f336f1-9bcf-4898-b08c-960bdaf856b4", largest: true, replacePicker: true)
+    }
+
+    func testTask204JSONRestoreArabicRTL() {
+        task202RecoveryFlow("daea87cb-6ad7-4402-a069-de2b4af78c4d", rtl: true, replacePicker: true)
+    }
+
     func testTask203CSVImportNormal() {
         task202RecoveryFlow("e165e4c8-7d27-440b-9603-344a42d84aa3", csvPicker: true)
     }
@@ -22258,7 +22270,7 @@ extension FoundationUITests {
         task202RecoveryFlow("58a103bb-e6c7-4c8e-971b-e548b5f29464", rtl: true)
     }
 
-    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false) {
+    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false, replacePicker: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
         app.launch()
@@ -22267,12 +22279,12 @@ extension FoundationUITests {
             boardTap(app, "general-back"); boardTap(app, "settings-back")
         }
         task197Data(app); boardTap(app, "backup-disclosure")
-        let importAction = csvPicker ? "data-transfer-import-csv" : "data-transfer-merge"
+        let importAction = replacePicker ? "data-transfer-restore" : (csvPicker ? "data-transfer-import-csv" : "data-transfer-merge")
         task192Reveal(app, importAction, buttons: true, scrollID: "diagnostics-scroll")
         boardEnabled(app.buttons[importAction]); boardTap(app, importAction)
         let cancel = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Cancel", "إلغاء")).firstMatch
         boardEnabled(cancel, timeout: 30)
-        task197Observe(app, csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker")
+        task197Observe(app, replacePicker ? "Task204 selected JSON restore picker" : (csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker"))
         cancel.tap()
         boardEnabled(app.buttons[importAction], timeout: 30)
         XCTAssertFalse(app.staticTexts["backup-import-error"].exists)

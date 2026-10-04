@@ -1875,7 +1875,7 @@ struct DiagnosticsCard: View {
 
     var body: some View {
         let pickerID = model.backupImportPickerID
-        let pickerFormat = model.backupImportPickerFormat
+        let pickerAction = model.backupImportPickerAction
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if owner == model.settingsDiagnosticsOwner {
@@ -2003,9 +2003,9 @@ struct DiagnosticsCard: View {
         .fileImporter(isPresented: Binding(
             get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
             set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
-        ), allowedContentTypes: pickerFormat == .csv ? [.commaSeparatedText, .zip, .data] : [.json],
+        ), allowedContentTypes: pickerAction == .csv ? [.commaSeparatedText, .zip, .data] : [.json],
            allowsMultipleSelection: false) { result in
-            Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, format: pickerFormat) }
+            Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, action: pickerAction) }
         }
         .alert(model.backupImportPreview.text(model.backupImportPreview.flag("valid") ? "title" : "errorTitle"),
                isPresented: $backupPreviewPresented) {
@@ -2014,7 +2014,7 @@ struct DiagnosticsCard: View {
                 model.cancelBackupImportPreview()
             }.accessibilityIdentifier("backup-import-cancel")
             if model.backupImportPreview.flag("valid") {
-                Button(model.backupImportPreview.text("confirmLabel")) {
+                Button(model.backupImportPreview.text("confirmLabel"), role: model.backupImportIsReplacement ? .destructive : nil) {
                     backupPreviewAnswered = true
                     Task { await model.confirmBackupImport() }
                 }.accessibilityIdentifier("backup-import-confirm")
@@ -2072,6 +2072,16 @@ struct DiagnosticsCard: View {
 
     @ViewBuilder
     private func backupTransferContent(_ backup: CoreObject) -> some View {
+        Button { model.openBackupImportPicker(action: .replace) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("restoreFileLabel")).rnFont(15, .semibold)
+                Text(backup.text("restoreFileDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-restore")
         Button { model.openBackupImportPicker() } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(backup.text("mergeLabel")).rnFont(15, .semibold)
@@ -2082,7 +2092,7 @@ struct DiagnosticsCard: View {
         }
         .disabled(!model.backupImportEnabled)
         .accessibilityIdentifier("data-transfer-merge")
-        Button { model.openBackupImportPicker(format: .csv) } label: {
+        Button { model.openBackupImportPicker(action: .csv) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(backup.text("csvImportLabel")).rnFont(15, .semibold)
                 Text(backup.text("csvImportDescription")).rnFont(13).foregroundStyle(palette.secondary)

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData, validateBackupJson } from './backup-transfer';
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
+import { createMockArea, createMockProject, createMockSection } from './sync-test-utils';
 import { formatI18nTemplate, getTranslator } from './i18n';
 import { applyImportSource, parseImportSource } from './import-runner';
 import {
@@ -31,7 +32,7 @@ const task = (id: string, extra: Partial<Task> = {}): Task => ({ id, title: id, 
 const original: AppData = { tasks: [task('visible'), task('history', { status: 'done', completedAt: AT }),
     task('hidden', { status: 'archived' })], projects: [], sections: [], areas: [], people: [], settings: { language: 'en' } };
 const incoming: AppData = { ...clone(original), tasks: [task('visible', { title: '日本語 🦉', rev: 2 }), task('new')], settings: { language: 'de' } };
-const input = (text = serializeBackupData(incoming), operation: 'merge' | 'restore' = 'merge'): NativeBackupDocumentPrepareInput =>
+const input = (text = serializeBackupData(incoming), operation: 'merge' | 'restore' | 'replace' = 'merge'): NativeBackupDocumentPrepareInput =>
     ({ requestId: ID, mode: operation, snapshotName: NAME, text, metadata: clone(metadata) });
 const t = (key: string, params?: Record<string, number | string>) => formatI18nTemplate(getTranslator('en')(key), params ?? {});
 const resources: { close: () => void; directory: string }[] = [];
@@ -148,15 +149,15 @@ describe('native frozen backup plan over actual SQLite', () => {
         expect(durable.tasks.find((item) => item.id === 'visible')?.attachments?.filter((item) => !item.deletedAt)).toEqual([]);
         expect(durable.tasks.find((item) => item.id === 'history')?.completedAt).toBe(AT);
     });
-    it('refuses stale preparation after an intervening durable edit with no writes', async () => {
-        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input());
+    it.each(['merge', 'replace'] as const)('refuses stale preparation after an intervening durable edit with no writes (%s)', async (operation) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, operation));
         const later = await env.adapter.getData(); later.tasks[0] = { ...later.tasks[0], title: 'later', rev: 3 };
         await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0;
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:');
         expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
-    it('cold-replays the first reply preserving intervening durable edits with zero document writes', async () => {
-        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input());
+    it.each(['merge', 'replace'] as const)('cold-replays the first reply preserving intervening durable edits with zero document writes (%s)', async (operation) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, operation));
         const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
         const later = await env.adapter.getData(); later.tasks[0] = { ...later.tasks[0], title: 'later', rev: 9 }; await env.adapter.saveData(later);
         const before = await env.state(); resetNativeRequestReceipts();
@@ -168,8 +169,8 @@ describe('native frozen backup plan over actual SQLite', () => {
         expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
         expect(useTaskStore.getState()._allTasks.find((item) => item.id === later.tasks[0].id)?.title).toBe('later');
     });
-    it('rolls back failed COMMIT and never invents terminal proof', async () => {
-        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input()); const before = await env.state();
+    it.each(['merge', 'replace'] as const)('rolls back failed COMMIT and never invents terminal proof (%s)', async (operation) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, operation)); const before = await env.state();
         env.hooks.run = async (statement) => { if (statement === 'COMMIT') throw new Error('private SQL failure'); };
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('SAVE_FAILED:');
         expect(await env.state()).toEqual(before);
@@ -190,8 +191,8 @@ describe('native frozen backup plan over actual SQLite', () => {
         expect(await commitNativeBackupDocument(env.adapter, reference, noOpPlan, NAME)).toEqual(first);
         expect(env.writes).toEqual([]);
     });
-    it('retains provable receipt after refresh failure and exact replay only reloads', async () => {
-        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input());
+    it.each(['merge', 'replace'] as const)('retains provable receipt after refresh failure and exact replay only reloads (%s)', async (operation) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, operation));
         const fetchData = useTaskStore.getState().fetchData;
         useTaskStore.setState({ fetchData: async () => { throw new Error('private refresh failure'); } });
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('SAVE_FAILED: Backup document was saved but reload failed');
@@ -392,4 +393,66 @@ describe('native immutable Mindwtr CSV and ZIP import', () => {
         expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
     it('refuses unsupported source format', () => expect(() => inspectNativeBackupDocument('', metadata, t, 'other' as 'csv')).toThrow('INVALID_INPUT:'));
+});
+
+
+describe('native selected JSON backup replacement', () => {
+    it('previews immutable JSON with RN replacement effect, counts, warnings and destructive-action words; cancellation writes nothing', async () => {
+        const env = await open(); const before = await env.state();
+        const source = JSON.stringify({ data: incoming, backupMetadata: { createdAt: AT, version: '99.0.0' } });
+        const preview = inspectNativeBackupDocument(source, metadata, t, 'json-restore');
+        expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7);
+        expect(preview.title).toBe(t('settings.backupMobile.restoreBackup')); expect(preview.confirmLabel).toBe(t('markdown.referenceRestore'));
+        expect(preview.summary).toContain(t('settings.backupMobile.backupPreviewCounts', { taskCount: 2, projectCount: 0 }));
+        expect(preview.summary).toContain(t('settings.backupMobile.thisWillReplaceAllCurrentLocalDataARecoverySnapshot'));
+        expect(preview.summary).toContain(t('settings.backupDiagnostics.newerVersion', { version: '99.0.0' }));
+        expect(preview.summary).not.toContain(t('settings.mergeBackupConfirm')); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+        expect(inspectNativeBackupDocument('{private-source', metadata, t, 'json-restore').valid).toBe(false);
+    });
+    it('prepares from latest durable data with exact shared restore policy, all current-only tombstones and restored settings; recovery precedes mutation', async () => {
+        const base = clone(original); base.tasks[0] = { ...base.tasks[0], title: 'Newer local', rev: 99, deletedAt: AT };
+        base.projects = [createMockProject('local-project', AT)]; base.sections = [createMockSection('local-section', 'local-project', AT)];
+        base.areas = [createMockArea('local-area', AT)]; base.people = [{ id: 'local-person', name: 'Local', createdAt: AT, updatedAt: AT, rev: 1 }];
+        base.settings = { theme: 'light', language: 'en', security: { mobileAppLockEnabled: true }, gtd: { focusTaskLimit: 5 },
+            syncPreferencesUpdatedAt: { preferences: '2099-01-01T00:00:00.000Z', gtd: '2099-01-01T00:00:00.000Z' } };
+        const selected = clone(incoming); selected.settings = { theme: 'dark', language: 'ar', gtd: { focusTaskLimit: 1 }, security: { mobileAppLockEnabled: true }, syncPreferences: { gtd: false } };
+        const env = await open(base); const source = input(serializeBackupData(selected), 'replace'); inspectNativeBackupDocument(source.text, metadata, t, 'json-restore');
+        const latest = await env.adapter.getData(); latest.tasks.push(task('latest-before-replace')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(AT);
+        try {
+            const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON);
+            const parsed = parseImportSource('backup', { text: source.text, ...metadata }).data!;
+            expect(plan.data).toEqual(clone(applyImportSource('backup', clone(plan.expectedCurrent), parsed).data));
+            expect(plan.reply).toEqual({ version: 1, operation: 'replace', snapshotName: NAME, added: 0, updated: 0 });
+            expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-before-replace')).toBe(true);
+            const recovery = validateBackupJson(prepared.recoveryJSON!).data!; expect(recovery.tasks).toEqual(plan.expectedCurrent.tasks);
+            expect(recovery.settings.theme).toBe('light'); expect(plan.data.settings).toMatchObject({ theme: 'dark', language: 'ar', gtd: { focusTaskLimit: 1 }, syncPreferences: { gtd: false }, pendingRemoteWriteAt: AT });
+            expect(plan.data.settings.security).toBeUndefined(); expect(plan.data.settings.syncPreferencesUpdatedAt.preferences > '2099-01-01T00:00:00.000Z').toBe(true);
+            const restored = plan.data.tasks.find((item: Task) => item.id === 'visible'); expect(restored.title).toBe('日本語 🦉'); expect(restored.deletedAt).toBeUndefined(); expect(restored.rev).toBeGreaterThan(99);
+            for (const [field, localId] of [['tasks','latest-before-replace'],['projects','local-project'],['sections','local-section'],['areas','local-area'],['people','local-person']]) {
+                expect(plan.data[field].find((item: { id: string }) => item.id === localId).deletedAt).toBe(AT);
+            }
+            expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+            await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+            expect((await env.adapter.getData()).tasks.find((item) => item.id === 'visible')?.title).toBe('日本語 🦉');
+        } finally { vi.useRealTimers(); }
+    });
+    it('returns RN replacement snapshot+Undo result; exact snapshot restore rolls later edits back without another recovery', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, 'replace'));
+        const reply = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        expect(buildNativeBackupDocumentResult(reply, t)).toEqual({ title: t('settings.backupMobile.restoreComplete'),
+            message: t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: NAME }), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') });
+        const later = await env.adapter.getData(); later.tasks.push(task('after-replace', { rev: 30 })); later.tasks.find((item) => item.id === 'visible')!.title = 'After replacement'; await env.adapter.saveData(later);
+        const undoId = '22222222-2222-4222-8222-222222222222';
+        const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: undoId });
+        expect(undo.recoveryJSON).toBeNull(); const restored = await commitNativeBackupDocument(env.adapter, { ...reference, id: undoId, sha256: 'b'.repeat(64) }, undo.planJSON, NAME);
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === 'visible')?.title).toBe('visible');
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === 'after-replace')?.deletedAt).toBeTruthy();
+        expect(buildNativeBackupDocumentResult(restored, t).undoLabel).toBe(''); expect(buildNativeBackupSnapshotRestoreConfirmation(NAME, t).message).toContain('Anything you changed since is rolled back too');
+    });
+    it.each(['added', 'updated'] as const)('rejects nonzero replace %s before receipt operations', async (field) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, 'replace')); const plan = JSON.parse(prepared.planJSON); plan.reply[field] = 1;
+        const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt'); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:');
+        expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
 });

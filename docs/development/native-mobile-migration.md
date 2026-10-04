@@ -340,3 +340,6 @@ Task202 JSON backup merge and recovery (2026-10-04): native Data now selects a J
 
 
 Task203 Mindwtr CSV/ZIP import (2026-10-04): native Data now uses RN's binary CSV/ZIP parser, import policy and localized preview/results through the durable document/snapshot owner. Shared, native host, three simulator layouts and isolated physical import/Undo/deleted-reimport checks passed. A device-discovered shared warning mapping omission was corrected for RN and native. Other importers and direct JSON-file replacement remain open; see the [parity ledger](native-mobile-parity.md#task203-mindwtr-csv-and-zip-import).
+
+
+Task204 selected JSON restore (2026-10-04): native Data adds RN's explicit replace-from-backup action with destructive confirmation, a fresh recovery snapshot, actual shared restore policy and snapshot Undo. Core/host recovery checks, three simulator picker/recovery layouts and isolated iPhone selected-file replacement/Undo/cold-launch checks passed. Ordinary development libraries were preserved. Other importers and broader D02 acceptance remain open; see the [parity ledger](native-mobile-parity.md#task204-restore-from-a-selected-json-backup).

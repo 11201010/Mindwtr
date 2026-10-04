@@ -320,7 +320,7 @@ final class CoreModel: ObservableObject {
     private var backupShareHost: CoreHost?
     @Published private(set) var backupImportPickerPresented = false
     @Published private(set) var backupImportPickerID: UUID?
-    @Published private(set) var backupImportPickerFormat: NativeBackupImportFormat = .json
+    @Published private(set) var backupImportPickerAction: NativeBackupImportAction = .merge
     @Published private(set) var backupImportBusy = false
     @Published private(set) var backupImportPreview: CoreObject = [:]
     @Published private(set) var backupImportError: String?
@@ -333,7 +333,7 @@ final class CoreModel: ObservableObject {
     private var backupImportID: UUID?
     private var backupImportHost: CoreHost?
     private var backupImportSession: UUID?
-    private var backupImportFormat: NativeBackupImportFormat?
+    private var backupImportAction: NativeBackupImportAction?
     private var backupRestoreReference: String?
     private var backupRestoreSession: UUID?
     private var backupDocumentHost: CoreHost?
@@ -3811,6 +3811,8 @@ final class CoreModel: ObservableObject {
         backupImportEnabled && backupUndoSnapshotName.map { name in backupSnapshots.contains { $0.name == name } } == true
     }
 
+    var backupImportIsReplacement: Bool { backupImportAction == .replace }
+
     var backupResultReadRetryNeeded: Bool {
         backupDocumentReply != nil && backupDocumentResult.isEmpty && !backupDocumentPending
     }
@@ -3875,11 +3877,11 @@ final class CoreModel: ObservableObject {
         backupShareHost = nil
     }
 
-    func openBackupImportPicker(format: NativeBackupImportFormat = .json) {
+    func openBackupImportPicker(action: NativeBackupImportAction = .merge) {
         guard backupImportEnabled, let session = diagnosticsSession else { return }
         backupImportError = nil
         backupPickerSession = session
-        backupImportPickerFormat = format
+        backupImportPickerAction = action
         backupImportPickerID = UUID()
         backupImportPickerPresented = true
     }
@@ -3890,8 +3892,8 @@ final class CoreModel: ObservableObject {
         // actions; retain identity to recognize a late selection completion.
     }
 
-    func receiveBackupImportSelection(_ result: Result<[URL], Error>, pickerID: UUID?, format: NativeBackupImportFormat) async {
-        guard let pickerID, pickerID == backupImportPickerID, format == backupImportPickerFormat else { return }
+    func receiveBackupImportSelection(_ result: Result<[URL], Error>, pickerID: UUID?, action: NativeBackupImportAction) async {
+        guard let pickerID, pickerID == backupImportPickerID, action == backupImportPickerAction else { return }
         let session = backupPickerSession
         let currentHost = host
         backupImportPickerID = nil
@@ -3909,21 +3911,21 @@ final class CoreModel: ObservableObject {
         case .failure(let failure):
             let error = failure as NSError
             if error.domain != NSCocoaErrorDomain || error.code != NSUserCancelledError {
-                backupImportError = backupTransferFailure(mode: format == .csv ? "csv" : "merge")
+                backupImportError = backupTransferFailure(mode: action.operation)
             }
             return
         }
         backupImportBusy = true
         defer { if backupSessionIsCurrent(currentHost, session: session) { backupImportBusy = false } }
         do {
-            let prepared = try await currentHost.prepareBackupImport(url, format: format)
+            let prepared = try await currentHost.prepareBackupImport(url, action: action)
             guard backupSessionIsCurrent(currentHost, session: session), !retryNeeded, !Task.isCancelled else {
                 await currentHost.discardBackupImport(prepared.id)
                 return
             }
             do {
                 let model = try decode(prepared.json)
-                guard prepared.format == format,
+                guard prepared.action == action,
                       Set(model.keys) == Set(["valid", "title", "summary", "confirmLabel", "cancelLabel", "errorTitle", "errorMessage"]),
                       model["valid"] is Bool,
                       ["title", "summary", "confirmLabel", "cancelLabel", "errorTitle", "errorMessage"].allSatisfy({ model[$0] is String }),
@@ -3931,7 +3933,7 @@ final class CoreModel: ObservableObject {
                 backupImportID = prepared.id
                 backupImportHost = currentHost
                 backupImportSession = session
-                backupImportFormat = prepared.format
+                backupImportAction = prepared.action
                 backupImportPreview = model
             } catch {
                 await currentHost.discardBackupImport(prepared.id)
@@ -3939,7 +3941,7 @@ final class CoreModel: ObservableObject {
             }
         } catch {
             if backupSessionIsCurrent(currentHost, session: session) {
-                backupImportError = backupControlledFailure(error, mode: format == .csv ? "csv" : "merge")
+                backupImportError = backupControlledFailure(error, mode: action.operation)
             }
         }
     }
@@ -3951,13 +3953,13 @@ final class CoreModel: ObservableObject {
         backupImportID = nil
         backupImportHost = nil
         backupImportSession = nil
-        backupImportFormat = nil
+        backupImportAction = nil
         backupImportPreview = [:]
     }
 
     func confirmBackupImport() async {
         guard let id = backupImportID, let currentHost = backupImportHost, let session = backupImportSession,
-              let format = backupImportFormat,
+              let action = backupImportAction,
               backupSessionIsCurrent(currentHost, session: session), backupImportPreview.flag("valid"),
               !busy, !retryNeeded, !backupImportBusy, !backupDocumentPending else { return }
         // From dispatch onward the host owns acceptance and any owed journal.
@@ -3965,9 +3967,9 @@ final class CoreModel: ObservableObject {
         backupImportID = nil
         backupImportHost = nil
         backupImportSession = nil
-        backupImportFormat = nil
+        backupImportAction = nil
         backupImportPreview = [:]
-        beginBackupDocumentOperation(currentHost, mode: format == .csv ? "csv" : "merge")
+        beginBackupDocumentOperation(currentHost, mode: action.operation)
         defer { finishOperation() }
         do { try await acceptBackupDocumentReply(await currentHost.mergeBackupImport(id), from: currentHost) }
         catch {
@@ -4048,6 +4050,7 @@ final class CoreModel: ObservableObject {
 
     private func backupTransferFailure(mode: String = "merge") -> String {
         let localized = mode == "restore" ? label("settings.backupMobile.failedToRestoreBackup")
+            : mode == "replace" ? label("settings.backupMobile.restoreFailed")
             : mode == "csv" ? label("settings.backupMobile.importFailed") : dataSettings.object("backup").text("mergeFailed")
         return localized.isEmpty ? label("settings.feedback.actionFailed") : localized
     }
@@ -4119,8 +4122,11 @@ final class CoreModel: ObservableObject {
             }
         } else {
             guard Set(reply.keys) == Set(["version", "operation", "snapshotName", "added", "updated"]),
-                  ["merge", "restore"].contains(reply.text("operation")),
+                  ["merge", "restore", "replace"].contains(reply.text("operation")),
                   validBackupInteger(reply["added"]), validBackupInteger(reply["updated"]) else { throw CocoaError(.coderReadCorrupt) }
+            if ["restore", "replace"].contains(reply.text("operation")) {
+                guard reply.number("added") == 0, reply.number("updated") == 0 else { throw CocoaError(.coderReadCorrupt) }
+            }
         }
         guard host === currentHost else { return }
         guard !backupDocumentPending || backupDocumentHost !== currentHost || reply.text("operation") == backupDocumentMode else {
@@ -4129,7 +4135,7 @@ final class CoreModel: ObservableObject {
         backupDocumentHost = currentHost
         backupDocumentReply = encoded
         backupDocumentMode = reply.text("operation")
-        backupUndoSnapshotName = ["merge", "csv"].contains(reply.text("operation")) ? reply.text("snapshotName") : nil
+        backupUndoSnapshotName = ["merge", "csv", "replace"].contains(reply.text("operation")) ? reply.text("snapshotName") : nil
         backupDocumentPending = false
         backupImportBusy = false
         backupImportError = nil
@@ -4211,7 +4217,7 @@ final class CoreModel: ObservableObject {
         let labels = result.object("diagnostics")
         let backup = result.object("backup")
         guard result["version"] is NSNumber, !result.text("revision").isEmpty, !result.text("title").isEmpty,
-              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed", "mergeLabel", "mergeDescription", "mergeFailed", "csvImportLabel", "csvImportDescription", "snapshotsLabel", "restoreLabel"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
+              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed", "mergeLabel", "mergeDescription", "mergeFailed", "restoreFileLabel", "restoreFileDescription", "csvImportLabel", "csvImportDescription", "snapshotsLabel", "restoreLabel"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
               !labels.text("title").isEmpty, labels.object("debugLogging")["value"] is Bool,
               ["toastTitle", "logMissing", "shareUnavailable", "logCleared", "logClearFailed"].allSatisfy({ labels[$0] is String }),
               labels["shareLog"] is NSNull || labels["shareLog"] is CoreObject,
@@ -4501,7 +4507,7 @@ final class CoreModel: ObservableObject {
 
     private func readStrings() async throws {
         let keys = ["tab.next", "tab.inbox", "tab.review", "tab.menu", "nav.addTask", "search.title",
-                    "settings.backupMobile.failedToRestoreBackup", "settings.backupMobile.importFailed", "settings.importDiagnostics.limitExceeded", "settings.recoverySnapshotsEmpty",
+                    "settings.backupMobile.failedToRestoreBackup", "settings.backupMobile.restoreFailed", "settings.backupMobile.importFailed", "settings.importDiagnostics.limitExceeded", "settings.recoverySnapshotsEmpty",
                     "appLock.title", "appLock.description", "appLock.prompt", "appLock.enablePrompt", "appLock.unlock",
                     "appLock.authenticating", "appLock.useDevicePasscode", "appLock.unavailable", "appLock.cancelled", "appLock.failed",
                     "common.all", "common.close", "common.cancel", "common.done", "common.retry", "common.loading", "common.ok", "common.noMatches",

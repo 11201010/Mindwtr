@@ -283,8 +283,8 @@ final class BackupDocumentHostTests: XCTestCase {
         let csv = "Title,Status,Project,Section,Area,Checklist,Due Date,ID\nCSV 日本語 🦉,waiting,CSV project,CSV section,CSV area,[x] First|[ ] Second,2035-03-09,\(imported)\n"
         let url = root.appendingPathComponent("selected.csv")
         try csv.write(to: url, atomically: true, encoding: .utf8)
-        let preview = try await core.prepareBackupImport(url, format: .csv)
-        XCTAssertEqual(preview.format, .csv)
+        let preview = try await core.prepareBackupImport(url, action: .csv)
+        XCTAssertEqual(preview.action, .csv)
         XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
         let duringPreview = try await capture(core, "CSV before confirmation")
         try "Changed provider bytes".write(to: url, atomically: true, encoding: .utf8)
@@ -321,7 +321,7 @@ final class BackupDocumentHostTests: XCTestCase {
         let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
         let url = root.appendingPathComponent("selected.csv")
         try "Title,Status\nCSV once,next\n".write(to: url, atomically: true, encoding: .utf8)
-        let preview = try await core.prepareBackupImport(url, format: .csv)
+        let preview = try await core.prepareBackupImport(url, action: .csv)
         var writes = 0
         faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected CSV lost reply") } }
         await failure { _ = try await core.mergeBackupImport(preview.id) }
@@ -343,7 +343,7 @@ final class BackupDocumentHostTests: XCTestCase {
         let url = root.appendingPathComponent("tasks.zip")
         let bytes = try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAIAIeDRF2RWUdxQAAAAEEAAAAJAAAAdGFza3MuY3N2C8ksyUnVCS5JLCkt1nFJLU4uyiwoyczP41JyDg5TqMosUPgwf1mnkk5eakWJjpJPZl6qQn5eKheYUVKer8QFAFBLAQIUAxQAAAAIAIeDRF2RWUdxQAAAAEEAAAAJAAAAAAAAAAAAAACAAQAAAAB0YXNrcy5jc3ZQSwUGAAAAAAEAAQA3AAAAZwAAAAAA"))
         try bytes.write(to: url)
-        let preview = try await core.prepareBackupImport(url, format: .csv)
+        let preview = try await core.prepareBackupImport(url, action: .csv)
         XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
         let imported = try object(await core.mergeBackupImport(preview.id))
         XCTAssertEqual((imported["result"] as? [String: Any])?["importedTaskCount"] as? Int, 1)
@@ -353,7 +353,7 @@ final class BackupDocumentHostTests: XCTestCase {
         let export = try await core.prepareDataBackup(format: .csv)
         let replayURL = root.appendingPathComponent("replay.csv")
         try Data(contentsOf: export.url).write(to: replayURL)
-        let ownCsv = try await core.prepareBackupImport(export.url, format: .csv)
+        let ownCsv = try await core.prepareBackupImport(export.url, action: .csv)
         await core.discardDataBackup(export.id)
         let repeated = try object(await core.mergeBackupImport(ownCsv.id))
         XCTAssertEqual((repeated["result"] as? [String: Any])?["importedTaskCount"] as? Int, 0)
@@ -363,13 +363,116 @@ final class BackupDocumentHostTests: XCTestCase {
         let roster = try await snapshots(core)
         let original = try XCTUnwrap(roster.first { $0["name"] as? String == imported["snapshotName"] as? String })
         _ = try await core.restoreBackupSnapshot(json(original))
-        let deletedCSV = try await core.prepareBackupImport(replayURL, format: .csv)
+        let deletedCSV = try await core.prepareBackupImport(replayURL, action: .csv)
         let deletedResult = try await core.mergeBackupImport(deletedCSV.id)
         let deletedReply = try object(deletedResult)
         XCTAssertEqual((deletedReply["result"] as? [String: Any])?["importedTaskCount"] as? Int, 0)
         XCTAssertEqual(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").count, 0)
         let model = try object(await core.backupDocumentResultModel(deletedResult))
         XCTAssertTrue((model["message"] as? String ?? "").contains("previously imported or deleted"))
+    }
+
+    func testReplacementCommitAcknowledgmentLossPreservesLaterEdits() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let (url, imported) = try await source(core)
+        let preview = try await core.prepareBackupImport(url, action: .replace)
+        var lost = false
+        faults.afterSQL = { sql in
+            if sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "COMMIT", !lost {
+                lost = true; throw HostFailure("Injected committed acknowledgment loss")
+            }
+        }
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertTrue(lost)
+        XCTAssertEqual(try rows("SELECT id FROM tasks WHERE id = ?", [imported]).count, 1)
+        await core.close()
+        _ = try rows("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", ["Edited after lost COMMIT reply", imported])
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let reopened = host(); _ = try await reopened.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        let roster = try await snapshots(reopened); XCTAssertEqual(roster.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testReplacementRejectsConcurrentExternalWrite() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let local = try await capture(core, "Before import")
+        let (url, imported) = try await source(core)
+        let preview = try await core.prepareBackupImport(url, action: .replace)
+        var changed = false
+        faults.beforeSQL = { sql in
+            if sql.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("BEGIN"), !changed {
+                changed = true
+                _ = try self.rows("UPDATE tasks SET title = ?, rev = rev + 1 WHERE id = ?", ["External edit wins", local])
+            }
+        }
+        do { _ = try await core.mergeBackupImport(preview.id); XCTFail("Stale merge must refuse") }
+        catch { XCTAssertTrue(error is CoreHostRejection, String(describing: error)) }
+        XCTAssertTrue(changed)
+        XCTAssertTrue(try rows("SELECT id FROM tasks WHERE id = ?", [imported]).isEmpty)
+        XCTAssertEqual(try rows("SELECT title FROM tasks WHERE id = ?", [local]).first?["title"] as? String, "External edit wins")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        faults.beforeSQL = nil
+        let roster = try await snapshots(core); XCTAssertTrue(roster.isEmpty)
+    }
+
+    func testReplacementInspectionCancelAndInvalidInputDoNotWrite() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "Existing")
+        let (url, _) = try await source(core)
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let preview = try await core.prepareBackupImport(url, action: .replace)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        let initial = try await snapshots(core); XCTAssertTrue(initial.isEmpty)
+        await core.discardBackupImport(preview.id)
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        try "{invalid".write(to: url, atomically: true, encoding: .utf8)
+        let invalid = try await core.prepareBackupImport(url, action: .replace)
+        XCTAssertEqual(try object(invalid.json)["valid"] as? Bool, false)
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        let final = try await snapshots(core); XCTAssertTrue(final.isEmpty)
+    }
+
+
+    func testSelectedReplacementOwnsBytesAndFreshSnapshotUndoSurvivesRestart() async throws {
+        let core = host(); _ = try await core.start()
+        let before = try await capture(core, "Before replacement preview")
+        let (url, imported) = try await source(core)
+        let preview = try await core.prepareBackupImport(url, action: .replace)
+        XCTAssertEqual(preview.action, .replace)
+        let confirmation = try object(preview.json)
+        XCTAssertEqual(confirmation["valid"] as? Bool, true)
+        XCTAssertTrue((confirmation["summary"] as? String ?? "").contains("replace"))
+        let during = try await capture(core, "Before replacement confirmation")
+        try "Provider changed after preview".write(to: url, atomically: true, encoding: .utf8)
+        let reply = try object(await core.mergeBackupImport(preview.id))
+        XCTAssertEqual(reply["operation"] as? String, "replace")
+        XCTAssertEqual(reply["added"] as? Int, 0)
+        XCTAssertEqual(reply["updated"] as? Int, 0)
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), [imported])
+        for id in [before, during] {
+            XCTAssertNotNil(try rows("SELECT deletedAt FROM tasks WHERE id = ?", [id]).first?["deletedAt"] as? String)
+        }
+        let model = try object(await core.backupDocumentResultModel(json(reply)))
+        XCTAssertFalse((model["undoLabel"] as? String ?? "").isEmpty)
+        let roster = try await snapshots(core); XCTAssertEqual(roster.count, 1)
+        let reference = try json(XCTUnwrap(roster.first))
+        let later = try await capture(core, "Later replacement edit undone")
+        await core.close()
+        let reopened = host(); _ = try await reopened.start()
+        let undo = try object(await reopened.restoreBackupSnapshot(reference))
+        XCTAssertEqual(undo["operation"] as? String, "restore")
+        let live = Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String })
+        XCTAssertEqual(live, [before, during])
+        for id in [imported, later] {
+            XCTAssertNotNil(try rows("SELECT deletedAt FROM tasks WHERE id = ?", [id]).first?["deletedAt"] as? String)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), live)
     }
 
 }
