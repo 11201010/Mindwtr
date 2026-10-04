@@ -291,6 +291,7 @@ import { createReferenceTasksRemoveTagMethods } from './native-host-contract-ref
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
 import { createArchivedTasksDeleteMethods } from './native-host-contract-archive-bulk-delete';
 import { createProjectDateMethods } from './native-host-contract-project-date';
+import { createProjectEditMethods } from './native-host-contract-project-edit';
 import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
 import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
@@ -1594,8 +1595,11 @@ export function createNativeHostContract(options: {
 
     const taskChecklistMethods = createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
         validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject });
-    return {
+    // The contract itself, for the commands that run its own methods (Project details' journaled edit).
+    let self: Record<string, unknown> | null = null;
+    const contract = {
         version: NATIVE_HOST_CONTRACT_VERSION,
+        ...createProjectEditMethods({ readiness, save, contract: () => self ?? {} }),
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
             isReadOnly: isInArchivedProject }),
@@ -3259,6 +3263,8 @@ export function createNativeHostContract(options: {
             }
         },
     };
+    self = contract as unknown as Record<string, unknown>;
+    return contract;
 }
 
 // ---------------------------------------------------------------------------
