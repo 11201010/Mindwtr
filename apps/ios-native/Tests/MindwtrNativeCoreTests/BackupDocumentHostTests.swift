@@ -675,4 +675,133 @@ final class BackupDocumentHostTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
+    func testDGTUsesSharedPolicyOwnedJSONAndColdSnapshotUndo() async throws {
+        let core = host(); _ = try await core.start()
+        let local = try await capture(core, "Existing before DGT")
+        let url = root.appendingPathComponent("DGT.json")
+        let input = "{\"version\":3,\"FOLDER\":[{\"ID\":1,\"TITLE\":\"Task208 Work\",\"COLOR\":-689365405,\"ORDINAL\":0}],\"CONTEXT\":[{\"ID\":1,\"TITLE\":\"errands\"}],\"TAG\":[{\"ID\":1,\"TITLE\":\"deep\"}],\"TASK\":[{\"ID\":10,\"TITLE\":\"Task208 Launch\",\"TYPE\":1,\"FOLDER\":1,\"NOTE\":\"Project support note\",\"DUE_DATE\":\"2035-04-03\",\"DUE_TIME_SET\":0,\"STATUS\":0},{\"ID\":11,\"TITLE\":\"Task208 Buy paint\",\"TYPE\":0,\"PARENT\":10,\"CONTEXT\":1,\"TAG\":[1],\"PRIORITY\":2,\"STATUS\":1,\"NOTE\":\"Eggshell white\",\"START_DATE\":\"2035-04-01\",\"START_TIME_SET\":0,\"DUE_DATE\":\"2035-04-02\",\"DUE_TIME_SET\":0},{\"ID\":12,\"TITLE\":\"Task208 Packing list\",\"TYPE\":2,\"FOLDER\":1},{\"ID\":13,\"TITLE\":\"Task208 Tape\",\"TYPE\":3,\"PARENT\":12},{\"ID\":14,\"TITLE\":\"Task208 Boxes\",\"TYPE\":3,\"PARENT\":12,\"COMPLETED\":\"2026-04-10 09:00:00.000\"},{\"ID\":15,\"TITLE\":\"Task208 Weekly review\",\"TYPE\":0,\"REPEAT_NEW\":\"Every 6 Weeks\",\"DUE_DATE\":\"2035-04-13\",\"DUE_TIME_SET\":0}]}\n"
+        try input.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .dgt)
+        XCTAssertEqual(preview.action, .dgt)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        let during = try await capture(core, "After DGT preview")
+        try "Changed provider bytes".write(to: url, atomically: true, encoding: .utf8)
+        let reply = try object(await core.mergeBackupImport(preview.id))
+        XCTAssertEqual(reply["operation"] as? String, "dgt")
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), ["importedAreaCount", "importedTaskCount", "importedProjectCount", "importedSectionCount", "importedChecklistItemCount", "warnings"])
+        XCTAssertEqual(result["importedTaskCount"] as? Int, 3)
+        XCTAssertEqual(result["importedProjectCount"] as? Int, 1)
+        XCTAssertEqual(result["importedAreaCount"] as? Int, 1)
+        XCTAssertEqual(result["importedSectionCount"] as? Int, 0)
+        XCTAssertEqual(result["importedChecklistItemCount"] as? Int, 2)
+        XCTAssertEqual(result["warnings"] as? [String], [])
+        let task = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task208 Buy paint"]).first)
+        XCTAssertEqual(task["status"] as? String, "next")
+        XCTAssertEqual(task["dueDate"] as? String, "2035-04-02")
+        XCTAssertEqual(task["description"] as? String, "Eggshell white")
+        XCTAssertEqual(task["startTime"] as? String, "2035-04-01")
+        let project = try XCTUnwrap(rows("SELECT * FROM projects WHERE title = ?", ["Task208 Launch"]).first)
+        XCTAssertEqual(project["supportNotes"] as? String, "Project support note")
+        XCTAssertEqual(project["dueDate"] as? String, "2035-04-03")
+        let weekly = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task208 Weekly review"]).first)
+        let recurrence = try XCTUnwrap(NativeJSON.jsonObject(with: Data((weekly["recurrence"] as? String ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(recurrence["rule"] as? String, "weekly")
+        let packing = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task208 Packing list"]).first)
+        XCTAssertEqual(packing["status"] as? String, "inbox")
+        XCTAssertNil(packing["projectId"] as? String)
+        let checklist = try XCTUnwrap(NativeJSON.jsonObject(with: Data((packing["checklist"] as? String ?? "").utf8)) as? [[String: Any]])
+        XCTAssertEqual(checklist.count, 2)
+        XCTAssertEqual(checklist.last?["isCompleted"] as? Bool, true)
+        let model = try object(await core.backupDocumentResultModel(json(reply)))
+        XCTAssertFalse((model["undoLabel"] as? String ?? "").isEmpty)
+        try input.write(to: url, atomically: true, encoding: .utf8)
+        let repeatedPreview = try await core.prepareBackupImport(url, action: .dgt)
+        let repeated = try object(await core.mergeBackupImport(repeatedPreview.id))
+        XCTAssertEqual((repeated["result"] as? [String: Any])?["importedTaskCount"] as? Int, 0)
+        XCTAssertEqual(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").count, 5)
+        let roster = try await snapshots(core)
+        let original = try XCTUnwrap(roster.first { $0["name"] as? String == reply["snapshotName"] as? String })
+        await core.close()
+        let reopened = host(); _ = try await reopened.start()
+        _ = try await reopened.restoreBackupSnapshot(json(original))
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), [local, during])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testDGTLostAcknowledgmentColdReplayKeepsLaterEdits() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let url = root.appendingPathComponent("Tasks.json")
+        try "{\"version\": 3, \"TASK\": [{\"ID\": 1, \"TITLE\": \"DGT once\", \"TYPE\": 0}]}".write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .dgt)
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected DGT lost reply") } }
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let id = try XCTUnwrap(rows("SELECT id FROM tasks WHERE deletedAt IS NULL").first?["id"] as? String)
+        _ = try rows("UPDATE tasks SET title = ?, rev = rev + 1, updatedAt = ? WHERE id = ?", ["Later DGT edit", "2037-01-01T00:00:00.000Z", id])
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let reopened = host(); _ = try await reopened.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testDGTZIPPreviewCancelAndImport() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "DGT ZIP baseline")
+        let url = root.appendingPathComponent("dgt.zip")
+        try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAIADSRRF1YZuf1RQAAAEwAAAAMAAAAV2Vla2VuZC5qc29uq1YqSy0qzszPU7JSMNZRUApxDPYGMqOrlTxdgLQhSMgzxMcVyFZycQ9RiPIMUHg2femzOWterJqnBJKNDABJGtTG1gIAUEsBAhQDFAAAAAgANJFEXVhm5/VFAAAATAAAAAwAAAAAAAAAAAAAAIABAAAAAFdlZWtlbmQuanNvblBLBQYAAAAAAQABADoAAABvAAAAAAA=")).write(to: url)
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let preview = try await core.prepareBackupImport(url, action: .dgt)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        await core.discardBackupImport(preview.id)
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        let initial = try await snapshots(core); XCTAssertTrue(initial.isEmpty)
+        let accepted = try await core.prepareBackupImport(url, action: .dgt)
+        let reply = try object(await core.mergeBackupImport(accepted.id))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["importedTaskCount"] as? Int, 1)
+        XCTAssertEqual(try rows("SELECT title FROM tasks WHERE title = ?", ["DGT ZIP 日本語"]).count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testDGTOversizedWarningsKeepLocalizedReasonBeforeJournalOrSnapshot() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "DGT capacity baseline")
+        let exported = try await core.prepareDataBackup()
+        var document = try object(String(contentsOf: exported.url, encoding: .utf8))
+        await core.discardDataBackup(exported.id)
+        let names = (0..<40).map { "Project\($0)-" + String(repeating: "A", count: 1000) }
+        document["projects"] = names.map { ["id": UUID().uuidString.lowercased(), "title": $0,
+            "status": "active", "color": "#94a3b8", "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z", "rev": 1] as [String: Any] }
+        let baselineURL = root.appendingPathComponent("baseline.json")
+        try json(document).write(to: baselineURL, atomically: true, encoding: .utf8)
+        let baseline = try await core.prepareBackupImport(baselineURL)
+        _ = try await core.mergeBackupImport(baseline.id)
+        let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
+        let beforeSnapshots = try await core.listBackupSnapshots()
+        let url = root.appendingPathComponent("dgt-large-result.json")
+        let dgt: [String: Any] = ["version": 3, "TASK": names.enumerated().map { ["ID": $0.offset + 1, "TITLE": $0.element, "TYPE": 1] as [String: Any] }]
+        let input = try json(dgt)
+        try input.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .dgt)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        do {
+            _ = try await core.mergeBackupImport(preview.id)
+            XCTFail("Expected bounded DGT result refusal")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "INVALID_INPUT: DGT import result exceeds 64 KiB")
+        }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
+        XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
+        let afterSnapshots = try await core.listBackupSnapshots()
+        XCTAssertEqual(afterSnapshots, beforeSnapshots)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
 }

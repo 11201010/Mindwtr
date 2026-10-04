@@ -22234,6 +22234,18 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask208DGTImportNormal() {
+        task202RecoveryFlow("900db2d9-9384-4196-958a-4268ee0462e4", dgtPicker: true)
+    }
+
+    func testTask208DGTImportLargestText() {
+        task202RecoveryFlow("f685c5ec-1f0f-4542-a829-1e84cd1358e3", largest: true, dgtPicker: true)
+    }
+
+    func testTask208DGTImportArabicRTL() {
+        task202RecoveryFlow("9066e649-ae59-42b8-83e4-673f28637517", rtl: true, dgtPicker: true)
+    }
+
     func testTask207TickTickImportNormal() {
         task202RecoveryFlow("2e9d103a-c753-46ad-8ee2-4abdb4472dab", ticktickPicker: true)
     }
@@ -22294,7 +22306,7 @@ extension FoundationUITests {
         task202RecoveryFlow("58a103bb-e6c7-4c8e-971b-e548b5f29464", rtl: true)
     }
 
-    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false, replacePicker: Bool = false, todoistPicker: Bool = false, ticktickPicker: Bool = false) {
+    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false, replacePicker: Bool = false, todoistPicker: Bool = false, ticktickPicker: Bool = false, dgtPicker: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
         app.launch()
@@ -22303,12 +22315,12 @@ extension FoundationUITests {
             boardTap(app, "general-back"); boardTap(app, "settings-back")
         }
         task197Data(app); boardTap(app, "backup-disclosure")
-        let importAction = ticktickPicker ? "data-transfer-import-ticktick" : todoistPicker ? "data-transfer-import-todoist" : replacePicker ? "data-transfer-restore" : (csvPicker ? "data-transfer-import-csv" : "data-transfer-merge")
+        let importAction = dgtPicker ? "data-transfer-import-dgt" : ticktickPicker ? "data-transfer-import-ticktick" : todoistPicker ? "data-transfer-import-todoist" : replacePicker ? "data-transfer-restore" : (csvPicker ? "data-transfer-import-csv" : "data-transfer-merge")
         task192Reveal(app, importAction, buttons: true, scrollID: "diagnostics-scroll")
         boardEnabled(app.buttons[importAction]); boardTap(app, importAction)
         let cancel = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Cancel", "إلغاء")).firstMatch
         boardEnabled(cancel, timeout: 30)
-        task197Observe(app, ticktickPicker ? "Task207 TickTick file picker" : todoistPicker ? "Task205 Todoist file picker" : replacePicker ? "Task204 selected JSON restore picker" : (csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker"))
+        task197Observe(app, dgtPicker ? "Task208 DGT file picker" : ticktickPicker ? "Task207 TickTick file picker" : todoistPicker ? "Task205 Todoist file picker" : replacePicker ? "Task204 selected JSON restore picker" : (csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker"))
         cancel.tap()
         boardEnabled(app.buttons[importAction], timeout: 30)
         XCTAssertFalse(app.staticTexts["backup-import-error"].exists)

@@ -678,3 +678,134 @@ describe('native TickTick CSV and ZIP prepared import', () => {
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
 });
+
+const dgtExport = {
+    version: 3,
+    FOLDER: [{ ID: 10, TITLE: 'Work', ORDINAL: 0, COLOR: 0xff336699 }, { ID: 2, TITLE: 'Personal', ORDINAL: 0 }],
+    CONTEXT: [{ ID: 1, TITLE: 'errands' }], TAG: [{ ID: 1, TITLE: 'deep' }],
+    TASK: [
+        { ID: 20, TYPE: 1, TITLE: 'Archived launch', FOLDER: 10, ORDINAL: 0, NOTE: 'Project support 日本語 🦉', CONTEXT: 1, TAG: [1], COLOR: 0xff112233, START_DATE: '2026-06-10', DUE_DATE: '2026-06-20', COMPLETED: '2026-06-15 12:00:00.000' },
+        { ID: 3, TYPE: 1, TITLE: 'Active project', FOLDER: 2, ORDINAL: 0 },
+        { ID: 101, TYPE: 0, TITLE: 'Project Inbox', PARENT: 20, STATUS: 0, CONTEXT: 1, TAG: [1], PRIORITY: 2, NOTE: 'Keep explicit inbox', DUE_DATE: '2026-06-18' },
+        { ID: 102, TYPE: 0, TITLE: 'Project Next', PARENT: 3, STATUS: 1, STARRED: 1, DUE_DATE: '2026-06-18 15:00', DUE_TIME_SET: 1 },
+        { ID: 103, TYPE: 2, TITLE: 'Packing list', FOLDER: 10, STATUS: 1 },
+        { ID: 104, TYPE: 3, TITLE: 'Passport', PARENT: 103 },
+        { ID: 105, TYPE: 3, TITLE: 'Tickets', PARENT: 103, COMPLETED: '2026-06-15 12:00:00.000' },
+        { ID: 106, TYPE: 0, TITLE: 'Standalone review', STATUS: 0, START_DATE: '2026-06-17', DUE_DATE: '2026-06-18', REPEAT_NEW: 'Every 6 Weeks' },
+        { ID: 107, TYPE: 9, TITLE: 'Legacy active', STATUS: 4, REPEAT_NEW: 'Last day of every month' },
+        { ID: 108, TYPE: 3, TITLE: 'Orphan child', PARENT: 999 },
+        { ID: 109, TYPE: 0, TITLE: 'Completed', STATUS: 1, COMPLETED: '2026-06-15 12:00:00.000' },
+        { ID: 110, TYPE: 0, TITLE: 'Unsupported status', STATUS: 2 },
+    ],
+};
+const dgtJson = JSON.stringify(dgtExport);
+const dgtInput = (text = dgtJson): NativeBackupDocumentPrepareInput => ({ ...input(), mode: 'dgt', text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'DGT.json' } });
+
+describe('native DGT JSON and ZIP prepared import', () => {
+    it.each(['json','zip'] as const)('previews owned %s bytes with actual RN DGT counts/project lines/warnings; cancellation writes nothing', async (kind) => {
+        const env = await open(); const before = await env.state(); const source = dgtInput();
+        const bytes = kind === 'json' ? strToU8(dgtJson) : zipSync({ 'bad.json': strToU8('{bad'), 'backup.json': strToU8(dgtJson), 'readme.txt': strToU8('ignored'), 'nested.zip': strToU8('ignored') });
+        source.text = bytesToBase64(bytes); if (kind === 'zip') source.metadata.fileName = 'DGT.zip';
+        const parsed = parseImportSource('dgt', { bytes, fileName: source.metadata.fileName }); expect(parsed.valid).toBe(true);
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'dgt'); expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7);
+        expect(preview.title).toBe(t('settings.backupMobile.importDgtGtdData')); expect(preview.confirmLabel).toBe(t('settings.backupMobile.import'));
+        expect(preview.summary).toContain(t('settings.backupMobile.dgtAreasWillBeCreated', { areaCount: 2 })); expect(preview.summary).toContain(t('settings.backupMobile.projectsWillBeCreated', { projectCount: 2 }));
+        expect(preview.summary).toContain(t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: 2 })); expect(preview.summary).toContain(t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: 6 }));
+        expect(preview.summary).toContain('• Work / Archived launch: 1'); expect(preview.summary).not.toContain(t('settings.backupMobile.importedTasksStayInInboxSoYouCanProcessThem'));
+        for (const diagnostic of createImportDiagnostics(parsed.preview!.warnings, 'warning')) expect(preview.summary).toContain(formatImportDiagnostic(diagnostic, t));
+        // Later provider bytes have no effect on this accepted preview or owned source.
+        const other = inspectNativeBackupDocument(dgtInput('{}').text, source.metadata, t, 'dgt'); expect(other.valid).toBe(false); expect(preview.valid).toBe(true);
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+    it('preview retains optional areas and remaining count after first four projects', () => {
+        const payload = { FOLDER: [{ ID: 1, TITLE: 'Area' }], TASK: [1,2,3,4,5].map((ID) => ({ ID, TYPE: 1, TITLE: `Project${ID}`, FOLDER: 1 })) };
+        const source = dgtInput(JSON.stringify(payload)); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'dgt'); expect(preview.valid).toBe(true);
+        for (const ID of [1,2,3,4]) expect(preview.summary).toContain(`• Area / Project${ID}: 0`); expect(preview.summary).not.toContain('• Area / Project5:'); expect(preview.summary).toContain(t('settings.backupMobile.moreProjects', { projectCount: 1 }));
+    });
+    it.each(['json','zip'] as const)('freezes actual %s DGT rich policy/IDs against fresh current; cold replay preserves later edits', async (kind) => {
+        const base = clone(original); base.people = [{ id: 'person', name: 'Taylor', createdAt: AT, updatedAt: AT, rev: 1 }]; base.tasks.push(task('reference', { status: 'reference' }));
+        const env = await open(base); const source = dgtInput(); if (kind === 'zip') { source.text = bytesToBase64(zipSync({ 'backup.json': strToU8(dgtJson) })); source.metadata.fileName = 'DGT.zip'; }
+        inspectNativeBackupDocument(source.text, source.metadata, t, 'dgt'); const latest = await env.adapter.getData(); latest.tasks.push(task('latest-dgt')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+        expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-dgt')).toBe(true); expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: 2, importedChecklistItemCount: 2, importedProjectCount: 2, importedSectionCount: 0, importedTaskCount: 8, warnings: expect.any(Array) });
+        expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(6); expect(plan.reply.result).not.toHaveProperty('data'); expect(plan.reply.result).not.toHaveProperty('importedStandaloneTaskCount');
+        const project = plan.data.projects.find((item: { title: string }) => item.title === 'Archived launch'); expect(project).toMatchObject({ status: 'archived', color: '#112233', startDate: '2026-06-10', dueDate: '2026-06-20' }); expect(project.supportNotes).toContain('Project support 日本語 🦉'); expect(project.supportNotes).toContain('Contexts: @errands'); expect(project.supportNotes).toContain('Tags: #deep');
+        expect(plan.data.areas.map((item: { name: string }) => item.name)).toEqual(['Personal','Work']); expect(plan.data.areas[1].color).toBe('#336699'); expect(plan.data.projects.map((item: { title: string }) => item.title)).toEqual(['Active project','Archived launch']);
+        const imported = plan.data.tasks.find((item: Task) => item.title === 'Project Inbox'); expect(imported).toMatchObject({ status: 'inbox', projectId: project.id, contexts: ['@errands'], tags: ['#deep'], priority: 'medium', dueDate: '2026-06-18', description: 'Keep explicit inbox' });
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Project Next')).toMatchObject({ status: 'next', priority: 'urgent', dueDate: '2026-06-18T15:00' });
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Standalone review')).toMatchObject({ status: 'inbox', startTime: '2026-06-17', dueDate: '2026-06-18', recurrence: { rule: 'weekly', rrule: 'FREQ=WEEKLY;INTERVAL=6' } });
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Packing list')).toMatchObject({ taskMode: 'list', checklist: [{ title: 'Passport', isCompleted: false }, { title: 'Tickets', isCompleted: true }] });
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Completed')).toMatchObject({ status: 'done', completedAt: '2026-06-15T12:00:00.000' });
+        for (const title of ['Legacy active','Unsupported status','Orphan child']) expect(plan.data.tasks.find((item: Task) => item.title === title).status).toBe('inbox'); expect(plan.data.tasks.find((item: Task) => item.title === 'Legacy active').description).toContain('Original DGT repeat: Last day of every month');
+        expect(plan.data.people).toEqual(plan.expectedCurrent.people); for (const id of ['reference','hidden','history']) expect(plan.data.tasks.find((item: Task) => item.id === id).status).toBe(base.tasks.find((item) => item.id === id)!.status);
+        const parsed = parseImportSource('dgt', { bytes: strToU8(dgtJson), fileName: source.metadata.fileName }); const oracle = applyImportSource('dgt', plan.expectedCurrent, parsed.parsedData!);
+        expect(plan.data.tasks.map((item: Task) => item.id)).toEqual(oracle.data.tasks.map((item) => item.id)); expect(plan.reply.result.warnings).toEqual(oracle.result.warnings);
+        const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME); const packing = plan.data.tasks.find((item: Task) => item.title === 'Packing list'); expect((await env.adapter.getData()).tasks.find((item) => item.id === packing.id)?.checklist).toEqual(packing.checklist);
+        const later = await env.adapter.getData(); const changed = later.tasks.find((item) => item.id === imported.id)!; changed.title = 'Later DGT edit'; changed.rev! += 1; await env.adapter.saveData(later); const committed = await env.state();
+        resetNativeRequestReceipts(); await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] }); const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
+        expect(await readNativeBackupDocumentOutcome(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(await commitNativeBackupDocument(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(committed);
+        expect(useTaskStore.getState()._allTasks.find((item) => item.id === imported.id)?.title).toBe('Later DGT edit');
+    });
+    it('orders equal-ordinal numeric source IDs numerically before string conversion', async () => {
+        const env = await open(); const source = dgtInput(JSON.stringify({ TASK: [{ ID: 10, TITLE: 'Ten', ORDINAL: 0 }, { ID: 2, TITLE: 'Two', ORDINAL: 0 }] }));
+        const plan = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON); expect(plan.data.tasks.filter((item: Task) => !original.tasks.some((existing) => existing.id === item.id)).map((item: Task) => item.title)).toEqual(['Two','Ten']);
+    });
+    it.each(['edited','deleted'] as const)('retains shared DGT %s reimport IDs and history', async (condition) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const firstPlan = JSON.parse(prepared.planJSON); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const latest = await env.adapter.getData(); const ids = new Set(firstPlan.data.tasks.filter((item: Task) => !firstPlan.expectedCurrent.tasks.some((existing: Task) => existing.id === item.id)).map((item: Task) => item.id));
+        for (const item of latest.tasks) if (ids.has(item.id)) { item.title = `Edited ${item.title}`; item.rev! += 1; if (condition === 'deleted') item.deletedAt = AT; }
+        if (condition === 'deleted') { for (const item of latest.projects) item.deletedAt = AT; for (const item of latest.areas) item.deletedAt = AT; }
+        await env.adapter.saveData(latest); env.writes.length = 0; const again = await prepareNativeBackupDocument(env.adapter, { ...dgtInput(), requestId: '22222222-2222-4222-8222-222222222222' }); const plan = JSON.parse(again.planJSON);
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: 0, importedChecklistItemCount: 0, importedProjectCount: 0, importedSectionCount: 0, importedTaskCount: 0 }); expect(plan.data.tasks.map((item: Task) => item.id)).toEqual(plan.expectedCurrent.tasks.map((item: Task) => item.id));
+        for (const item of plan.data.tasks) if (ids.has(item.id)) { expect(item.title.startsWith('Edited ')).toBe(true); if (condition === 'deleted') expect(item.deletedAt).toBe(AT); } expect(env.writes).toEqual([]);
+    });
+    it('retains complete shared warnings and RN result counts/snapshot/Undo', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const reply = JSON.parse(prepared.planJSON).reply;
+        const parsed = parseImportSource('dgt', { bytes: strToU8(dgtJson), fileName: dgtInput().metadata.fileName }); expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport')); expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectAreaCounts', { taskCount: 8, projectCount: 2, areaCount: 2 })); expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 2 })); expect(model.message).toContain(NAME);
+        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+    });
+    it('DGT Undo restores exact pre-import snapshot and tombstones later edits without a second recovery', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const later = await env.adapter.getData(); later.tasks.push(task('after-dgt')); later.tasks.find((item) => item.id === 'visible')!.title = 'Later'; await env.adapter.saveData(later);
+        const id = '22222222-2222-4222-8222-222222222222'; const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: id }); expect(undo.recoveryJSON).toBeNull(); await commitNativeBackupDocument(env.adapter, { ...reference, id, sha256: 'b'.repeat(64) }, undo.planJSON, NAME);
+        const restored = await env.adapter.getData(); expect(restored.tasks.find((item) => item.id === 'visible')?.title).toBe('visible'); expect(restored.tasks.find((item) => item.id === 'after-dgt')?.deletedAt).toBeTruthy(); expect(restored.projects.filter((item) => !item.deletedAt)).toEqual([]);
+    });
+    it.each(['null','{}','Title,List Name\nPrivate,Private','{private','{"TASK":"Private"}'])('invalid DGT source %s returns localized refusal without adapter access', async (text) => {
+        const env = await open(); const source = dgtInput(text); const read = vi.spyOn(env.adapter, 'getData'); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'dgt'); expect(preview.valid).toBe(false); expect(preview.errorMessage).not.toContain('Private');
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('ZIP uses first valid shared DGT JSON, retaining skipped-entry warnings', async () => {
+        const env = await open(); const zip = zipSync({ 'bad.json': strToU8('{bad'), 'first.json': strToU8(dgtJson), 'second.json': strToU8(JSON.stringify({ TASK: [{ ID: 999, TITLE: 'Must not import' }] })), 'readme.txt': strToU8('ignored') });
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: bytesToBase64(zip), metadata: { ...metadata, fileName: 'DGT.zip' } }); const plan = JSON.parse(prepared.planJSON); expect(plan.data.tasks.some((item: Task) => item.title === 'Must not import')).toBe(false); expect(plan.reply.result.warnings).toContain('1 DGT JSON file could not be parsed and was skipped.'); expect(plan.reply.result.warnings).toContain('1 non-JSON file inside the DGT archive was skipped.'); expect(env.writes).toEqual([]);
+    });
+    it.each(['TR==','TWF=','TQ=','====','eyJUQVNL\n','eyJUQVNL_'])('DGT rejects noncanonical binary transport %s before adapter access', async (text) => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('DGT bounds transport to16MiB before allocation and retains shared8MiB text/ZIP limits', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3)) })).rejects.toThrow('DGT source exceeds 16 MiB');
+        const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...dgtInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, dgtInput().metadata, t, 'dgt').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
+        const zip = bytesToBase64(zipSync({ 'too-large.json': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, dgtInput().metadata, t, 'dgt').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    }, 15_000);
+    it('refuses actual complete over64KiB DGT execution warnings before returning a plan', async () => {
+        const base = clone(original); const TASK = [];
+        for (let index = 1; index <= 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); TASK.push({ ID: index, TITLE: name, TYPE: 1 }); }
+        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, dgtInput(JSON.stringify({ TASK })))).rejects.toThrow('DGT import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+    });
+    it.each(['extra','data','standalone','missing-area','negative','fraction','unsafe','warning','overflow','mode'] as const)('refuses malformed DGT result %s at every boundary before writes', async (fault) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const plan = JSON.parse(prepared.planJSON);
+        if (fault === 'extra') plan.reply.added = 1; if (fault === 'data') plan.reply.result.data = plan.data; if (fault === 'standalone') plan.reply.result.importedStandaloneTaskCount = 0; if (fault === 'missing-area') delete plan.reply.result.importedAreaCount;
+        if (fault === 'negative') plan.reply.result.importedTaskCount = -1; if (fault === 'fraction') plan.reply.result.importedSectionCount = 0.5; if (fault === 'unsafe') plan.reply.result.importedTaskCount = Number.MAX_SAFE_INTEGER + 1;
+        if (fault === 'warning') plan.reply.result.warnings = [1]; if (fault === 'overflow') plan.reply.result.warnings = ['私'.repeat(23_000)]; if (fault === 'mode') plan.reply.operation = 'other'; const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt');
+        expect(() => buildNativeBackupDocumentResult(plan.reply, t)).toThrow('INVALID_INPUT:'); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses otherwise-valid result mode mismatch with frozen plan before writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const plan = JSON.parse(prepared.planJSON); plan.reply.operation = 'ticktick'; expect(() => buildNativeBackupDocumentResult(plan.reply, t)).not.toThrow();
+        await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(env.writes).toEqual([]);
+    });
+    it('refuses stale DGT frozen document after intervening durable change without writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, dgtInput()); const later = await env.adapter.getData(); later.tasks[0].title = 'Changed after DGT'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0;
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+});

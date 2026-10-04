@@ -2003,7 +2003,8 @@ struct DiagnosticsCard: View {
         .fileImporter(isPresented: Binding(
             get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
             set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
-        ), allowedContentTypes: pickerAction.usesBinarySource ? [.commaSeparatedText, .zip, .data] : [.json],
+        ), allowedContentTypes: pickerAction == .dgt ? [.json, .zip, .data]
+            : pickerAction.usesBinarySource ? [.commaSeparatedText, .zip, .data] : [.json],
            allowsMultipleSelection: false) { result in
             Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, action: pickerAction) }
         }
@@ -2122,6 +2123,16 @@ struct DiagnosticsCard: View {
         }
         .disabled(!model.backupImportEnabled)
         .accessibilityIdentifier("data-transfer-import-ticktick")
+        Button { model.openBackupImportPicker(action: .dgt) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("dgtImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("dgtImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-dgt")
         if model.backupImportBusy {
             ProgressView().accessibilityIdentifier("backup-import-progress")
         }
