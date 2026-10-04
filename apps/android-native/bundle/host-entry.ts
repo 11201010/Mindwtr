@@ -164,6 +164,9 @@ const nativeLogFile: DiagnosticsLogFile = {
     append: async (line) => { logFile('append', line); return true; },
     size: async () => Number(logFile('size')),
     moveAside: async () => { logFile('moveAside'); },
+    ...(globalThis.__mindwtrHostPlatform === 'ios' ? {
+        isAbsent: async () => logFile('isAbsent') === '1',
+    } : {}),
 };
 const diagnosticsLog = createDiagnosticsLog({
     isEnabled: () => isDiagnosticsLoggingEnabled(useTaskStore.getState().settings),
@@ -912,7 +915,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -2790,7 +2793,17 @@ globalThis.MindwtrHost = {
     },
     /** Settings › Data's Share log: the log file's path, made when missing (null when it cannot be made). Nothing is sent. */
     logShare(): string {
-        return submit(async () => ({ path: await diagnosticsLog.ensurePath() }));
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform === 'ios') {
+                try {
+                    logInfo('Native iOS diagnostics share requested', {
+                        scope: 'native-ios', force: true,
+                        context: { releaseCheck: 'v1.3.4/ios-diagnostics', operation: 'share' },
+                    });
+                } catch { /* diagnostics must not stop sharing */ }
+            }
+            return { path: await diagnosticsLog.serialize(() => diagnosticsLog.ensurePath()) };
+        });
     },
     /** Settings › Data's Clear log: deletes the log file. */
     logClear(): string {
@@ -2798,6 +2811,10 @@ globalThis.MindwtrHost = {
             await diagnosticsLog.clear();
             return {};
         });
+    },
+    /** Checked Clear: no appended success line may recreate the target after absence is proven. */
+    logClearChecked(): string {
+        return submit(() => diagnosticsLog.clearChecked());
     },
     /** `name` is one of MENU_READS; `json` is that method's input. A read waits for an owed save, as every read does. */
     archiveTaskSelection(json: string): string {

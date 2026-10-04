@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
@@ -24,7 +25,8 @@ struct SettingsScreen: View {
             HStack(spacing: 12) {
                 Button {
                     renameFocused = false
-                    if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+                    if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
+                    else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
                     else if model.settingsGeneralPresented { model.closeGeneralSettings() }
                     else if model.settingsManagePresented { model.closeManageSettings() }
                     else { Task { await model.closeSettings() } }
@@ -34,22 +36,25 @@ struct SettingsScreen: View {
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
+                .disabled(!model.settingsDataPresented && (model.busy || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
                           || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
-                          || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
+                          || model.settingsPersonCreatePresented || model.settingsPersonEditPresented))
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsDataPresented ? model.dataSettings.text("title") : model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGtdArchivePresented { gtdArchiveContent }
+            if model.settingsDataPresented {
+                DiagnosticsCard(model: model, palette: palette, owner: model.settingsDiagnosticsOwner)
+            }
+            else if model.settingsGtdArchivePresented { gtdArchiveContent }
             else if model.settingsGtdTaskEditorPresented { gtdTaskEditorContent }
             else if model.settingsGtdCapturePresented { gtdCaptureContent }
             else if model.settingsGtdInboxPresented { gtdInboxContent }
@@ -183,7 +188,8 @@ struct SettingsScreen: View {
             set: { if !$0 && !model.appLock.concealed { model.closeGtdTaskEditorField() } }
         )) { gtdTaskEditorFieldSheet }
         .accessibilityAction(.escape) {
-            if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+            if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
+            else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
             else if model.settingsGeneralPresented { model.closeGeneralSettings() }
             else if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -834,6 +840,7 @@ struct SettingsScreen: View {
                                 Button {
                                     if row.text("id") == "manage" { Task { await model.openManageSettings() } }
                                     else if row.text("id") == "general" { Task { await model.openGeneralSettings() } }
+                                    else if row.text("id") == "data" { Task { await model.openDataSettings() } }
                                     else if row.text("id") == "gtd" { Task { await model.openGtdSettings() } }
                                 } label: {
                                     HStack(spacing: 12) {
@@ -854,8 +861,8 @@ struct SettingsScreen: View {
                                     }
                                     .padding(.horizontal, 14).frame(minHeight: 60).contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain).disabled(!["manage", "general", "gtd"].contains(row.text("id")) || model.busy || model.retryNeeded)
-                                .opacity(["manage", "general", "gtd"].contains(row.text("id")) ? 1 : 0.55)
+                                .buttonStyle(.plain).disabled(!["manage", "general", "gtd", "data"].contains(row.text("id")) || model.busy || model.retryNeeded)
+                                .opacity(["manage", "general", "gtd", "data"].contains(row.text("id")) ? 1 : 0.55)
                                 .accessibilityLabel(row.text("accessibilityLabel").isEmpty ? row.text("title") : row.text("accessibilityLabel"))
                                 .accessibilityIdentifier("settings-" + row.text("id"))
                                 if rowIndex < groups[groupIndex].count - 1 { palette.border.frame(height: 0.5) }
@@ -1851,4 +1858,88 @@ struct SettingsScreen: View {
         default: return "gearshape"
         }
     }
+}
+
+/// One shared card for Settings and the locally owned pending-task sheet.
+struct DiagnosticsCard: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let owner: UUID
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.diagnosticsLabels.text("title")).rnFont(18, .bold)
+                    .accessibilityAddTraits(.isHeader).accessibilityIdentifier("diagnostics-title")
+                let logging = model.diagnosticsLabels.object("debugLogging")
+                Toggle(isOn: Binding(get: { logging.flag("value") }, set: { value in
+                    Task { await model.setDiagnosticsDebugLogging(value) }
+                })) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(logging.text("label")).rnFont(15, .semibold)
+                        Text(logging.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!model.diagnosticsToggleEnabled || owner != model.settingsDiagnosticsOwner)
+                .accessibilityIdentifier("diagnostics-debug-logging")
+                if let share = model.diagnosticsLabels["shareLog"] as? CoreObject {
+                    Button { Task { await model.shareDiagnostics(owner: owner) } } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(share.text("label")).rnFont(15, .semibold)
+                            Text(share.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .disabled(!model.diagnosticsFileActionsEnabled(owner: owner))
+                    .accessibilityIdentifier("diagnostics-share")
+                }
+                if let clear = model.diagnosticsLabels["clearLog"] as? CoreObject {
+                    Button { Task { await model.clearDiagnostics(owner: owner) } } label: {
+                        Text(clear.text("label")).rnFont(15, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .disabled(!model.diagnosticsFileActionsEnabled(owner: owner))
+                    .accessibilityIdentifier("diagnostics-clear")
+                }
+                if let message = model.diagnosticsMessage {
+                    Text(message).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("diagnostics-message").accessibilityAddTraits(.updatesFrequently)
+                }
+                if let failure = model.diagnosticsReadError {
+                    Text(failure).rnFont(13).foregroundStyle(palette.danger)
+                        .accessibilityIdentifier("diagnostics-read-error")
+                    if owner == model.settingsDiagnosticsOwner {
+                        Button(model.label("common.retry")) { Task { await model.retryDataSettingsRead() } }
+                            .disabled(model.busy).frame(minHeight: 44).accessibilityIdentifier("diagnostics-retry")
+                    }
+                }
+                #if DEBUG && targetEnvironment(simulator)
+                if !model.diagnosticsShareTestState.isEmpty {
+                    Text(model.diagnosticsShareTestState).font(.caption)
+                        .accessibilityIdentifier("diagnostics-test-share-state")
+                }
+                #endif
+                if model.diagnosticsFileBusy { ProgressView().accessibilityIdentifier("diagnostics-file-progress") }
+            }
+            .foregroundStyle(palette.text).padding(16)
+        }
+        .background(palette.bg).accessibilityIdentifier("diagnostics-scroll")
+        .sheet(item: Binding(get: {
+            guard let payload = model.diagnosticsShare, payload.owner == owner,
+                  model.diagnosticsCurrent(owner: owner, session: payload.id) else { return nil }
+            return payload
+        }, set: { (_: DiagnosticsSharePayload?) in model.dismissDiagnosticsShare(owner: owner) })) { payload in
+            DiagnosticsActivitySheet(url: payload.url)
+        }
+    }
+}
+
+private struct DiagnosticsActivitySheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

@@ -845,6 +845,7 @@ export const ruOverrides: Record<string, string> = {
         'settings.saveLog': 'Сохранить журнал',
         'settings.logMissing': 'Файл журнала еще не найден. Включите ведение журнала и сначала воспроизведите проблему.',
         'settings.logCleared': 'Файл журнала очищен.',
+        'settings.logClearFailed': 'Не удалось очистить файл журнала.',
         'settings.shareUnavailable': 'На этом устройстве общий доступ недоступен.',
         'settings.useSystem': 'Использовать системную тему',
         'settings.followDevice': 'Следуйте настройкам внешнего вида устройства',

@@ -913,6 +913,7 @@ export const arOverrides: Record<string, string> = {
         'settings.saveLog': 'حفظ السجل',
         'settings.logMissing': 'لم يتم العثور على ملف السجل بعد. تمكين التسجيل وإعادة إظهار المشكلة أولاً.',
         'settings.logCleared': 'تم مسح ملف السجل.',
+        'settings.logClearFailed': 'تعذّر مسح ملف السجل.',
         'settings.shareUnavailable': 'المشاركة غير متاحة على هذا الجهاز.',
         'settings.useSystem': 'استخدام موضوع النظام',
         'settings.followDevice': 'اتبع إعدادات مظهر الجهاز',

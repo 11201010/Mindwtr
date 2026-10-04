@@ -24,6 +24,7 @@ export type DataSettingsModel = {
         logMissing: string;
         shareUnavailable: string;
         logCleared: string;
+        logClearFailed: string;
     };
 };
 
@@ -45,6 +46,7 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             logMissing: t('settings.logMissing'),
             shareUnavailable: t('settings.shareUnavailable'),
             logCleared: t('settings.logCleared'),
+            logClearFailed: t('settings.logClearFailed'),
         },
     };
 }
