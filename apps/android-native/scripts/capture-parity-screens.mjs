@@ -134,9 +134,10 @@ const buildFixture = () => execFileSync('bun', ['-e', `
             size: Number(process.env.FIXTURE_FILE_SIZE), localStatus: 'available', createdAt: at, updatedAt: at },
         { id: 'parity-link', kind: 'link', title: 'https://example.com/paint-colors', uri: 'https://example.com/paint-colors', createdAt: at, updatedAt: at },
     ] });
+    // The project's Details values (pass PD): a link, notes, a tag, a due and a review date.
     await store().updateProject(kitchen.id, { attachments: [
         { id: 'parity-project-link', kind: 'link', title: 'https://example.com/kitchen-plan', uri: 'https://example.com/kitchen-plan', createdAt: at, updatedAt: at },
-    ] });
+    ], supportNotes: '**Budget** first, then the tiles.\\n\\n- Ask for two quotes', tagIds: ['#home'], dueDate: day(14), reviewAt: new Date(Date.now() + 7 * 86_400_000).toISOString() });
     await flushPendingSave();
     const trashed = await store().addTask(process.env.FIXTURE_TRASHED, { status: 'inbox' });
     if (!trashed.success) throw new Error('addTask failed: ' + trashed.error);
@@ -482,7 +483,8 @@ const shootAttachments = async (prefix, rn) => {
         // A link's row shows core's display title (no scheme) in both apps.
         const projectShown = (current) => current.some((node) => (node.text ?? '').endsWith('example.com/kitchen-plan')) && hasText(current, en['attachments.title']);
         await waitFor(`${PROJECT}'s screen`, (current) => Boolean(inList(current, T.paint)) || projectShown(current), 15_000);
-        if (rn) {
+        // Both apps: the project's Attachments sit inside its folded Details.
+        {
             const details = button(await screen(), en['taskEdit.details']);
             if (details) await tap(details);
         }
@@ -494,6 +496,33 @@ const shootAttachments = async (prefix, rn) => {
         try { writeFileSync(resolve(out, `${prefix}-attachments-failed.xml`), adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty')); } catch { /* best effort */ }
     }
     await toTabs();
+};
+/**
+ * Pass PD's Project details, light and dark: the open project with Details unfolded (Status, Type, Sequential Scope, Sections),
+ * then scrolled to its end (Area, Tags, Notes, Attachments, the dates). Ends on the tabs; a shot that cannot be reached is reported.
+ */
+const shootProjectDetails = async (prefix, suffix, rn) => {
+    const PROJECT = 'Kitchen renovation';
+    const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
+    try {
+        if (rn) openLink('projects');
+        else { const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Projects')), 60_000); await tap(tab(nodes, 'Projects')); }
+        const projects = await waitFor(PROJECT, (current) => Boolean(inList(current, PROJECT)), 45_000);
+        await tap(inList(projects, PROJECT));
+        const details = await waitFor('the Details toggle', (current) => Boolean(button(current, en['taskEdit.details'])) || current.some((node) => node.text === en['taskEdit.details']), 30_000);
+        await shoot(`${prefix}-project-folded-${suffix}`, (current) => hasText(current, en['taskEdit.details']));
+        await tap(button(details, en['taskEdit.details']) ?? details.find((node) => node.text === en['taskEdit.details']));
+        await shoot(`${prefix}-project-details-${suffix}`, (current) => hasText(current, en['projects.statusLabel']));
+        let nodes = await screen();
+        const end = (current) => hasText(current, en['projects.reviewAt']) && hasText(current, en['attachments.title']);
+        for (let step = 0; step < 8 && !end(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
+        await shoot(`${prefix}-project-details-end-${suffix}`, end);
+    } catch (error) {
+        console.log(`warn - ${prefix} project details: ${error.message}`);
+        try { writeFileSync(resolve(out, `${prefix}-project-details-failed.xml`), adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty')); } catch { /* best effort */ }
+    }
+    for (let step = 0; step < 4 && !tab(await screen(), 'Inbox'); step += 1) await back();
+    if (!rn) { const nodes = await screen(); if (button(nodes, 'Back')) await back(); }
 };
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
@@ -549,6 +578,7 @@ try {
         openLink('inbox');
         await shootSettings('rn', mode === 'yes' ? 'dark' : 'light', true);
         if (mode === 'no') await shootAttachments('rn', true);
+        await shootProjectDetails('rn', mode === 'yes' ? 'dark' : 'light', true);
     }
     await stopApp();
 
@@ -594,6 +624,7 @@ try {
         await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
         await shootSettings('native', mode === 'yes' ? 'dark' : 'light', false);
         if (mode === 'no') await shootAttachments('native', false);
+        await shootProjectDetails('native', mode === 'yes' ? 'dark' : 'light', false);
     }
     await stopApp();
 

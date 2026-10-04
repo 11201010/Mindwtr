@@ -417,7 +417,7 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand;
+    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand | ProjectDetailCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
@@ -428,6 +428,9 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 /** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
 type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
+/** Project details' writes, sent by ProjectDetails.kt: each is core's prepared commit, `{ request, prepared }`, journaled as it is. */
+type ProjectDetailCommand = 'projectRename' | 'projectStatus' | 'projectFlow' | 'projectArea' | 'projectTags' | 'projectNotes' | 'projectDate'
+    | 'projectSectionCreate' | 'projectSectionRename' | 'projectSectionDelete' | 'projectSectionOrder';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | 'reminderDone' | 'reminderSnooze' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -786,6 +789,42 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
         const applied = contract.applyAttachmentUpdate(input);
         return applied.ok ? { ok: true, value: { attachments: applied.value } } : applied;
     },
+    // Project details (ProjectDetails.kt): each write's options (the project's token and choices) and its preparation, which
+    // writes nothing; the notes' resolved blocks for the preview and a reference's target.
+    projectRenameOptions: (input) => contract.getProjectRenameOptions(input),
+    projectRenamePrepare: (input) => contract.prepareProjectRename(input),
+    projectStatusOptions: (input) => contract.getProjectStatusOptions(input),
+    projectStatusPrepare: (input) => contract.prepareProjectStatus(input),
+    projectFlowOptions: (input) => contract.getProjectFlowOptions(input),
+    projectFlowPrepare: (input) => contract.prepareProjectFlow(input),
+    projectAreaOptions: (input) => contract.getProjectAreaOptions(input),
+    projectAreaPrepare: (input) => contract.prepareProjectArea(input),
+    projectTagsOptions: (input) => contract.getProjectTagsEditOptions(input),
+    projectTagsPrepare: (input) => contract.prepareProjectTagsWrite(input),
+    projectNotesOptions: (input) => contract.getProjectNotesEditOptions(input),
+    projectNotesPrepare: (input) => contract.prepareProjectNotesWrite(input),
+    projectDateOptions: (input) => contract.getProjectDateOptions(input),
+    projectDatePrepare: (input) => contract.prepareProjectDate(input),
+    projectSectionCreateOptions: (input) => contract.getProjectSectionOptions(input),
+    projectSectionCreatePrepare: (input) => contract.prepareProjectSectionCreate(input),
+    projectSectionRenameOptions: (input) => contract.getProjectSectionRenameOptions(input),
+    projectSectionRenamePrepare: (input) => contract.prepareProjectSectionRename(input),
+    projectSectionDeleteOptions: (input) => contract.getProjectSectionDeleteOptions(input),
+    projectSectionDeletePrepare: (input) => contract.prepareProjectSectionDelete(input),
+    projectSectionOrderOptions: (input) => contract.getProjectSectionOrderOptions(input),
+    projectSectionOrderPrepare: (input) => contract.prepareProjectSectionOrder(input),
+    // RN's Android date picker answers the picked day at the time of day of the value it opened on (core's picker instant),
+    // in the device's zone; core's review date write takes that instant as toISOString.
+    projectReviewInstant: (input) => {
+        const { date, instant } = (input ?? {}) as { date?: unknown; instant?: unknown };
+        const day = typeof date === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(date) : null;
+        const opened = typeof instant === 'string' ? new Date(instant) : null;
+        if (!day || !opened || !Number.isFinite(opened.getTime())) return { ok: false, error: { code: 'INVALID_INPUT', message: 'A picked day and the picker instant are required' } };
+        opened.setFullYear(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+        return { ok: true, value: { instant: opened.toISOString() } };
+    },
+    projectNotesView: (input) => contract.getProjectNotes(input),
+    projectNotesTarget: (input) => contract.getProjectNotesReferenceTarget(input),
 };
 /**
  * The attachments' long calls (native-host-contract-attachments.ts): Download and Open wait on the network (a synced file's bytes),
@@ -882,6 +921,18 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     attachmentAddFile: (input) => contract.addAttachmentFile(input),
     attachmentLinks: (input) => contract.submitAttachmentLinks(input),
     attachmentRemove: (input) => contract.removeAttachment(input),
+    // Project details (ProjectDetails.kt): core's prepared commits, each `{ request, prepared }` as its preparation answered.
+    projectRename: (input) => contract.commitPreparedProjectRename(input),
+    projectStatus: (input) => contract.commitPreparedProjectStatus(input),
+    projectFlow: (input) => contract.commitPreparedProjectFlow(input),
+    projectArea: (input) => contract.commitPreparedProjectArea(input),
+    projectTags: (input) => contract.commitPreparedProjectTagsWrite(input),
+    projectNotes: (input) => contract.commitPreparedProjectNotesWrite(input),
+    projectDate: (input) => contract.commitPreparedProjectDate(input),
+    projectSectionCreate: (input) => contract.commitPreparedProjectSectionCreate(input),
+    projectSectionRename: (input) => contract.commitPreparedProjectSectionRename(input),
+    projectSectionDelete: (input) => contract.commitPreparedProjectSectionDelete(input),
+    projectSectionOrder: (input) => contract.commitPreparedProjectSectionOrder(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;

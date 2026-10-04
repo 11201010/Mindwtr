@@ -30,7 +30,7 @@ class WriteJournal(
          * CoreHost's write methods (host-entry.ts's task commands, each answered through taskResult) and the arguments each takes,
          * which an entry read at boot must still fit to be replayed: "id" non-empty text (an id, a revision, a request UUID),
          * "text" any text, "bool" a boolean, "menu" a command of [MENU], and "{a,b[]}" a JSON object text whose `a` is non-empty
-         * text and `b` an array ("{menu}": the keys [MENU] gives the command). check-boot-gates.mjs keeps the methods and their
+         * text and `b` an array, `c{}` an object ("{menu}": the keys [MENU] gives the command). check-boot-gates.mjs keeps the methods and their
          * arguments equal to host-entry's, and the methods to core's write commands.
          */
         val SHAPES = mapOf(
@@ -55,11 +55,16 @@ class WriteJournal(
             "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
             // Attachments: Add file and Add photo, the link sheet's Save, Remove (a project's written at once through receipts).
             "attachmentAddFile" to "{requestId}", "attachmentLinks" to "{requestId}", "attachmentRemove" to "{requestId,attachmentId}",
+            // Project details (ProjectDetails.kt): each is core's prepared commit, its request and its frozen preparation.
+            "projectRename" to PREPARED, "projectStatus" to PREPARED, "projectFlow" to PREPARED, "projectArea" to PREPARED,
+            "projectTags" to PREPARED, "projectNotes" to PREPARED, "projectDate" to PREPARED, "projectSectionCreate" to PREPARED,
+            "projectSectionRename" to PREPARED, "projectSectionDelete" to PREPARED, "projectSectionOrder" to PREPARED,
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
             "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",
             "openAISettings").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
+        private const val PREPARED = "{request{},prepared{}}"
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
@@ -204,11 +209,15 @@ class WriteJournal(
         }
     }
 
-    /** [arg] is a JSON object text with [keys] (`{a,b[]}`): `a` non-empty text, `b` an array. */
+    /** [arg] is a JSON object text with [keys] (`{a,b[],c{}}`): `a` non-empty text, `b` an array, `c` an object. */
     private fun holds(arg: Any?, keys: String): Boolean {
         val json = (arg as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return false
         return keys.removeSurrounding("{", "}").split(',').all { key ->
-            if (key.endsWith("[]")) json.opt(key.dropLast(2)) is JSONArray else (json.opt(key) as? String).orEmpty().isNotEmpty()
+            when {
+                key.endsWith("[]") -> json.opt(key.dropLast(2)) is JSONArray
+                key.endsWith("{}") -> json.opt(key.dropLast(2)) is JSONObject
+                else -> (json.opt(key) as? String).orEmpty().isNotEmpty()
+            }
         }
     }
 

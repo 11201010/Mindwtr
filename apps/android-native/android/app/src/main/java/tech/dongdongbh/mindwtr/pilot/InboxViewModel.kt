@@ -85,7 +85,7 @@ internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_N
  */
 private val STALE_SHOWN = setOf("saveDraft", "update", "calendarCreate", "manageEditor")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
-private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS + ATTACHMENT_KINDS
+private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS + ATTACHMENT_KINDS + PROJECT_DETAIL_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -243,6 +243,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val ai = AIActionsModel(this)
     /** The editor's and the project screen's attachments (Attachments.kt): rows, pickers, links, downloads, opening. */
     val attachments = AttachmentsModel(this)
+    /** The open project's Details (ProjectDetails.kt): its pickers and core's prepared commits. */
+    val projectDetails = ProjectDetailsModel(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
@@ -1030,6 +1032,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             }
             // A project's attachment command (Attachments.kt) with its exact request.
             in ATTACHMENT_KINDS -> attachments.retry(action)
+            // A Project details commit (ProjectDetails.kt) with its exact request and preparation.
+            in PROJECT_DETAIL_KINDS -> projectDetails.retry(action)
             // The Menu tab's commands (MENU_KINDS) keep their exact request in MenuModel.
             else -> menu.retry(action)
         }

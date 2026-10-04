@@ -272,7 +272,7 @@ private fun ChecklistAddInput(model: InboxViewModel, add: JSONObject, enabled: B
  * numbered lists, and paragraphs, each block's text drawn from core's inline runs.
  */
 @Composable
-private fun MarkdownBlocks(blocks: List<JSONObject>, labels: JSONObject, follow: (JSONObject) -> Unit) {
+internal fun MarkdownBlocks(blocks: List<JSONObject>, labels: JSONObject, follow: (JSONObject) -> Unit) {
     val c = LocalTheme.current.colors
     val clipboard = LocalClipboardManager.current
     val runs = { block: JSONObject -> inline(block.menuObjects("inline"), labels, c.tint, c.secondaryText, c.cardBg, follow) }

@@ -901,6 +901,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
+    // Project details' prepared commits: Kotlin journals them as Menu commands (ProjectDetails.kt), and the iOS host's own commit
+    // methods (projectRenameCommit, …) send the same core writes from its own journal, so Kotlin never calls those by name.
+    const projectDetailWrites = ['commitPreparedProjectRename', 'commitPreparedProjectStatus', 'commitPreparedProjectFlow', 'commitPreparedProjectArea',
+        'commitPreparedProjectTagsWrite', 'commitPreparedProjectNotesWrite', 'commitPreparedProjectDate', 'commitPreparedProjectSectionCreate',
+        'commitPreparedProjectSectionRename', 'commitPreparedProjectSectionDelete', 'commitPreparedProjectSectionOrder'];
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
     // Core writes no host method calls yet (Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
@@ -933,7 +938,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Attachments (pass A2): Add file and Add photo, the link sheet's Save, Remove (a project's written at once, receipts of their own).
         'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment',
         // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
-        'completeReminderTask', 'snoozeReminder'];
+        'completeReminderTask', 'snoozeReminder',
+        // Project details: core's prepared commits (each its request and its frozen preparation, replay-safe by its after-row).
+        ...projectDetailWrites];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -943,7 +950,16 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.deepEqual([...new Set(writeCalls)].sort(), [...coreWrites].sort(), 'the journaled methods call exactly core\'s write commands');
     // iOS's own write methods (taskAttachmentLinks, taskAttachmentRemove: core writes Kotlin journals as a project's, pass A2) are
     // left out by name: the check above proves no Kotlin file names them, and iOS journals them.
-    const readCalls = [...methods.filter((m) => !writes.includes(m.name) && !iosOnlyMethods.includes(m.name)).flatMap((m) => called(m.body)),
+    const iosProjectCommits = methods.filter((m) => !writes.includes(m.name) && called(m.body).some((name) => projectDetailWrites.includes(name))).map((m) => m.name);
+    assert.deepEqual(iosProjectCommits, ['projectSectionCreateCommit', 'projectSectionRenameCommit', 'projectSectionDeleteCommit', 'projectSectionOrderCommit',
+        'projectRenameCommit', 'projectFlowCommit', 'projectNotesWriteCommit', 'projectTagsWriteCommit', 'projectStatusCommit', 'projectDateCommit',
+        'projectAreaCommit'], 'each Project details commit has its iOS host method');
+    {
+        const java = resolve(app, 'android/app/src/main/java');
+        const kotlin = readdirSync(java, { recursive: true }).filter((file) => file.endsWith('.kt')).map((file) => readFileSync(resolve(java, file), 'utf8')).join('\n');
+        assert.equal(kotlin.match(new RegExp(`"(${iosProjectCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS host\'s Project details commits');
+    }
+    const readCalls = [...methods.filter((m) => !writes.includes(m.name) && !iosOnlyMethods.includes(m.name) && !iosProjectCommits.includes(m.name)).flatMap((m) => called(m.body)),
         ...called(table('MENU_READS'))];
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
     // The AI's requests are reads too: they send task text to the provider and write nothing (an answer applies through the screen's edits).
@@ -1733,8 +1749,12 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     const aiKinds = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Attachments' writes (pass A2), sent by Attachments.kt for the editor's draft and a project's list.
     const attachmentKinds = [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand;`));
+    // Project details' writes, sent by ProjectDetails.kt: core's prepared commits.
+    const projectDetailKinds = [.../val PROJECT_DETAIL_KINDS = setOf\(([^)]*)\)/.exec(source('ProjectDetails.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds, ...projectDetailKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
+    assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
+    assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
     assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${attachmentKinds.join('|')})"`), 'the Menu tab never sends an attachment command itself');
     assert.match(hostEntry, new RegExp(`type SyncScreenCommand = ${syncKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));

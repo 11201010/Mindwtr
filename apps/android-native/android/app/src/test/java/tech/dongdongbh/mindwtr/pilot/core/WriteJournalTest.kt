@@ -248,4 +248,21 @@ class WriteJournalTest {
         assertEquals("syncPreference", reopened.pending().single().args[0])
         assertTrue(File(dir, "${WriteJournal.ASIDE}/0000000000000099.json").exists())
     }
+
+    /** A Project details write is core's prepared commit: its request and its frozen preparation, both objects, or no replay. */
+    @Test fun aProjectDetailsCommitReplaysOnlyWithItsRequestAndPreparation() {
+        val dir = File(folder.root, "journal").apply { mkdirs() }
+        val fits = """{"request":{"requestId":"r-1","projectId":"p"},"prepared":{"version":1}}"""
+        val misfits = listOf("""{"request":"r-1","prepared":{"version":1}}""", """{"request":{"requestId":"r-1"}}""")
+        misfits.forEachIndexed { index, json ->
+            File(dir, "000000000000000${index + 1}.json").writeText("""{"method":"menuCommand","args":["projectRename",${org.json.JSONObject.quote(json)}]}""")
+        }
+        val journal = open(dir)
+        assertEquals(emptyList<WriteJournal.Entry>(), journal.pending())
+        for (kind in listOf("projectRename", "projectStatus", "projectFlow", "projectArea", "projectTags", "projectNotes", "projectDate",
+            "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder")) {
+            assertTrue(kind, journal.append("menuCommand", listOf(kind, fits)) != null)
+        }
+        assertEquals(11, open(dir).pending().size)
+    }
 }

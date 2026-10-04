@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,8 +112,12 @@ data class DetailTask(val row: TaskRow, val sequenceCue: String?) : DetailItem
 /** Core's sequence cue values and mobile's label key for each. */
 private val CUE_KEYS = mapOf("available" to "projects.availableNextAction", "later" to "projects.laterInSequence")
 
-/** Core's getProjectDetail windows at one revision: section markers and task rows exactly in core's order. */
-data class ProjectDetail(val revision: String, val projectId: String, val readOnly: Boolean, val total: Int, val items: List<DetailItem>) {
+/**
+ * Core's getProjectDetail windows at one revision: section markers and task rows exactly in core's order, and core's
+ * [metadata] for the project's Details (getProjectDetailsPresentation: the summary and every value's label).
+ */
+data class ProjectDetail(val revision: String, val projectId: String, val readOnly: Boolean, val total: Int, val items: List<DetailItem>,
+                         val metadata: JSONObject? = null) {
     /** Adds one later window after the items already loaded. */
     fun append(window: JSONObject): ProjectDetail {
         val next = parse(window)
@@ -124,7 +130,7 @@ data class ProjectDetail(val revision: String, val projectId: String, val readOn
             check(json.getInt("version") == 1) { "Unsupported core contract" }
             val items = json.getJSONArray("items")
             return ProjectDetail(json.getString("revision"), json.getString("projectId"), json.getBoolean("readOnly"),
-                json.getInt("total"), List(items.length()) { index ->
+                json.getInt("total"), metadata = json.optJSONObject("metadata"), items = List(items.length()) { index ->
                     items.getJSONObject(index).let { item ->
                         if (item.getString("type") == "section") {
                             DetailSection(item.getString("id"), item.getString("title"), item.getInt("count"), item.getBoolean("muted"))
@@ -351,6 +357,8 @@ private fun ProjectDetailList(model: InboxViewModel, modifier: Modifier) = with(
     val c = LocalTheme.current.colors
     val detail = project
     val completable = detail?.readOnly == false
+    LaunchedEffect(openProjectId) { projectDetails.follow(openProjectId) }
+    DisposableEffect(Unit) { onDispose { projectDetails.closeOverlays() } }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -358,12 +366,12 @@ private fun ProjectDetailList(model: InboxViewModel, modifier: Modifier) = with(
             IconButton(onClick = model::closeProject, enabled = failedAction == null, modifier = Modifier.semantics { contentDescription = back }) {
                 Icon(Lucide.ChevronLeft, null, tint = c.tint, modifier = Modifier.size(24.dp))
             }
-            Text(projects?.title(openProjectId.orEmpty()).orEmpty(), style = rnText(18, 700), color = c.text, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { heading() })
+            ProjectTitleField(model, projects?.title(openProjectId.orEmpty()).orEmpty(), detail?.readOnly != false, Modifier.weight(1f).padding(start = 8.dp))
         }
-        LazyColumn(Modifier.weight(1f).background(c.bg), contentPadding = PaddingValues(12.dp)) {
-            // RN's project Attachments card (ProjectDetailModal's attachmentsContainer), above the project's tasks.
-            openProjectId?.let { id -> item(key = "attachments") { ProjectAttachments(model, id) } }
+        // RN's KeyboardAvoidingView: the open keyboard shortens the list, so a focused Details field scrolls into view.
+        LazyColumn(Modifier.weight(1f).background(c.bg).imePadding(), contentPadding = PaddingValues(12.dp)) {
+            // RN's Details toggle and panel (its Attachments card inside), scrolling away with the rows as RN's list header.
+            openProjectId?.let { id -> projectDetailsItems(model, id, detail) }
             for (entry in detail?.items.orEmpty()) when (entry) {
                 is DetailSection -> item(key = "section:${entry.id}") {
                     SectionTitle(entry.title, entry.count,

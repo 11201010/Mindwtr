@@ -76,6 +76,11 @@ val LABEL_KEYS = listOf(
     "attachments.addFile", "attachments.addPhoto", "attachments.addLink", "attachments.download", "attachments.missing", "attachments.remove",
     "attachments.linkPlaceholder", "attachments.linkInputHint", "attachments.linkBatchHint", "common.validationRequired", "common.share",
     "share.unavailable", "common.play", "common.pause", "audio.loading", "quickAdd.audioNoteTitle", "quickAdd.audioErrorBody",
+    // Project details (ProjectDetails.kt): the panel's labels and help, its pickers and the section manager; the values are core's.
+    "projects.statusLabel", "projects.projectTypeLabel", "projects.projectTypeHelpLabel", "projects.projectTypeHelpText", "projects.sequentialScope",
+    "projects.sequentialAcrossSections", "projects.sequentialWithinSections", "projects.sequentialScopeHelpLabel", "projects.sequentialScopeHelpText",
+    "projects.sectionsLabel", "settings.manage", "projects.addSection", "projects.areaLabel", "project.notes", "projects.notesPlaceholder",
+    "projects.reviewAt", "projects.sectionPlaceholder", "projects.moveUp", "projects.moveDown", "projects.deleteSectionConfirm", "common.add",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */
