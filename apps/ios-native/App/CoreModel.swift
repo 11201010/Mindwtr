@@ -22394,7 +22394,7 @@ final class CoreModel: ObservableObject {
                 // to the normal caller's generation/session guards, rather than
                 // replacing the stale-response test with a cancelled debounce.
                 recordReferenceBulkRemoveTestRead("held", read: read)
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                try? await Task.sleep(nanoseconds: 900_000_000_000)
                 recordReferenceBulkRemoveTestRead("delivered", read: read, cancelled: Task.isCancelled)
             } else if read.query == "Task196 pool" {
                 recordReferenceBulkRemoveTestRead("served", read: read)
