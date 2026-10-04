@@ -23,12 +23,12 @@ private enum InstallerNodeKind {
   case other
 }
 
-enum ExpectedAttachmentGeneration {
+public enum ExpectedAttachmentGeneration {
   case absent
   case present(sha256: String)
 }
 
-enum AttachmentInstallOutcome {
+public enum AttachmentInstallOutcome {
   case installed(preservedUrl: URL?)
   case conflict(preservedUrl: URL)
 }
@@ -56,10 +56,71 @@ enum ImmutableAttachmentStageCleanupOutcome {
   case conflict
 }
 
-struct AttachmentFileHashSnapshot {
-  let sha256: String
-  let size: UInt64
-  let modificationTimeMs: Double
+public struct AttachmentFileHashSnapshot {
+  public let sha256: String
+  public let size: UInt64
+  public let modificationTimeMs: Double
+}
+
+/// Typed entry point for clients using the same managed-file installer as RN.
+/// Roots come from the host's private storage owner, never an install request.
+public final class AttachmentFileInstaller {
+  private let installer: AttachmentFileInstallerEngine
+  private let hasher: AttachmentFileHashingEngine
+
+  public init(targetRoot: URL, sourceRoots: [URL]) throws {
+    try Self.validateRoot(targetRoot)
+    for root in sourceRoots { try Self.validateRoot(root) }
+    installer = AttachmentFileInstallerEngine(targetRoot: targetRoot, sourceRoots: sourceRoots)
+    hasher = AttachmentFileHashingEngine(targetRoot: targetRoot)
+  }
+
+  public func install(
+    stagedInput: URL,
+    targetInput: URL,
+    expected: ExpectedAttachmentGeneration,
+    expectedDownloadSha256: String
+  ) throws -> AttachmentInstallOutcome {
+    try Self.validateFileURL(stagedInput)
+    try Self.validateFileURL(targetInput)
+    let generation: ExpectedAttachmentGeneration
+    switch expected {
+    case .absent: generation = .absent
+    case .present(let sha256):
+      generation = .present(sha256: try parseInstallerSha256(sha256, label: "Expected attachment"))
+    }
+    return try installer.install(
+      stagedInput: stagedInput,
+      targetInput: targetInput,
+      expected: generation,
+      expectedDownloadSha256: try parseInstallerSha256(expectedDownloadSha256, label: "Expected download")
+    )
+  }
+
+  public func hash(_ input: URL) throws -> AttachmentFileHashSnapshot {
+    try Self.validateFileURL(input)
+    return try hasher.hash(input)
+  }
+
+  private static func validateFileURL(_ input: URL) throws {
+    guard input.isFileURL else { throw installerError("Only app-private file paths are supported") }
+  }
+
+  private static func validateRoot(_ input: URL) throws {
+    try validateFileURL(input)
+    // Check the injected root before the engine resolves it. System ancestor
+    // aliases (for example /var on Apple platforms) retain existing semantics.
+    var path = input.path
+    while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+    var value = stat()
+    if Darwin.lstat(path, &value) == 0 {
+      guard value.st_mode & S_IFMT == S_IFDIR else {
+        throw installerError("Managed attachment root is not a regular directory")
+      }
+    } else if errno != ENOENT {
+      throw installerError("Managed attachment root is unavailable")
+    }
+  }
 }
 
 /** Native streaming verifier for the managed canonical attachment generation.
@@ -201,6 +262,12 @@ private func installerError(_ message: String, underlying: Error? = nil) -> NSEr
 private func isSha256(_ value: String) -> Bool {
   let range = NSRange(value.startIndex..<value.endIndex, in: value)
   return sha256Pattern.firstMatch(in: value, range: range)?.range == range
+}
+
+private func parseInstallerSha256(_ value: String, label: String) throws -> String {
+  let digest = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  guard isSha256(digest) else { throw installerError("\(label) SHA-256 is invalid") }
+  return digest
 }
 
 // Deterministic crash boundaries for the native recovery test target. The app
@@ -1422,7 +1489,7 @@ public final class AttachmentFileInstallerModule: Module {
         throw installerError("App-private storage roots are unavailable")
       }
       let targetRoot = documentsRoot.appendingPathComponent("attachments", isDirectory: true)
-      let engine = AttachmentFileInstallerEngine(
+      let engine = try AttachmentFileInstaller(
         targetRoot: targetRoot,
         sourceRoots: [documentsRoot, cacheRoot, fileManager.temporaryDirectory]
       )
@@ -1556,8 +1623,9 @@ public final class AttachmentFileInstallerModule: Module {
       guard let documentsRoot = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
         throw installerError("App-private storage root is unavailable")
       }
-      let snapshot = try AttachmentFileHashingEngine(
-        targetRoot: documentsRoot.appendingPathComponent("attachments", isDirectory: true)
+      let snapshot = try AttachmentFileInstaller(
+        targetRoot: documentsRoot.appendingPathComponent("attachments", isDirectory: true),
+        sourceRoots: []
       ).hash(try Self.fileUrl(targetPath))
       return [
         "sha256": snapshot.sha256,
@@ -1592,9 +1660,7 @@ public final class AttachmentFileInstallerModule: Module {
   }
 
   private static func parseSha256(_ value: String, label: String) throws -> String {
-    let digest = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    guard isSha256(digest) else { throw installerError("\(label) SHA-256 is invalid") }
-    return digest
+    try parseInstallerSha256(value, label: label)
   }
 }
 #endif
