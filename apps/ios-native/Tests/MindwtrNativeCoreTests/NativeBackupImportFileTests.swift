@@ -147,4 +147,33 @@ final class NativeBackupImportFileTests: XCTestCase {
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("backup-imports").path), [])
         }
     }
+    func testCSV16MiBBoundBinaryCopyAndGrowthRefusal() throws {
+        try withRoot { root in
+            let limit = 16 * 1024 * 1024
+            let url = try source(root, bytes: Data([0x50, 0x4b, 0xff, 0x00]))
+            let fd = Darwin.open(url.path, O_WRONLY)
+            guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }
+            defer { Darwin.close(fd) }
+            let port = NativeBackupImportFile(libraryRoot: root)
+            XCTAssertThrowsError(try port.stage(url, maximumBytes: 0))
+            XCTAssertThrowsError(try port.stage(url, maximumBytes: NativeBackupImportFile.maximumBytes + 1))
+            XCTAssertEqual(Darwin.ftruncate(fd, off_t(limit)), 0)
+            let copied = try port.stage(url, maximumBytes: limit)
+            let bytes = try NativeBackupImportFile(libraryRoot: root).read(copied.reference)
+            XCTAssertEqual(bytes.count, limit)
+            XCTAssertEqual(Array(bytes.prefix(4)), [0x50, 0x4b, 0xff, 0x00])
+            try port.discard(copied.reference)
+            XCTAssertEqual(Darwin.ftruncate(fd, off_t(limit + 1)), 0)
+            XCTAssertThrowsError(try port.stage(url, maximumBytes: limit)) { error in
+                XCTAssertEqual(error as? NativeBackupImportFileError, .tooLarge)
+            }
+            XCTAssertEqual(Darwin.ftruncate(fd, 4), 0)
+            port.afterSourceOpened = { XCTAssertEqual(Darwin.ftruncate(fd, off_t(limit + 1)), 0) }
+            XCTAssertThrowsError(try port.stage(url, maximumBytes: limit)) { error in
+                XCTAssertEqual(error as? NativeBackupImportFileError, .tooLarge)
+            }
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("backup-imports").path), [])
+        }
+    }
+
 }

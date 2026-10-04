@@ -1,3 +1,6 @@
+import { strToU8, zipSync } from 'fflate';
+import { bytesToBase64 } from './base64-bytes';
+import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -278,4 +281,115 @@ describe('native frozen backup plan over actual SQLite', () => {
         await expect(prepareNativeBackupDocument(env.adapter, input())).rejects.toThrow('SAVE_FAILED:');
         expect(env.writes).toEqual([]);
     });
+});
+
+const csvFile = (headers: string[], rows: string[][]) => [headers, ...rows].map((row) => row.map((cell) => `"${cell.replace(/"/gu, '""')}"`).join(',')).join('\n');
+const csvInput = (text = 'Title,Project,Section,Area,Checklist,ID\n日本語 🦉,Launch,Now,Work,[x] First|[ ] Next,csv-task'): NativeBackupDocumentPrepareInput =>
+    ({ ...input(), mode: 'csv', text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'owned.csv' } });
+
+describe('native immutable Mindwtr CSV and ZIP import', () => {
+    it.each([
+        [1, '1 task was skipped because it was imported earlier and then deleted here; deletions are kept on re-import.'],
+        [2, '2 tasks were skipped because they were imported earlier and then deleted here; deletions are kept on re-import.'],
+    ] as const)('presents deleted-import warning count %s using existing skipped-record copy', (count, warning) => {
+        const model = buildNativeBackupDocumentResult({ version: 1, operation: 'csv', snapshotName: NAME, result: {
+            importedAreaCount: 0, importedChecklistItemCount: 0, importedProjectCount: 0, importedSectionCount: 0,
+            importedStandaloneTaskCount: 0, importedTaskCount: 0, warnings: [warning],
+        } }, t);
+        expect(model.message).toContain(t('settings.importDiagnostics.skippedExistingRecords', { count }));
+        expect(model.message).not.toContain(t('settings.importDiagnostics.adjustedRecords', { count }));
+        expect(model.undoLabel).toBe(t('settings.undoImport'));
+    });
+    it.each(['csv', 'zip'] as const)('inspects %s bytes using actual RN preview without document writes', async (format) => {
+        const env = await open(); const source = csvInput();
+        if (format === 'zip') { source.text = bytesToBase64(zipSync({ 'tasks.csv': strToU8('Title,Checklist\n日本語 🦉,[x] First|[ ] Next') })); source.metadata.fileName = 'owned.zip'; }
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
+        expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7);
+        expect(preview.title).toBe(t('settings.backupMobile.importMindwtrCsvData'));
+        expect(preview.summary).toContain(t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: 2 }));
+        expect(preview.confirmLabel).toBe(t('settings.backupMobile.import')); expect(env.writes).toEqual([]);
+    });
+    it.each(['csv', 'zip'] as const)('freezes %s RN application/checklist IDs and all result fields before commit, then cold-replays without changing later edits', async (format) => {
+        const env = await open(); const source = csvInput();
+        if (format === 'zip') { source.text = bytesToBase64(zipSync({ 'tasks.csv': strToU8('Title,Checklist,ID\n日本語 🦉,[x] First|[ ] Next,csv-task') })); source.metadata.fileName = 'owned.zip'; }
+        const before = await env.state(); const prepared = await prepareNativeBackupDocument(env.adapter, source);
+        const plan = JSON.parse(prepared.planJSON); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+        expect(plan.reply).toMatchObject({ version: 1, operation: 'csv', snapshotName: NAME, result: { importedTaskCount: 1, importedChecklistItemCount: 2 } });
+        expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(7); expect(plan.reply.result).not.toHaveProperty('data');
+        expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
+        const imported = plan.data.tasks.find((item: Task) => item.title === '日本語 🦉');
+        const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === imported.id)?.checklist).toEqual(imported.checklist);
+        const later = await env.adapter.getData(); const target = later.tasks.find((item) => item.id === imported.id)!; target.title = 'Later CSV edit'; target.rev! += 1;
+        await env.adapter.saveData(later); const committed = await env.state(); resetNativeRequestReceipts();
+        await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] });
+        const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
+        expect(await readNativeBackupDocumentOutcome(cold, reference, prepared.planJSON, NAME)).toEqual(first);
+        expect(await commitNativeBackupDocument(cold, reference, prepared.planJSON, NAME)).toEqual(first);
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(committed);
+        expect(useTaskStore.getState()._allTasks.find((item) => item.id === imported.id)?.title).toBe('Later CSV edit');
+    });
+    it('uses latest durable state at confirmation and preserves shared status/date/reference/recurrence policy', async () => {
+        const env = await open(); const text = csvFile(['Title','Status','Start Date','Due Date','Review Date','Cancelled At','Recurrence','ID'], [
+            ['Reference','reference','2026-10-05','2026-10-06','2026-10-07','','','reference'],
+            ['Recurring','next','2026-10-05','2026-10-06','','','FREQ=DAILY','recurring'],
+            ['Cancelled','','','','','2026-10-03T10:00:00Z','','cancelled']]);
+        const source = csvInput(text); inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
+        const latest = await env.adapter.getData(); latest.tasks.push(task('latest-before-confirm')); await env.adapter.saveData(latest); env.writes.length = 0;
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON);
+        expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-before-confirm')).toBe(true);
+        const ref = plan.data.tasks.find((item: Task) => item.title === 'Reference'); expect(ref.status).toBe('reference'); expect(ref.startTime).toBeUndefined(); expect(ref.dueDate).toBeUndefined(); expect(ref.reviewAt).toBeUndefined();
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Recurring')).toMatchObject({ startTime: '2026-10-05', dueDate: '2026-10-06', recurrence: { rule: 'daily' } });
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Cancelled')).toMatchObject({ status: 'archived', cancelledAt: '2026-10-03T10:00:00.000Z' });
+        expect(env.writes).toEqual([]);
+    });
+    it('retains every RN warning and localized result counts/checklist/snapshot/Undo', async () => {
+        const env = await open(); const source = csvInput('Title,Status,Recurrence,Checklist\nWarning,unknown,every odd Tuesday,[x] Done');
+        const parsed = parseImportSource('mindwtr-csv', { bytes: strToU8('Title,Status,Recurrence,Checklist\nWarning,unknown,every odd Tuesday,[x] Done'), fileName: source.metadata.fileName });
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'csv');
+        for (const diagnostic of createImportDiagnostics(parsed.preview!.warnings, 'warning')) expect(preview.summary).toContain(formatImportDiagnostic(diagnostic, t));
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const reply = JSON.parse(prepared.planJSON).reply;
+        expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
+        expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 1 })); expect(model.message).toContain(NAME);
+        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+    });
+    it.each(['VGl0bGUs\n', 'VGl0bGUs_', 'TR==', 'TWF=', 'TQ=', '====', 'VGl0=bGU'])('rejects noncanonical binary transport %s before any adapter read/write', async (text) => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+        await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), text })).rejects.toThrow('INVALID_INPUT:');
+        expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('bounds decoded bytes before allocating and preserves the shared 8 MiB text limit inside the 16 MiB transport', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+        const tooLarge = 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3));
+        await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), text: tooLarge })).rejects.toThrow('CSV source exceeds 16 MiB');
+        const exactLimit = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '==';
+        await expect(prepareNativeBackupDocument(env.adapter, { ...csvInput(), text: exactLimit })).rejects.toThrow('INVALID_INPUT: Invalid backup document input');
+        const preview = inspectNativeBackupDocument(exactLimit, csvInput().metadata, t, 'csv'); expect(preview.valid).toBe(false); expect(preview.errorMessage).toBe(formatImportDiagnostic(parseImportSource('mindwtr-csv', { bytes: new Uint8Array(16 * 1024 * 1024), fileName: 'owned.csv' }).diagnostics.find((item) => item.severity === 'error')!, t));
+        expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses complete over-64KiB warnings before returning a plan, with no discarded warnings or document writes', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+        const source = csvInput(csvFile(['Title','Recurrence'], [['Large warning', 'invalid rule ' + '私'.repeat(23_000)]]));
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('CSV import result exceeds 64 KiB');
+        expect(read).toHaveBeenCalledTimes(1); expect(env.writes).toEqual([]);
+    });
+    it.each(['data','negative','fraction','extra','warning','overflow'] as const)('rejects malformed frozen CSV result %s before receipt operations', async (fault) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, csvInput()); const plan = JSON.parse(prepared.planJSON);
+        if (fault === 'data') plan.reply.result.data = plan.data;
+        if (fault === 'negative') plan.reply.result.importedTaskCount = -1;
+        if (fault === 'fraction') plan.reply.result.importedTaskCount = 0.5;
+        if (fault === 'extra') plan.reply.added = 1;
+        if (fault === 'warning') plan.reply.result.warnings = [1];
+        if (fault === 'overflow') plan.reply.result.warnings = ['私'.repeat(23_000)];
+        const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt'); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:');
+        expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('rejects stale CSV frozen data after an intervening edit without receipt or document writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, csvInput());
+        const later = await env.adapter.getData(); later.tasks[0].title = 'After CSV prepare'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0;
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:');
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+    it('refuses unsupported source format', () => expect(() => inspectNativeBackupDocument('', metadata, t, 'other' as 'csv')).toThrow('INVALID_INPUT:'));
 });

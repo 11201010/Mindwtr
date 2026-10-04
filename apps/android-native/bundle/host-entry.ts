@@ -2821,14 +2821,15 @@ globalThis.MindwtrHost = {
             return {};
         });
     },
-    backupDocumentInspect(text: string, metadataJSON: string): string {
+    backupDocumentInspect(text: string, metadataJSON: string, format = 'json'): string {
         return submit(async () => {
             backupAdapter(true);
             const pending = getPersistenceStatus();
             if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
                 throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
             }
-            return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate);
+            if (format !== 'json' && format !== 'csv') throw new Error('INVALID_INPUT: Invalid backup document input');
+            return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate, format);
         });
     },
     backupDocumentPrepare(inputJSON: string): string {

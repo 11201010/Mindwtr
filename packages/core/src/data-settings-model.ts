@@ -18,6 +18,7 @@ export type DataSettingsModel = {
     backup: {
         title: string; exportLabel: string; description: string; failed: string;
         csvLabel: string; csvDescription: string; csvFailed: string;
+        csvImportLabel: string; csvImportDescription: string;
         tasknotesLabel: string; tasknotesDescription: string; tasknotesFailed: string;
         mergeLabel: string; mergeDescription: string; mergeFailed: string; snapshotsLabel: string; restoreLabel: string;
     };
@@ -47,6 +48,8 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             csvLabel: t('settings.exportCsv'),
             csvDescription: t('settings.exportCsvDesc'),
             csvFailed: t('settings.exportCsvFailed'),
+            csvImportLabel: t('settings.importMindwtrCsv'),
+            csvImportDescription: t('settings.importMindwtrCsvDesc'),
             tasknotesLabel: t('settings.exportTaskNotes'),
             tasknotesDescription: t('settings.exportTaskNotesDesc'),
             tasknotesFailed: t('settings.exportTaskNotesFailed'),

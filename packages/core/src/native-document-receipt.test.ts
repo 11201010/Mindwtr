@@ -16,7 +16,7 @@ import type { AppData } from './types';
 const AT = '2026-10-04T12:00:00.000Z';
 const ID = '11111111-1111-4111-8111-111111111111';
 const STAGED = '22222222-2222-4222-8222-222222222222';
-const payload = (operation: 'merge' | 'restore' = 'merge') => JSON.stringify(['backupDocument', operation, STAGED, 'a'.repeat(64)]);
+const payload = (operation: 'merge' | 'restore' | 'csv' = 'merge') => JSON.stringify(['backupDocument', operation, STAGED, 'a'.repeat(64)]);
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const original: AppData = {
     tasks: [
@@ -216,8 +216,8 @@ describe('atomic native complete-document receipts over real SQLite', () => {
         expect(env.events).toContain('ROLLBACK');
     });
 
-    it('recovers a COMMIT that landed before its driver acknowledgment threw, without rewriting later edits', async () => {
-        const env = await open();
+    it.each(['merge', 'csv'] as const)('recovers a %s COMMIT that landed before its driver acknowledgment threw, without rewriting later edits', async (operation) => {
+        const env = await open(); env.input.payload = payload(operation);
         let fail = true;
         const uncertain = new NativeReceiptSqliteAdapter({ ...env.sql.client,
             run: async (statement, params) => {
@@ -383,8 +383,8 @@ describe('atomic native complete-document receipts over real SQLite', () => {
         expect(await env.adapter.saveDocumentWithReceipt({ ...env.input, reply: atLimit })).toEqual({ reply: atLimit, replayed: false });
     });
 
-    it('logs bounded proof after direct COMMIT only, without making logger failure an import failure', async () => {
-        const env = await open();
+    it.each(['merge', 'csv'] as const)('logs bounded %s proof after direct COMMIT only, without making logger failure an import failure', async (operation) => {
+        const env = await open(); env.input.payload = payload(operation);
         let commits = 0;
         env.hooks.beforeRun = async (statement) => { if (statement === 'COMMIT') commits += 1; };
         const info = vi.spyOn(logger, 'logInfo').mockImplementation((message) => {
@@ -397,7 +397,7 @@ describe('atomic native complete-document receipts over real SQLite', () => {
         expect(await env.adapter.saveDocumentWithReceipt(env.input)).toEqual({ reply, replayed: true });
         const proof = info.mock.calls.filter(([message]) => message === 'Native backup document committed');
         expect(proof).toEqual([['Native backup document committed', { scope: 'transfer', force: true, context: {
-            releaseCheck: 'v1.3.4/native-backup-document', operation: 'merge', outcome: 'committed',
+            releaseCheck: 'v1.3.4/native-backup-document', operation, outcome: 'committed',
         } }]]);
     });
 

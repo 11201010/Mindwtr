@@ -15,7 +15,13 @@ public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
     public var errorDescription: String? { "App lock outcome is unknown. Cancel the pending change to use the saved setting." }
 }
 
+public enum NativeBackupImportFormat: String, Sendable {
+    case json, csv
+    var maximumBytes: Int { self == .csv ? 16 * 1024 * 1024 : NativeBackupImportFile.maximumBytes }
+}
+
 public struct NativeBackupImportPreview: Sendable {
+    public let format: NativeBackupImportFormat
     public let id: UUID
     public let json: String
 }
@@ -64,8 +70,8 @@ public final class CoreHost: @unchecked Sendable {
         _ = try? await perform { $0.backupExportFile.discard(id) }
     }
 
-    public func prepareBackupImport(_ url: URL) async throws -> NativeBackupImportPreview {
-        try await perform { try $0.prepareBackupImport(url) }
+    public func prepareBackupImport(_ url: URL, format: NativeBackupImportFormat = .json) async throws -> NativeBackupImportPreview {
+        try await perform { try $0.prepareBackupImport(url, format: format) }
     }
 
     public func discardBackupImport(_ id: UUID) async {
@@ -172,7 +178,7 @@ private final class Engine: @unchecked Sendable {
     let backupExportFile: NativeBackupExportFile
     private let backupImportFile: NativeBackupImportFile
     private let backupOperationFiles: NativeBackupOperationFiles
-    private var backupSelections: [UUID: NativeBackupImportSelection] = [:]
+    private var backupSelections: [UUID: (selection: NativeBackupImportSelection, format: NativeBackupImportFormat)] = [:]
     private let journalURL: URL
     private let editorDrafts: EditorDraftStore
     private let legacyStorage: LegacyRNStorage?
@@ -470,7 +476,7 @@ private final class Engine: @unchecked Sendable {
             }
             try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
             // Accepted operations own their frozen plan, never the picker copy.
-            try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.reference.id }))
+            try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -1368,30 +1374,40 @@ private final class Engine: @unchecked Sendable {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
     }
 
-    func prepareBackupImport(_ url: URL) throws -> NativeBackupImportPreview {
+    func prepareBackupImport(_ url: URL, format: NativeBackupImportFormat = .json) throws -> NativeBackupImportPreview {
         try backupAdmission()
-        let selection = try backupImportFile.stage(url)
+        let selection = try backupImportFile.stage(url, maximumBytes: format.maximumBytes)
         let id = UUID(uuidString: selection.reference.id)!
         do {
-            guard let text = String(data: try backupImportFile.read(selection.reference), encoding: .utf8) else {
-                throw CoreHostRejection(message: "INVALID_INPUT: Backup file is not valid UTF-8")
-            }
+            let text = try backupImportText(selection, format: format)
             let preview = try invoke("backupDocumentInspect", arguments: [text,
-                try backupJSON(backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds))])
+                try backupJSON(backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds)), format.rawValue])
             guard let result = try NativeJSON.jsonObject(with: Data(preview.utf8)) as? [String: Any],
                   Self.isBoolean(result["valid"]) else { throw HostFailure("Backup preview unavailable") }
-            if result["valid"] as? Bool == true { backupSelections[id] = selection }
+            if result["valid"] as? Bool == true { backupSelections[id] = (selection, format) }
             else { try? backupImportFile.discard(selection.reference) }
-            return NativeBackupImportPreview(id: id, json: preview)
+            return NativeBackupImportPreview(format: format, id: id, json: preview)
         } catch {
             try? backupImportFile.discard(selection.reference)
             throw error
         }
     }
 
+    private func backupImportText(_ selection: NativeBackupImportSelection, format: NativeBackupImportFormat) throws -> String {
+        guard selection.reference.byteCount <= format.maximumBytes else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Import source exceeds supported limit")
+        }
+        let data = try backupImportFile.read(selection.reference)
+        if format == .csv { return data.base64EncodedString() }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup file is not valid UTF-8")
+        }
+        return text
+    }
+
     func discardBackupImport(_ id: UUID) {
-        guard let selection = backupSelections.removeValue(forKey: id) else { return }
-        try? backupImportFile.discard(selection.reference)
+        guard let owned = backupSelections.removeValue(forKey: id) else { return }
+        try? backupImportFile.discard(owned.selection.reference)
     }
 
     func mergeBackupImport(_ id: UUID) throws -> String {
@@ -1400,12 +1416,13 @@ private final class Engine: @unchecked Sendable {
         let operation: NativeBackupOperationReference
         do {
             try backupAdmission()
-            guard let selection = backupSelections[id],
-                  let text = String(data: try backupImportFile.read(selection.reference), encoding: .utf8) else {
+            guard let owned = backupSelections[id] else {
                 throw HostFailure("Backup selection is no longer available")
             }
+            let selection = owned.selection
+            let text = try backupImportText(selection, format: owned.format)
             let name = try backupOperationFiles.nextSnapshotName(at: Date())
-            operation = try prepareBackupOperation(mode: "merge", text: text,
+            operation = try prepareBackupOperation(mode: owned.format == .csv ? "csv" : "merge", text: text,
                 metadata: backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds),
                 snapshotName: name, existingSnapshot: nil)
         } catch {
@@ -1415,6 +1432,7 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
             }
             if let failure = error as? HostFailure, [
+                "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1471,6 +1489,7 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
             }
             if let failure = error as? HostFailure, [
+                "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1482,18 +1501,14 @@ private final class Engine: @unchecked Sendable {
     private func prepareBackupOperation(mode: String, text: String, metadata: [String: Any],
                                         snapshotName: String, existingSnapshot: NativeBackupSnapshotReference?) throws -> NativeBackupOperationReference {
         let id = UUID().uuidString.lowercased()
-        #if DEBUG
-        #endif
         let prepared = try invoke("backupDocumentPrepare", arguments: [try backupJSON([
             "requestId": id, "mode": mode, "snapshotName": snapshotName, "text": text, "metadata": metadata
         ])])
-        #if DEBUG
-        #endif
         guard let value = try NativeJSON.jsonObject(with: Data(prepared.utf8)) as? [String: Any],
               Set(value.keys) == Set(["planJSON", "recoveryJSON"]), let plan = value["planJSON"] as? String else {
             throw HostFailure("Backup plan unavailable")
         }
-        if mode == "merge" {
+        if mode == "merge" || mode == "csv" {
             guard let snapshot = value["recoveryJSON"] as? String, existingSnapshot == nil else {
                 throw HostFailure("Backup recovery copy unavailable")
             }

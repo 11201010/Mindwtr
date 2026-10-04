@@ -40,14 +40,15 @@ final class NativeBackupImportFile {
 
     init(libraryRoot: URL) { root = Self.normalized(libraryRoot) }
 
-    func stage(_ source: URL) throws -> NativeBackupImportSelection {
+    func stage(_ source: URL, maximumBytes: Int = NativeBackupImportFile.maximumBytes) throws -> NativeBackupImportSelection {
+        guard maximumBytes > 0, maximumBytes <= Self.maximumBytes else { throw failure() }
         guard source.isFileURL else { throw failure() }
         let accessed = source.startAccessingSecurityScopedResource()
         defer { if accessed { source.stopAccessingSecurityScopedResource() } }
         var coordinationError: NSError?
         var result: Result<NativeBackupImportSelection, Error>?
         NSFileCoordinator().coordinate(readingItemAt: source, options: .withoutChanges, error: &coordinationError) { url in
-            result = Result { try copyCoordinatedFile(url) }
+            result = Result { try copyCoordinatedFile(url, maximumBytes: maximumBytes) }
         }
         guard coordinationError == nil, let result else { throw failure() }
         return try result.get()
@@ -114,11 +115,11 @@ final class NativeBackupImportFile {
         guard Darwin.fsync(directory) == 0 else { throw failure() }
     }
 
-    private func copyCoordinatedFile(_ source: URL) throws -> NativeBackupImportSelection {
+    private func copyCoordinatedFile(_ source: URL, maximumBytes: Int) throws -> NativeBackupImportSelection {
         let input = Darwin.open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
         guard input >= 0 else { throw failure() }
         defer { Darwin.close(input) }
-        let initial = try regularFile(input)
+        let initial = try regularFile(input, maximumBytes: maximumBytes)
         #if DEBUG
         try afterSourceOpened?()
         #endif
@@ -145,7 +146,7 @@ final class NativeBackupImportFile {
         #endif
         var hash = SHA256()
         var total = 0
-        try consume(input) { chunk in
+        try consume(input, maximumBytes: maximumBytes) { chunk in
             total += chunk.count
             hash.update(data: chunk)
             try chunk.withUnsafeBytes { buffer in
@@ -158,7 +159,7 @@ final class NativeBackupImportFile {
                 }
             }
         }
-        let final = try regularFile(input)
+        let final = try regularFile(input, maximumBytes: maximumBytes)
         guard unchanged(initial, final), total == initial.st_size,
               Darwin.fsync(output) == 0, Darwin.fcntl(output, F_FULLFSYNC) == 0 else { throw failure() }
         #if DEBUG
@@ -176,7 +177,7 @@ final class NativeBackupImportFile {
             modifiedAtMilliseconds: Double(initial.st_mtimespec.tv_sec) * 1000 + Double(initial.st_mtimespec.tv_nsec) / 1_000_000)
     }
 
-    private func consume(_ fd: Int32, chunk: (Data) throws -> Void) throws {
+    private func consume(_ fd: Int32, maximumBytes: Int = NativeBackupImportFile.maximumBytes, chunk: (Data) throws -> Void) throws {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         var total = 0
         while true {
@@ -185,16 +186,16 @@ final class NativeBackupImportFile {
             guard count >= 0 else { throw failure() }
             if count == 0 { return }
             total += count
-            guard total <= Self.maximumBytes else { throw NativeBackupImportFileError.tooLarge }
+            guard total <= maximumBytes else { throw NativeBackupImportFileError.tooLarge }
             try chunk(Data(buffer.prefix(count)))
         }
     }
 
-    private func regularFile(_ fd: Int32) throws -> stat {
+    private func regularFile(_ fd: Int32, maximumBytes: Int = NativeBackupImportFile.maximumBytes) throws -> stat {
         var info = stat()
         guard Darwin.fstat(fd, &info) == 0, info.st_size >= 0 else { throw NativeBackupImportFileError.unknownSize }
         guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw failure() }
-        guard info.st_size <= Self.maximumBytes else { throw NativeBackupImportFileError.tooLarge }
+        guard info.st_size <= maximumBytes else { throw NativeBackupImportFileError.tooLarge }
         return info
     }
 

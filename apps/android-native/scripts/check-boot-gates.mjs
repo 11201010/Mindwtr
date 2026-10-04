@@ -3232,8 +3232,8 @@ export { getBulkMoveStatusOptions } from ${JSON.stringify(resolve(app, '../../pa
 export { formatI18nTemplate } from ${JSON.stringify(resolve(app, '../../packages/core/src/i18n/index.ts'))};
 // These service stand-ins test bridge dispatch/admission, not import or receipt policy.
 // Actual shared policy and SQLite receipts have their own core and Swift/JSC suites.
-export function inspectNativeBackupDocument(text, metadata, t) {
-  globalThis.backupInputs.push(JSON.stringify(['inspect', text, metadata]));
+export function inspectNativeBackupDocument(text, metadata, t, format = 'json') {
+  globalThis.backupInputs.push(JSON.stringify(['inspect', text, metadata, format]));
   return { valid: true, title: t('settings.mergeBackup'),
     summary: t('settings.backupMobile.backupPreviewCounts', { taskCount: 2, projectCount: 1 }),
     confirmLabel: t('settings.mergeBackupAction'), cancelLabel: t('common.cancel'),
@@ -3667,7 +3667,12 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
     const inspected = await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON));
     assert.deepEqual(inspected, { ok: true, value: { valid: true, title: '合并备份', summary: '2 tasks / 1 projects',
         confirmLabel: 'settings.mergeBackupAction', cancelLabel: 'common.cancel', errorTitle: 'settings.backupMobile.invalidBackup', errorMessage: '' } });
-    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata]), 'owned text and parsed metadata pass unchanged');
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata, 'json']), 'owned text and parsed metadata pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('UEsDBA==', metadataJSON, 'csv'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'csv']), 'CSV binary transport and format pass unchanged');
+    const beforeInvalidFormat = backup.backupInputs.length;
+    assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'other'))).error, /^INVALID_INPUT:/);
+    assert.equal(backup.backupInputs.length, beforeInvalidFormat, 'unsupported format never reaches service');
     assert.deepEqual((await poll(backup, backup.MindwtrHost.backupDocumentResultModel(JSON.stringify(backup.backupReply)))).value,
         { title: '合并备份', message: '2 added / 1 updated', undoLabel: 'settings.undoImport', doneLabel: 'common.done' });
     assert.equal((await poll(backup, backup.MindwtrHost.backupSnapshotRestoreModel(snapshotName))).value.message,

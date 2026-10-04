@@ -337,3 +337,6 @@ Task201 JSON import foundations (2026-10-04): prepared complete-document writes 
 
 
 Task202 JSON backup merge and recovery (2026-10-04): native Data now selects a JSON backup, previews the shared RN import model, merges through an atomic document/receipt commit, and offers persisted recovery snapshots and exact-snapshot Undo. Confirm prepares against current durable data; interrupted requests replay their original result without replacing later edits. Core, storage, JavaScriptCore, three simulator layouts and isolated iPhone import/Undo/cold-restore checks passed. CSV/other-format import and the remaining D02 administration work remain open. See the [parity ledger](native-mobile-parity.md#task202-json-backup-merge-and-recovery) for limits and preservation evidence.
+
+
+Task203 Mindwtr CSV/ZIP import (2026-10-04): native Data now uses RN's binary CSV/ZIP parser, import policy and localized preview/results through the durable document/snapshot owner. Shared, native host, three simulator layouts and isolated physical import/Undo/deleted-reimport checks passed. A device-discovered shared warning mapping omission was corrected for RN and native. Other importers and direct JSON-file replacement remain open; see the [parity ledger](native-mobile-parity.md#task203-mindwtr-csv-and-zip-import).

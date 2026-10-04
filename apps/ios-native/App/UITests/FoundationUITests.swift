@@ -22234,6 +22234,18 @@ extension FoundationUITests {
         boardEnabled(app.buttons["diagnostics-clear"], timeout: 30)
     }
 
+    func testTask203CSVImportNormal() {
+        task202RecoveryFlow("e165e4c8-7d27-440b-9603-344a42d84aa3", csvPicker: true)
+    }
+
+    func testTask203CSVImportLargestText() {
+        task202RecoveryFlow("0ffc7c0f-449c-42cf-abed-702c634d0c36", largest: true, csvPicker: true)
+    }
+
+    func testTask203CSVImportArabicRTL() {
+        task202RecoveryFlow("04bb5909-0885-4ea3-b12b-2b938f104462", rtl: true, csvPicker: true)
+    }
+
     func testTask202BackupRecoveryNormal() {
         task202RecoveryFlow("c72e43dd-d447-49f9-a2f5-97c6fc10f9a6")
     }
@@ -22246,7 +22258,7 @@ extension FoundationUITests {
         task202RecoveryFlow("58a103bb-e6c7-4c8e-971b-e548b5f29464", rtl: true)
     }
 
-    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false) {
+    private func task202RecoveryFlow(_ library: String, largest: Bool = false, rtl: Bool = false, csvPicker: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication(); app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
         app.launch()
@@ -22255,13 +22267,14 @@ extension FoundationUITests {
             boardTap(app, "general-back"); boardTap(app, "settings-back")
         }
         task197Data(app); boardTap(app, "backup-disclosure")
-        task192Reveal(app, "data-transfer-merge", buttons: true, scrollID: "diagnostics-scroll")
-        boardEnabled(app.buttons["data-transfer-merge"]); boardTap(app, "data-transfer-merge")
+        let importAction = csvPicker ? "data-transfer-import-csv" : "data-transfer-merge"
+        task192Reveal(app, importAction, buttons: true, scrollID: "diagnostics-scroll")
+        boardEnabled(app.buttons[importAction]); boardTap(app, importAction)
         let cancel = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Cancel", "إلغاء")).firstMatch
         boardEnabled(cancel, timeout: 30)
-        task197Observe(app, "Task202 real JSON file picker")
+        task197Observe(app, csvPicker ? "Task203 CSV file picker" : "Task202 real JSON file picker")
         cancel.tap()
-        boardEnabled(app.buttons["data-transfer-merge"], timeout: 30)
+        boardEnabled(app.buttons[importAction], timeout: 30)
         XCTAssertFalse(app.staticTexts["backup-import-error"].exists)
         let restore = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "backup-snapshot-restore-")).firstMatch
         revealPagedElement(app, restore, in: app.scrollViews["diagnostics-scroll"])
