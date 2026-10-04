@@ -1758,6 +1758,8 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     // RN's tag picker field (ProjectTagPickerModal): the keyboard's Done only ends editing; only + changes the tags (review PD 5).
     const tagField = code(source('ProjectDetails.kt')).split('BasicTextField(tagDraft')[1].split('testTag("project-tag-input")')[0];
     assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');
+    // RN's field sets autoCorrect={false} and autoCapitalize="none" (review PD 6).
+    assert.match(tagField, /KeyboardOptions\(capitalization = KeyboardCapitalization\.None, autoCorrectEnabled = false,/, 'the tag field neither corrects nor capitalizes');
     assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${attachmentKinds.join('|')})"`), 'the Menu tab never sends an attachment command itself');
     assert.match(hostEntry, new RegExp(`type SyncScreenCommand = ${syncKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));

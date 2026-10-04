@@ -67,6 +67,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -706,7 +707,8 @@ fun ProjectDetailsDialogs(model: InboxViewModel) = with(model.projectDetails) {
                 val label = t("taskEdit.tagsLabel")
                 BasicTextField(tagDraft, { tagDraft = it }, singleLine = true, textStyle = rnText(14, 400).copy(color = c.text), cursorBrush = SolidColor(c.tint),
                     // RN: Done only ends editing; + adds the typed tag.
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
                     modifier = Modifier.weight(1f).padding(vertical = 8.dp).semantics { contentDescription = label }.testTag("project-tag-input"),
                     decorationBox = { field -> Box { if (tagDraft.isEmpty()) Text(label, style = rnText(14, 400), color = c.secondaryText); field() } })
                 val add = t("common.add")
