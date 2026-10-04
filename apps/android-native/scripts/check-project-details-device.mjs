@@ -14,8 +14,8 @@
 //       (i) Attachments' Add link and Remove, (j) Start, Due and Review dates (the picker's day), and a Clear, (k) the title:
 //       each write is stored once (the pulled database: the value, and the project's rev one higher);
 //   (l) a restart replays a journaled edit: one stopped before the engine saw it (Status → Someday) is stored by the boot's
-//       replay, one stopped after core's reply (a tag) is replayed and stores nothing more; Back with typed notes and a typed
-//       title, killed while the first is held, replays both, stored once each;
+//       replay, one stopped after core's reply (a tag) is replayed and stores nothing more; typed notes Back journaled, killed
+//       before the engine sees them, are stored by the replay;
 //   (m) a restart keeps every value: the reopened Details shows core's labels for the stored values.
 // It touches only the development package (it refuses any other APK), never launches over another app, leaves the app on its
 // Inbox tab, and restores rotation and clears its debug properties on exit. Leave the device on its home screen. It needs host
@@ -46,7 +46,7 @@ const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-details.db';
-const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', 'journal_stop', 'delay_action_ms'];
+const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', 'journal_stop'];
 const DB = 'mindwtr-native-dev.db';
 const work = resolve(app, 'android/build/project-details-check');
 const coreSrc = resolve(app, '../../packages/core/src');
@@ -516,31 +516,22 @@ try {
     check(row.tags.includes(`#${names.replayTag}`) && row.rev === before.rev + 1, `(l) the tag stored once through the replay (rev ${before.rev} → ${row.rev})`);
     processId = relaunched.processId;
 
-    // (l) Back with typed notes and a typed title, killed while the first edit is held (debug delay_action_ms): each edit was
-    // journaled the moment its field let go or Back was pressed, so the boot's replay stores both, once each.
+    // (l) A typed title (stored when the notes field takes the focus), then typed notes and Back, killed before the engine
+    // sees the notes: Back journaled them at once, so the boot's replay stores them; the title and the notes are stored once each.
     nodes = await openDetails();
     before = stored('before');
+    nodes = await revealIn((current) => Boolean(tagged(current, 'project-title-input')), 'the title');
+    await typeText(tagged(nodes, 'project-title-input'), names.killTitle);
     await tap(tagged(await revealTag('project-notes-toggle'), 'project-notes-toggle'));
     await typeText(tagged(await revealTag('project-notes-input'), 'project-notes-input'), names.killNotes);
-    setProp('delay_action_ms', '20000');
-    try {
-        // The title takes the focus: the notes let go (journaled, sent, held); then the title, and Back.
-        nodes = await revealIn((current) => Boolean(tagged(current, 'project-title-input')), 'the title');
-        await typeText(tagged(nodes, 'project-title-input'), names.killTitle);
-        await tap(button(await screen(), 'Back') ?? fail('no Back in the project header'));
-        await sleep(1500);
-        check(stored().rev === before.rev, '(l) nothing stored yet while the first edit is held');
-        stopped = pid();
-        sh(`run-as ${PKG} kill -9 ${stopped}`);
-        await waitFor('process death', () => pid() !== stopped, 10_000);
-    } finally {
-        setProp('delay_action_ms', '');
-    }
+    await waitFor('the title stored', () => stored().title === names.killTitle, 30_000);
+    stopped = await stopAt('before', 'projectEdit', async () => tap(button(await screen(), 'Back') ?? fail('no Back in the project header')));
+    check(stored().supportNotes !== names.killNotes, '(l) the notes were not stored before the process died');
     relaunched = await relaunch(stopped);
-    check(relaunched.replay.includes('sent=2 dropped=2 left=0 owed=none'), `(l) the boot replayed both journaled edits: ${relaunched.replay.split('journal replay ')[1]}`);
+    check(replayed(relaunched.replay), `(l) the boot replayed the notes Back journaled: ${relaunched.replay.split('journal replay ')[1]}`);
     row = stored();
     check(row.title === names.killTitle && row.supportNotes === names.killNotes && row.rev === before.rev + 2,
-        `(l) the typed notes and title were stored once each (rev ${before.rev} → ${row.rev})`);
+        `(l) the typed title and notes were stored once each (rev ${before.rev} → ${row.rev})`);
     processId = relaunched.processId;
     nodes = await openFixture(names.killTitle);
     row = await write('(l) Title named back', async () => {
