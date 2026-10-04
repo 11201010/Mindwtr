@@ -343,3 +343,6 @@ Task203 Mindwtr CSV/ZIP import (2026-10-04): native Data now uses RN's binary CS
 
 
 Task204 selected JSON restore (2026-10-04): native Data adds RN's explicit replace-from-backup action with destructive confirmation, a fresh recovery snapshot, actual shared restore policy and snapshot Undo. Core/host recovery checks, three simulator picker/recovery layouts and isolated iPhone selected-file replacement/Undo/cold-launch checks passed. Ordinary development libraries were preserved. Other importers and broader D02 acceptance remain open; see the [parity ledger](native-mobile-parity.md#task204-restore-from-a-selected-json-backup).
+
+
+Task205 Todoist import (2026-10-04): native Data now imports Todoist CSV/ZIP through the actual RN shared parser/policy and existing recovery snapshot/Undo path. Native runtime, three layout scopes and isolated physical CSV import/Undo/deleted-reimport checks passed. A stale Inbox promise was removed from both previews to match the shared Next-task policy. The default governance timeout limitation is recorded separately; see the [parity ledger](native-mobile-parity.md#task205-todoist-csv-and-zip-import). TickTick, DGT GTD and OmniFocus import remain open.

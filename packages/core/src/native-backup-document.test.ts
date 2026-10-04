@@ -456,3 +456,114 @@ describe('native selected JSON backup replacement', () => {
         expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
     });
 });
+
+
+const todoistCsv = [
+    'TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION', 'section,Planning,,,,',
+    'task,Plan launch 日本語 🦉 @work,1,1,2026-04-02,Write launch brief', 'note,Share with leadership,,,,',
+    'task,Follow up @ops,4,2,2026-04-03,Check dependencies', 'task,Weekly review @home,2,1,every Monday,',
+].join('\n');
+const todoistInput = (text = todoistCsv): NativeBackupDocumentPrepareInput => ({ ...input(), mode: 'todoist',
+    text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'Launch.csv' } });
+
+describe('native Todoist CSV and ZIP prepared import', () => {
+    it.each(['csv', 'zip'] as const)('inspects %s using complete RN preview with first-four projects and warnings, then cancellation writes nothing', async (kind) => {
+        const env = await open(); const before = await env.state(); const source = todoistInput();
+        if (kind === 'zip') { source.text = bytesToBase64(zipSync(Object.fromEntries(['One','Two','Three','Four','Five'].map((name) => [`${name}.csv`, strToU8(todoistCsv)])))); source.metadata.fileName = 'Todoist.zip'; }
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'todoist');
+        expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7);
+        expect(preview.title).toBe(t('settings.backupMobile.importTodoistData')); expect(preview.confirmLabel).toBe(t('settings.backupMobile.import'));
+        expect(preview.summary).toContain(t('settings.backupMobile.importTodoistTasksFromProjects', { taskCount: kind === 'zip' ? 10 : 2, projectCount: kind === 'zip' ? 5 : 1 }));
+        expect(preview.summary).toContain(t('settings.backupMobile.sectionsWillBePreserved', { sectionCount: kind === 'zip' ? 5 : 1 }));
+        expect(preview.summary).toContain(t('settings.backupMobile.subtasksWillBecomeChecklistItems', { subtaskCount: kind === 'zip' ? 5 : 1 }));
+        expect(preview.summary).not.toContain(t('settings.backupMobile.importedTasksStayInInboxSoYouCanProcessThem'));
+        expect(preview.summary).toContain(t('settings.importDiagnostics.unsupportedRecurrence', { count: kind === 'zip' ? 5 : 1 }));
+        if (kind === 'zip') { expect(preview.summary).toContain('• Four: 2'); expect(preview.summary).not.toContain('• Five:'); expect(preview.summary).toContain(t('settings.backupMobile.moreProjects', { projectCount: 1 })); }
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+    it.each(['csv', 'zip'] as const)('freezes actual %s Todoist policy and checklist IDs from latest durable data and cold-replays preserving intervening edits', async (kind) => {
+        const env = await open(); const source = todoistInput();
+        if (kind === 'zip') { source.text = bytesToBase64(zipSync({ 'Launch.csv': strToU8(todoistCsv), 'ignored.txt': strToU8('ignored') })); source.metadata.fileName = 'Todoist.zip'; }
+        inspectNativeBackupDocument(source.text, source.metadata, t, 'todoist'); const latest = await env.adapter.getData(); latest.tasks.push(task('latest-todoist')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON);
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before); expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-todoist')).toBe(true);
+        expect(plan.reply).toEqual({ version: 1, operation: 'todoist', snapshotName: NAME, result: { importedChecklistItemCount: 1, importedProjectCount: 1, importedSectionCount: 1, importedTaskCount: 2, warnings: [] } });
+        expect(Object.keys(plan.reply.result)).toHaveLength(5); expect(plan.reply.result).not.toHaveProperty('data'); expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
+        const imported = plan.data.tasks.find((item: Task) => item.title === 'Plan launch 日本語 🦉');
+        expect(imported).toMatchObject({ status: 'next', taskMode: 'list', priority: 'urgent', dueDate: '2026-04-02', tags: ['#work','#ops'], checklist: [{ id: expect.any(String), title: 'Follow up', isCompleted: false }] });
+        expect(imported.projectId).toBeTruthy(); expect(imported.sectionId).toBeTruthy(); expect(imported.description).toContain('Share with leadership'); expect(imported.description).toContain('Subtask "Follow up": Check dependencies | Due: 2026-04-03');
+        const recurring = plan.data.tasks.find((item: Task) => item.title === 'Weekly review'); expect(recurring.recurrence).toBeUndefined(); expect(recurring.description).toContain('Imported from Todoist recurring schedule: every Monday');
+        const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === imported.id)?.checklist).toEqual(imported.checklist);
+        const later = await env.adapter.getData(); const target = later.tasks.find((item) => item.id === imported.id)!; target.title = 'Later Todoist edit'; target.rev! += 1; await env.adapter.saveData(later); const committed = await env.state();
+        resetNativeRequestReceipts(); await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] }); const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
+        expect(await readNativeBackupDocumentOutcome(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(await commitNativeBackupDocument(cold, reference, prepared.planJSON, NAME)).toEqual(first);
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(committed); expect(useTaskStore.getState()._allTasks.find((item) => item.id === imported.id)?.title).toBe('Later Todoist edit');
+    });
+    it.each(['edited', 'deleted'] as const)('reimport preserves Todoist %s history and IDs rather than adding records', async (condition) => {
+        const env = await open(); const first = await prepareNativeBackupDocument(env.adapter, todoistInput()); await commitNativeBackupDocument(env.adapter, reference, first.planJSON, NAME);
+        const latest = await env.adapter.getData(); const project = latest.projects[0]; const imported = latest.tasks.find((item) => item.projectId === project.id)!;
+        imported.title = 'Edited Todoist history'; imported.rev! += 1; if (condition === 'deleted') {
+            project.deletedAt = AT;
+            for (const item of latest.tasks) if (item.projectId === project.id) item.deletedAt = AT;
+            for (const item of latest.sections) if (item.projectId === project.id) item.deletedAt = AT;
+        }
+        await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.adapter.getData();
+        const prepared = await prepareNativeBackupDocument(env.adapter, { ...todoistInput(), requestId: '22222222-2222-4222-8222-222222222222' }); const plan = JSON.parse(prepared.planJSON);
+        expect(plan.reply.result).toEqual({ importedChecklistItemCount: 0, importedProjectCount: 0, importedSectionCount: 0, importedTaskCount: 0, warnings: [] }); expect(plan.data).toEqual(before); expect(env.writes).toEqual([]);
+    });
+    it('uses shared date-only and hostile-date handling, with localized unsupported-date preview', async () => {
+        const env = await open(); const source = todoistInput('TYPE,CONTENT,DATE\ntask,Date only,2026-04-02\ntask,Hostile,constructor');
+        expect(inspectNativeBackupDocument(source.text, source.metadata, t, 'todoist').summary).toContain(t('settings.importDiagnostics.unmappedDate', { count: 1 }));
+        const plan = JSON.parse((await prepareNativeBackupDocument(env.adapter, source)).planJSON);
+        expect(plan.data.tasks.find((item: Task) => item.title === 'Date only').dueDate).toBe('2026-04-02'); expect(plan.data.tasks.find((item: Task) => item.title === 'Hostile').dueDate).toBeUndefined();
+    });
+    it('localizes every actual execution warning and RN counts/checklist/snapshot/Undo result', async () => {
+        const base = clone(original); base.projects = [{ ...createMockProject('existing-project', AT), title: 'Launch' }]; const env = await open(base);
+        const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); const reply = JSON.parse(prepared.planJSON).reply;
+        expect(reply.result.warnings).toHaveLength(1); expect(reply.result.warnings[0]).toContain('was renamed');
+        const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
+        expect(model.message).toContain(t('settings.backupMobile.importedTodoistTasksIntoProjects', { taskCount: 2, projectCount: 1 })); expect(model.message).toContain(t('settings.backupMobile.subtasksBecameChecklistItems', { subtaskCount: 1 })); expect(model.message).toContain(NAME);
+        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+    });
+    it('Todoist Undo restores the exact pre-import snapshot and tombstones later local edits without another recovery', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const later = await env.adapter.getData(); later.tasks.push(task('after-todoist')); later.tasks.find((item) => item.id === 'visible')!.title = 'Later local edit'; await env.adapter.saveData(later);
+        const undoId = '22222222-2222-4222-8222-222222222222'; const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: undoId }); expect(undo.recoveryJSON).toBeNull();
+        await commitNativeBackupDocument(env.adapter, { ...reference, id: undoId, sha256: 'b'.repeat(64) }, undo.planJSON, NAME);
+        const restored = await env.adapter.getData(); expect(restored.tasks.find((item) => item.id === 'visible')?.title).toBe('visible'); expect(restored.tasks.find((item) => item.id === 'after-todoist')?.deletedAt).toBeTruthy(); expect(restored.projects.filter((item) => !item.deletedAt)).toEqual([]);
+    });
+    it.each(['TYPE,CONTENT\n', 'Title,Project\nPrivate,Work', 'PK private corrupt archive'])('invalid Todoist file returns localized refusal without writes or raw contents', async (text) => {
+        const env = await open(); const source = todoistInput(text); const read = vi.spyOn(env.adapter, 'getData'); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'todoist'); expect(preview.valid).toBe(false); expect(preview.errorMessage).toBeTruthy(); expect(preview.errorMessage).not.toContain('Private');
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it.each(['TR==','TWF=','TQ=','====','VGl0bGUs\n','VGl0bGUs_'])('Todoist rejects noncanonical base64 %s before adapter operations', async (text) => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('Todoist bounds decoded bytes before allocation and retains shared8MiB text and ZIP entry/expanded limits', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData');
+        await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text: 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3)) })).rejects.toThrow('Todoist source exceeds 16 MiB');
+        const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...todoistInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input');
+        expect(inspectNativeBackupDocument(exact, todoistInput().metadata, t, 'todoist').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
+        const largeZip = bytesToBase64(zipSync({ 'large.csv': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(largeZip, todoistInput().metadata, t, 'todoist').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
+        expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses oversized complete Todoist execution warnings before returning a plan or journal', async () => {
+        const base = clone(original); const files: Record<string, Uint8Array> = {};
+        for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); files[`${name}.csv`] = strToU8('TYPE,CONTENT\ntask,Imported'); }
+        const env = await open(base); const source = { ...todoistInput(), text: bytesToBase64(zipSync(files)), metadata: { ...metadata, fileName: 'Todoist.zip' } };
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('Todoist import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+    });
+    it.each(['extra','data','csv-count','negative','fraction','missing','warning','overflow'] as const)('rejects malformed Todoist result %s at every reply boundary before adapter writes', async (fault) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); const plan = JSON.parse(prepared.planJSON);
+        if (fault === 'extra') plan.reply.added = 1; if (fault === 'data') plan.reply.result.data = plan.data; if (fault === 'csv-count') plan.reply.result.importedAreaCount = 0;
+        if (fault === 'negative') plan.reply.result.importedTaskCount = -1; if (fault === 'fraction') plan.reply.result.importedSectionCount = 0.5; if (fault === 'missing') delete plan.reply.result.importedProjectCount;
+        if (fault === 'warning') plan.reply.result.warnings = [1]; if (fault === 'overflow') plan.reply.result.warnings = ['私'.repeat(23_000)];
+        const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt'); expect(() => buildNativeBackupDocumentResult(plan.reply, t)).toThrow('INVALID_INPUT:');
+        await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses stale Todoist preparation after a durable edit with no document writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, todoistInput()); const later = await env.adapter.getData(); later.tasks[0].title = 'Changed after Todoist'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0;
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+});

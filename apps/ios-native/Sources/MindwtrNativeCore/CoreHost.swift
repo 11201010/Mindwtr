@@ -16,11 +16,12 @@ public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
 }
 
 public enum NativeBackupImportAction: String, Sendable {
-    case merge = "json", replace = "json-restore", csv = "csv"
+    case merge = "json", replace = "json-restore", csv = "csv", todoist = "todoist"
     public var operation: String {
-        switch self { case .merge: return "merge"; case .replace: return "replace"; case .csv: return "csv" }
+        switch self { case .merge: return "merge"; case .replace: return "replace"; case .csv: return "csv"; case .todoist: return "todoist" }
     }
-    var maximumBytes: Int { self == .csv ? 16 * 1024 * 1024 : NativeBackupImportFile.maximumBytes }
+    public var usesBinarySource: Bool { self == .csv || self == .todoist }
+    var maximumBytes: Int { usesBinarySource ? 16 * 1024 * 1024 : NativeBackupImportFile.maximumBytes }
 }
 
 public struct NativeBackupImportPreview: Sendable {
@@ -1401,7 +1402,7 @@ private final class Engine: @unchecked Sendable {
             throw CoreHostRejection(message: "INVALID_INPUT: Import source exceeds supported limit")
         }
         let data = try backupImportFile.read(selection.reference)
-        if action == .csv { return data.base64EncodedString() }
+        if action.usesBinarySource { return data.base64EncodedString() }
         guard let text = String(data: data, encoding: .utf8) else {
             throw CoreHostRejection(message: "INVALID_INPUT: Backup file is not valid UTF-8")
         }
@@ -1436,6 +1437,7 @@ private final class Engine: @unchecked Sendable {
             }
             if let failure = error as? HostFailure, [
                 "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
+                "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1493,6 +1495,7 @@ private final class Engine: @unchecked Sendable {
             }
             if let failure = error as? HostFailure, [
                 "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
+                "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
                 "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
                 "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
             ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
@@ -1511,7 +1514,7 @@ private final class Engine: @unchecked Sendable {
               Set(value.keys) == Set(["planJSON", "recoveryJSON"]), let plan = value["planJSON"] as? String else {
             throw HostFailure("Backup plan unavailable")
         }
-        if mode == "merge" || mode == "csv" || mode == "replace" {
+        if mode == "merge" || mode == "csv" || mode == "replace" || mode == "todoist" {
             guard let snapshot = value["recoveryJSON"] as? String, existingSnapshot == nil else {
                 throw HostFailure("Backup recovery copy unavailable")
             }

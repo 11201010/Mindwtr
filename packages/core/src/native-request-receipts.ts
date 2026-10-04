@@ -268,7 +268,7 @@ const validAppLockStoredReceipt = (row: { request_id: string; method: string; re
 export const MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES = 64 * 1024;
 export type NativeDocumentReceiptInput = {
     requestId: string;
-    /** Canonical JSON: ['backupDocument', 'merge' | 'restore' | 'replace' | 'csv', staged UUID, SHA256]. */
+    /** Canonical JSON: ['backupDocument', 'merge' | 'restore' | 'replace' | 'csv' | 'todoist', staged UUID, SHA256]. */
     payload: string;
     expectedCurrent: AppData;
     data: AppData;
@@ -284,7 +284,7 @@ const isDocumentPayload = (payload: unknown): payload is string => {
     let tuple: unknown;
     try { tuple = JSON.parse(payload); } catch { return false; }
     return Array.isArray(tuple) && tuple.length === 4 && tuple[0] === 'backupDocument'
-        && (tuple[1] === 'merge' || tuple[1] === 'restore' || tuple[1] === 'replace' || tuple[1] === 'csv') && isCanonicalRequestId(tuple[2])
+        && (tuple[1] === 'merge' || tuple[1] === 'restore' || tuple[1] === 'replace' || tuple[1] === 'csv' || tuple[1] === 'todoist') && isCanonicalRequestId(tuple[2])
         && typeof tuple[3] === 'string' && /^[a-f0-9]{64}$/u.test(tuple[3])
         && JSON.stringify(tuple) === payload;
 };

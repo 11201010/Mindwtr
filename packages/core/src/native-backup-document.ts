@@ -6,6 +6,7 @@ import { DEFAULT_IMPORT_SOURCE_LIMITS } from './import-source-reader';
 import { applyImportSource, parseImportSource, summarizeBackupMerge } from './import-runner';
 import { taskEditValuesEqual } from './json-value-equality';
 import type { MindwtrCsvImportExecutionResult } from './mindwtr-csv-import';
+import type { TodoistImportExecutionResult } from './todoist-import';
 import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
@@ -20,10 +21,13 @@ export type NativeBackupJsonDocumentReply = {
     version: 1; operation: 'merge' | 'restore' | 'replace'; snapshotName: string; added: number; updated: number;
 };
 export type NativeBackupCsvImportResult = Omit<MindwtrCsvImportExecutionResult, 'data'>;
+export type NativeBackupTodoistImportResult = Omit<TodoistImportExecutionResult, 'data'>;
 export type NativeBackupDocumentReply = NativeBackupJsonDocumentReply | {
     version: 1; operation: 'csv'; snapshotName: string; result: NativeBackupCsvImportResult;
+} | {
+    version: 1; operation: 'todoist'; snapshotName: string; result: NativeBackupTodoistImportResult;
 };
-type Operation = 'merge' | 'restore' | 'replace' | 'csv';
+type Operation = 'merge' | 'restore' | 'replace' | 'csv' | 'todoist';
 export type NativeBackupDocumentPrepareInput = {
     requestId: string; mode: Operation; snapshotName: string;
     text: string; metadata: NativeBackupDocumentMetadata;
@@ -40,7 +44,7 @@ const exact = (value: unknown, fields: string[]): value is Record<string, unknow
     && Object.keys(value).length === fields.length && fields.every((field) => Object.prototype.hasOwnProperty.call(value, field));
 const uuid = (value: unknown): value is string => typeof value === 'string'
     && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(value);
-const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'replace' || value === 'csv';
+const mode = (value: unknown): value is Operation => value === 'merge' || value === 'restore' || value === 'replace' || value === 'csv' || value === 'todoist';
 const snapshotPattern = /^data\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:\.(\d{3})(?:\.\d+)?)?\.snapshot\.json$/u;
 const snapshot = (value: unknown): value is string => {
     if (typeof value !== 'string' || value.length > 128) return false;
@@ -81,20 +85,22 @@ const sextet = (code: number): number => code >= 65 && code <= 90 ? code - 65
     : code >= 97 && code <= 122 ? code - 71 : code >= 48 && code <= 57 ? code + 4
         : code === 43 ? 62 : code === 47 ? 63 : -1;
 // Validate canonical padding and trailing bits, and bound decoded bytes before allocating.
-const parseCsvSource = (text: unknown, metadata: unknown) => {
+const decodeBinarySource = (text: unknown, metadata: unknown, label: 'CSV' | 'Todoist') => {
     const limit = DEFAULT_IMPORT_SOURCE_LIMITS.maxInputBytes;
     if (typeof text !== 'string') invalid();
-    if (text.length > 4 * Math.ceil(limit / 3)) invalid('CSV source exceeds 16 MiB');
+    if (text.length > 4 * Math.ceil(limit / 3)) invalid(`${label} source exceeds 16 MiB`);
     if (text.length % 4 !== 0) invalid();
     const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
     const size = text.length / 4 * 3 - padding;
-    if (size > limit) invalid('CSV source exceeds 16 MiB');
+    if (size > limit) invalid(`${label} source exceeds 16 MiB`);
     const end = text.length - padding;
     for (let index = 0; index < end; index += 1) if (sextet(text.charCodeAt(index)) < 0) invalid();
     if (padding && (end < 2 || (sextet(text.charCodeAt(end - 1)) & (padding === 2 ? 15 : 3)) !== 0)) invalid();
     if (!metadataValid(metadata)) invalid();
-    return parseImportSource('mindwtr-csv', { bytes: base64ToBytes(text), fileName: metadata.fileName });
+    return { bytes: base64ToBytes(text), fileName: metadata.fileName };
 };
+const parseCsvSource = (text: unknown, metadata: unknown) => parseImportSource('mindwtr-csv', decodeBinarySource(text, metadata, 'CSV'));
+const parseTodoistSource = (text: unknown, metadata: unknown) => parseImportSource('todoist', decodeBinarySource(text, metadata, 'Todoist'));
 const warningMessages = (warnings: string[], t: ImportDiagnosticTranslator) => createImportDiagnostics(warnings, 'warning')
     .map((item) => formatImportDiagnostic(item, t));
 const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
@@ -120,10 +126,31 @@ const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: Imp
         return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
     } catch { return model; }
 };
+const inspectTodoist = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
+    const model = { valid: false, title: t('settings.backupMobile.importTodoistData'), summary: '',
+        confirmLabel: t('settings.backupMobile.import'), cancelLabel: t('common.cancel'),
+        errorTitle: t('settings.backupMobile.importFailed'), errorMessage: t('settings.backupMobile.theSelectedFileIsNotASupportedTodoistExport') };
+    try {
+        const parsed = parseTodoistSource(text, metadata);
+        if (!parsed.valid || !parsed.preview) {
+            const error = parsed.diagnostics.find((item) => item.severity === 'error');
+            return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
+        }
+        const preview = parsed.preview;
+        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.name}: ${project.taskCount}`);
+        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
+        const details = [t('settings.backupMobile.importTodoistTasksFromProjects', { taskCount: preview.taskCount, projectCount: preview.projectCount }),
+            preview.sectionCount > 0 ? t('settings.backupMobile.sectionsWillBePreserved', { sectionCount: preview.sectionCount }) : null,
+            preview.checklistItemCount > 0 ? t('settings.backupMobile.subtasksWillBecomeChecklistItems', { subtaskCount: preview.checklistItemCount }) : null,
+            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
+        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+    } catch { return model; }
+};
 
 /** RN's immutable inspection preview. Invalid files are ordinary localized values. */
-export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'json-restore' | 'csv' = 'json') {
+export function inspectNativeBackupDocument(text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator, format: 'json' | 'json-restore' | 'csv' | 'todoist' = 'json') {
     if (format === 'csv') return inspectCsv(text, metadata, t);
+    if (format === 'todoist') return inspectTodoist(text, metadata, t);
     if (format !== 'json' && format !== 'json-restore') invalid();
     const replacing = format === 'json-restore';
     const model = {
@@ -170,8 +197,10 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
     // Parse owned bytes before admission; no untrusted thrown details escape.
     let parsed: ReturnType<typeof parseSource>['data'];
     let csv: ReturnType<typeof parseCsvSource>['parsedData'];
+    let todoist: ReturnType<typeof parseTodoistSource>['parsedProjects'] | undefined;
     try {
         if (input.mode === 'csv') { const validation = parseCsvSource(input.text, input.metadata); if (!validation.valid || !validation.parsedData) invalid(); csv = validation.parsedData; }
+        else if (input.mode === 'todoist') { const validation = parseTodoistSource(input.text, input.metadata); if (!validation.valid || !validation.preview) invalid(); todoist = validation.parsedProjects; }
         else { const validation = parseSource(input.text, input.metadata); if (!validation.valid || !validation.data) invalid(); parsed = validation.data; }
     }
     catch (error) { if (error instanceof BackupInputError) throw error; return invalid(); }
@@ -185,10 +214,17 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const expectedCurrent = cloneAppData(current);
             const applied = operation === 'merge' ? applyImportSource('backup-merge', current, parsed!) : null;
             const csvApplied = operation === 'csv' ? applyImportSource('mindwtr-csv', current, csv!) : null;
-            const data = csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
+            const todoistApplied = operation === 'todoist' ? applyImportSource('todoist', current, todoist!) : null;
+            const data = todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
             const counts = applied ? summarizeBackupMerge(applied.result) : { added: 0, updated: 0 };
             let reply: NativeBackupDocumentReply;
-            if (csvApplied) {
+            if (todoistApplied) {
+                const result = todoistApplied.result;
+                reply = { version: 1, operation: 'todoist', snapshotName, result: {
+                    importedChecklistItemCount: result.importedChecklistItemCount, importedProjectCount: result.importedProjectCount,
+                    importedSectionCount: result.importedSectionCount, importedTaskCount: result.importedTaskCount, warnings: result.warnings,
+                } };
+            } else if (csvApplied) {
                 const result = csvApplied.result;
                 reply = { version: 1, operation: 'csv', snapshotName, result: {
                     importedAreaCount: result.importedAreaCount, importedChecklistItemCount: result.importedChecklistItemCount,
@@ -218,13 +254,15 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
 const validateReply = (value: unknown, snapshotName?: string, operation?: Operation): NativeBackupDocumentReply => {
     if (!record(value) || value.version !== 1 || !mode(value.operation) || !snapshot(value.snapshotName)
         || snapshotName !== undefined && value.snapshotName !== snapshotName || operation !== undefined && value.operation !== operation) invalid();
-    if (value.operation === 'csv') {
-        const counts = ['importedAreaCount', 'importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedStandaloneTaskCount', 'importedTaskCount'];
+    if (value.operation === 'csv' || value.operation === 'todoist') {
+        const counts = value.operation === 'csv'
+            ? ['importedAreaCount', 'importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedStandaloneTaskCount', 'importedTaskCount']
+            : ['importedChecklistItemCount', 'importedProjectCount', 'importedSectionCount', 'importedTaskCount'];
         const result = value.result;
         if (!exact(value, ['version', 'operation', 'snapshotName', 'result']) || !exact(result, [...counts, 'warnings'])
             || !counts.every((field) => count(result[field])) || !Array.isArray(result.warnings)
             || !result.warnings.every((warning) => typeof warning === 'string')) invalid();
-        if (!withinUtf8Limit(JSON.stringify(value), MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES)) invalid('CSV import result exceeds 64 KiB');
+        if (!withinUtf8Limit(JSON.stringify(value), MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES)) invalid(`${value.operation === 'csv' ? 'CSV' : 'Todoist'} import result exceeds 64 KiB`);
     } else if (!exact(value, ['version', 'operation', 'snapshotName', 'added', 'updated']) || !count(value.added) || !count(value.updated)
         || (value.operation === 'restore' || value.operation === 'replace') && (value.added !== 0 || value.updated !== 0)) invalid();
     return value as NativeBackupDocumentReply;
@@ -299,6 +337,14 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
 
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
+    if (reply.operation === 'todoist') {
+        const result = reply.result;
+        return { title: t('settings.backupMobile.importComplete'), message: [
+            t('settings.backupMobile.importedTodoistTasksIntoProjects', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }),
+            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.subtasksBecameChecklistItems', { subtaskCount: result.importedChecklistItemCount }) : null,
+            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+    }
     if (reply.operation === 'csv') {
         const result = reply.result;
         return { title: t('settings.backupMobile.importComplete'), message: [

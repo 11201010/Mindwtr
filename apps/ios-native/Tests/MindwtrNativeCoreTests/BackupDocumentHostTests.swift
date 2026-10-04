@@ -475,4 +475,84 @@ final class BackupDocumentHostTests: XCTestCase {
         XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), live)
     }
 
+
+    func testTodoistUsesSharedPolicyOwnedCSVAndColdSnapshotUndo() async throws {
+        let core = host(); _ = try await core.start()
+        let local = try await capture(core, "Existing before Todoist")
+        let url = root.appendingPathComponent("Launch.csv")
+        let csv = "TYPE,CONTENT,PRIORITY,INDENT,DATE,DESCRIPTION\nsection,Planning,,,,\ntask,Plan launch @work,1,1,2035-04-02,Write launch brief\nnote,Share with leadership,,,,\ntask,Follow up @ops,4,2,2035-04-03,Check dependencies\ntask,Weekly review @home,2,1,every Monday,\n"
+        try csv.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .todoist)
+        XCTAssertEqual(preview.action, .todoist)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        let during = try await capture(core, "After Todoist preview")
+        try "Changed provider bytes".write(to: url, atomically: true, encoding: .utf8)
+        let reply = try object(await core.mergeBackupImport(preview.id))
+        XCTAssertEqual(reply["operation"] as? String, "todoist")
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), ["importedTaskCount", "importedProjectCount", "importedSectionCount", "importedChecklistItemCount", "warnings"])
+        XCTAssertEqual(result["importedTaskCount"] as? Int, 2)
+        XCTAssertEqual(result["importedProjectCount"] as? Int, 1)
+        XCTAssertEqual(result["importedSectionCount"] as? Int, 1)
+        XCTAssertEqual(result["importedChecklistItemCount"] as? Int, 1)
+        let task = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Plan launch"]).first)
+        XCTAssertEqual(task["status"] as? String, "next")
+        XCTAssertEqual(task["dueDate"] as? String, "2035-04-02")
+        XCTAssertTrue((task["description"] as? String ?? "").contains("Share with leadership"))
+        let checklist = try XCTUnwrap(NativeJSON.jsonObject(with: Data((task["checklist"] as? String ?? "").utf8)) as? [[String: Any]])
+        XCTAssertEqual(checklist.count, 1)
+        let model = try object(await core.backupDocumentResultModel(json(reply)))
+        XCTAssertFalse((model["undoLabel"] as? String ?? "").isEmpty)
+        try csv.write(to: url, atomically: true, encoding: .utf8)
+        let repeatedPreview = try await core.prepareBackupImport(url, action: .todoist)
+        let repeated = try object(await core.mergeBackupImport(repeatedPreview.id))
+        XCTAssertEqual((repeated["result"] as? [String: Any])?["importedTaskCount"] as? Int, 0)
+        XCTAssertEqual(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").count, 4)
+        let roster = try await snapshots(core)
+        let original = try XCTUnwrap(roster.first { $0["name"] as? String == reply["snapshotName"] as? String })
+        await core.close()
+        let reopened = host(); _ = try await reopened.start()
+        _ = try await reopened.restoreBackupSnapshot(json(original))
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), [local, during])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTodoistLostAcknowledgmentColdReplayKeepsLaterEdits() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let url = root.appendingPathComponent("Tasks.csv")
+        try "TYPE,CONTENT\ntask,Todoist once\n".write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .todoist)
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected Todoist lost reply") } }
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let id = try XCTUnwrap(rows("SELECT id FROM tasks WHERE deletedAt IS NULL").first?["id"] as? String)
+        _ = try rows("UPDATE tasks SET title = ?, rev = rev + 1, updatedAt = ? WHERE id = ?", ["Later Todoist edit", "2037-01-01T00:00:00.000Z", id])
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let reopened = host(); _ = try await reopened.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTodoistZIPPreviewCancelAndImport() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "Todoist ZIP baseline")
+        let url = root.appendingPathComponent("todoist.zip")
+        try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAIAJKJRF0HhfoMKwAAACgAAAALAAAAV2Vla2VuZC5jc3YLiQxw1XH29wtx9QvhKkksztYJyU/JzywuUYjyDFB4Nn3pszlrXqyaxwUAUEsBAhQDFAAAAAgAkolEXQeF+gwrAAAAKAAAAAsAAAAAAAAAAAAAAIABAAAAAFdlZWtlbmQuY3N2UEsFBgAAAAABAAEAOQAAAFQAAAAAAA==" )).write(to: url)
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let preview = try await core.prepareBackupImport(url, action: .todoist)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        await core.discardBackupImport(preview.id)
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        let initial = try await snapshots(core); XCTAssertTrue(initial.isEmpty)
+        let accepted = try await core.prepareBackupImport(url, action: .todoist)
+        let reply = try object(await core.mergeBackupImport(accepted.id))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["importedTaskCount"] as? Int, 1)
+        XCTAssertEqual(try rows("SELECT title FROM tasks WHERE title = ?", ["Todoist ZIP 日本語"]).count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
 }

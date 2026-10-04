@@ -4051,7 +4051,7 @@ final class CoreModel: ObservableObject {
     private func backupTransferFailure(mode: String = "merge") -> String {
         let localized = mode == "restore" ? label("settings.backupMobile.failedToRestoreBackup")
             : mode == "replace" ? label("settings.backupMobile.restoreFailed")
-            : mode == "csv" ? label("settings.backupMobile.importFailed") : dataSettings.object("backup").text("mergeFailed")
+            : ["csv", "todoist"].contains(mode) ? label("settings.backupMobile.importFailed") : dataSettings.object("backup").text("mergeFailed")
         return localized.isEmpty ? label("settings.feedback.actionFailed") : localized
     }
 
@@ -4059,8 +4059,8 @@ final class CoreModel: ObservableObject {
         let reason: String
         switch failure.localizedDescription {
         case "Backup exceeds the supported byte limit", "INVALID_INPUT: Import source exceeds supported limit":
-            reason = mode == "csv" ? label("settings.importDiagnostics.limitExceeded") : "Backup source exceeds 128 MiB"
-        case "INVALID_INPUT: CSV source exceeds 16 MiB":
+            reason = ["csv", "todoist"].contains(mode) ? label("settings.importDiagnostics.limitExceeded") : "Backup source exceeds 128 MiB"
+        case "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB":
             reason = label("settings.importDiagnostics.limitExceeded")
         case "INVALID_INPUT: CSV import result exceeds 64 KiB":
             reason = "CSV import result exceeds 64 KiB"
@@ -4109,9 +4109,11 @@ final class CoreModel: ObservableObject {
         let reply = try decode(encoded)
         guard validBackupInteger(reply["version"], maximum: 1), reply.number("version") == 1,
               !reply.text("snapshotName").isEmpty else { throw CocoaError(.coderReadCorrupt) }
-        if reply.text("operation") == "csv" {
+        if ["csv", "todoist"].contains(reply.text("operation")) {
             let result = reply.object("result")
-            let counts = ["importedAreaCount", "importedChecklistItemCount", "importedProjectCount", "importedSectionCount", "importedStandaloneTaskCount", "importedTaskCount"]
+            let counts = reply.text("operation") == "todoist"
+                ? ["importedChecklistItemCount", "importedProjectCount", "importedSectionCount", "importedTaskCount"]
+                : ["importedAreaCount", "importedChecklistItemCount", "importedProjectCount", "importedSectionCount", "importedStandaloneTaskCount", "importedTaskCount"]
             // Core bounds the canonical reply before journaling. Foundation can
             // expand its transport representation by escaping slashes, so do
             // not reapply that byte bound after native reserialization.
@@ -4135,7 +4137,7 @@ final class CoreModel: ObservableObject {
         backupDocumentHost = currentHost
         backupDocumentReply = encoded
         backupDocumentMode = reply.text("operation")
-        backupUndoSnapshotName = ["merge", "csv", "replace"].contains(reply.text("operation")) ? reply.text("snapshotName") : nil
+        backupUndoSnapshotName = ["merge", "csv", "replace", "todoist"].contains(reply.text("operation")) ? reply.text("snapshotName") : nil
         backupDocumentPending = false
         backupImportBusy = false
         backupImportError = nil
@@ -4217,7 +4219,7 @@ final class CoreModel: ObservableObject {
         let labels = result.object("diagnostics")
         let backup = result.object("backup")
         guard result["version"] is NSNumber, !result.text("revision").isEmpty, !result.text("title").isEmpty,
-              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed", "mergeLabel", "mergeDescription", "mergeFailed", "restoreFileLabel", "restoreFileDescription", "csvImportLabel", "csvImportDescription", "snapshotsLabel", "restoreLabel"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
+              ["title", "exportLabel", "description", "failed", "csvLabel", "csvDescription", "csvFailed", "tasknotesLabel", "tasknotesDescription", "tasknotesFailed", "mergeLabel", "mergeDescription", "mergeFailed", "restoreFileLabel", "restoreFileDescription", "csvImportLabel", "csvImportDescription", "todoistImportLabel", "todoistImportDescription", "snapshotsLabel", "restoreLabel"].allSatisfy({ backup[$0] is String && !backup.text($0).isEmpty }),
               !labels.text("title").isEmpty, labels.object("debugLogging")["value"] is Bool,
               ["toastTitle", "logMissing", "shareUnavailable", "logCleared", "logClearFailed"].allSatisfy({ labels[$0] is String }),
               labels["shareLog"] is NSNull || labels["shareLog"] is CoreObject,

@@ -2003,7 +2003,7 @@ struct DiagnosticsCard: View {
         .fileImporter(isPresented: Binding(
             get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
             set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
-        ), allowedContentTypes: pickerAction == .csv ? [.commaSeparatedText, .zip, .data] : [.json],
+        ), allowedContentTypes: pickerAction.usesBinarySource ? [.commaSeparatedText, .zip, .data] : [.json],
            allowsMultipleSelection: false) { result in
             Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, action: pickerAction) }
         }
@@ -2102,6 +2102,16 @@ struct DiagnosticsCard: View {
         }
         .disabled(!model.backupImportEnabled)
         .accessibilityIdentifier("data-transfer-import-csv")
+        Button { model.openBackupImportPicker(action: .todoist) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("todoistImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("todoistImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-todoist")
         if model.backupImportBusy {
             ProgressView().accessibilityIdentifier("backup-import-progress")
         }

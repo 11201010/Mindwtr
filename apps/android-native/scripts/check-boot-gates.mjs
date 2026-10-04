@@ -3672,6 +3672,8 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
     assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'csv']), 'CSV binary transport and format pass unchanged');
     assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'json-restore'))).ok, true);
     assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata, 'json-restore']), 'selected JSON replacement action passes unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('UEsDBA==', metadataJSON, 'todoist'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'todoist']), 'Todoist binary transport and action pass unchanged');
     const beforeInvalidFormat = backup.backupInputs.length;
     assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'other'))).error, /^INVALID_INPUT:/);
     assert.equal(backup.backupInputs.length, beforeInvalidFormat, 'unsupported format never reaches service');
