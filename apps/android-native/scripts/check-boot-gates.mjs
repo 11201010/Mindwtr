@@ -1198,13 +1198,17 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
         // S4b: an encryption submit or decline runs with the passphrase fields core holds, so it starts only after every keystroke
         // sent before it (the light queue); light actions (Show passphrase) keep answering while it runs.
-        assert.match(source('SyncSettings.kt'), /run\("runSyncEncryptionAction", input, light = !heavy, after = if \(heavy\) SyncSettingsModel\.light else null\)/);
-        assert.match(source('SyncSettings.kt'), /val result = runCatching \{\s+after\?\.submit \{\}\?\.get\(\)\s+runtime\.syncCommand\(name, input\.toString\(\)\)/);
-        // Review S4b 1: a passphrase field never holds more than core takes (the row's maxLength; PassphraseFieldsTest), and a
-        // refused edit blocks the submit instead of running it with the shorter text core kept.
-        assert.match(source('SyncSettings.kt'), /if \(type == "submit" && !passphrases\.submittable\) \{ shell\.showToast\(null, tooLong, "error"\); return \}/);
+        assert.match(source('SyncSettings.kt'), /run\("runSyncEncryptionAction", input, light = !heavy, after = if \(heavy\) SyncSettingsModel\.light else null,\s+admit = if \(type == "submit"\) \(\{ passphrases\.admit\(action\) \}\) else null\)/);
+        assert.match(source('SyncSettings.kt'), /val result = runCatching \{\s+after\?\.submit \{\}\?\.get\(\)\s+admit\?\.let \{ check -> onMain\(check\)\?\.let \{ refusal -> throw IllegalStateException\("PASSPHRASE_REFUSED: \$refusal"\) \} \}\s+runtime\.syncCommand\(name, input\.toString\(\)\)/);
+        // Review S4b 1 (and its verification): a passphrase field never holds more than core takes (the row's maxLength), an edit
+        // core's `typed` command refused stands refused, and either blocks the submit instead of running it with the older text
+        // core kept, at the tap and again once the keystrokes before it settled. A flow change (open, cancel, retry) drops the
+        // refusals, and Abandon setup is never blocked (PassphraseFieldsTest).
+        assert.match(source('SyncSettings.kt'), /passphrases\.admit\(action\)\?\.let \{ refusal -> shell\.showToast\(null, refusal, "error"\); return \}/);
         assert.match(source('SyncSettings.kt'), /sync\.typePassphrase\(field, text, row\.getInt\("maxLength"\), row\.getString\("tooLong"\)\)/);
-        assert.match(source('SyncSettings.kt'), /if \(!passphrases\.type\(field, text, maxLength\)\) \{ shell\.showToast\(null, tooLongText, "error"\); return \}/);
+        assert.match(source('SyncSettings.kt'), /val edit = passphrases\.type\(field, text, maxLength, tooLongText\) \?: return shell\.showToast\(null, tooLongText, "error"\)/);
+        assert.match(source('SyncSettings.kt'), /failed = \{ message -> passphrases\.settled\(field, edit, message\) \}\) \{ passphrases\.settled\(field, edit, null\) \}/);
+        assert.match(source('SyncSettings.kt'), /failed\(message\.substringAfter\(": "\)\)/);
     }
     // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
     // runs after the host stopped or closed.

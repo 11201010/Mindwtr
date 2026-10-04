@@ -109,8 +109,6 @@ class SyncSettingsModel(private val menu: MenuModel) {
     /** The encryption card's passphrase fields as typed (current, next, confirm); core holds their text too. */
     val passphrases = PassphraseFields()
     val fields: Map<String, String> get() = passphrases.texts
-    /** Core's words for a passphrase past its limit (the field row's `tooLong`), shown when a refused edit blocks a submit. */
-    private var tooLong = ""
     var historyOpen by mutableStateOf(false); private set
     var preferencesOpen by mutableStateOf(false); private set
     var snapshotsOpen by mutableStateOf(false); private set
@@ -241,10 +239,13 @@ class SyncSettingsModel(private val menu: MenuModel) {
         val type = action.getString("type")
         val input = JSONObject().put("action", action).apply { if (type == "submit" || type == "decline") put("requestId", uuid()) }
         val heavy = type == "submit" || type == "decline"
-        // A field core refused (past its limit) still holds the shorter text core kept: never submit that.
-        if (type == "submit" && !passphrases.submittable) { shell.showToast(null, tooLong, "error"); return }
-        // A submit runs with the fields core holds: it waits for every keystroke sent before it (the light queue), never overtakes one.
-        run("runSyncEncryptionAction", input, light = !heavy, after = if (heavy) SyncSettingsModel.light else null) { reply ->
+        // A field core refused (past its limit, or its `typed` command failed) still holds the older text core kept: never submit
+        // that. A flow change drops the fields' refusals.
+        passphrases.admit(action)?.let { refusal -> shell.showToast(null, refusal, "error"); return }
+        // A submit runs with the fields core holds: it waits for every keystroke sent before it (the light queue), never overtakes
+        // one, and then asks again, as a keystroke core refused in that wait counts too.
+        run("runSyncEncryptionAction", input, light = !heavy, after = if (heavy) SyncSettingsModel.light else null,
+            admit = if (type == "submit") ({ passphrases.admit(action) }) else null) { reply ->
             reply.menuText("passphrase")?.let { phrase -> passphrases.generated(phrase) }
             if (type == "cancel" || type == "submit" || type == "decline") passphrases.clear()
         }
@@ -255,9 +256,9 @@ class SyncSettingsModel(private val menu: MenuModel) {
      * ([maxLength], the row's) is refused with core's words ([tooLongText]) and never reaches core.
      */
     fun typePassphrase(field: String, text: String, maxLength: Int, tooLongText: String) {
-        tooLong = tooLongText
-        if (!passphrases.type(field, text, maxLength)) { shell.showToast(null, tooLongText, "error"); return }
-        run("runSyncEncryptionAction", JSONObject().put("action", JSONObject().put("type", "typed").put("field", field).put("value", text)), light = true)
+        val edit = passphrases.type(field, text, maxLength, tooLongText) ?: return shell.showToast(null, tooLongText, "error")
+        run("runSyncEncryptionAction", JSONObject().put("action", JSONObject().put("type", "typed").put("field", field).put("value", text)), light = true,
+            failed = { message -> passphrases.settled(field, edit, message) }) { passphrases.settled(field, edit, null) }
     }
 
     /** The form's fields as core takes them: `webdav` or `selfHosted`, a password or token left null when not edited. */
@@ -277,14 +278,20 @@ class SyncSettingsModel(private val menu: MenuModel) {
      * waits behind the earlier ones sent there, and one sent [after] a queue starts once that queue's earlier work is done (and
      * leaves the queue free while it runs).
      */
+    /**
+     * [admit] runs on the main thread once [after] drains (its answers settled there first): a refusal it returns stops the command
+     * with that toast. [failed] gets a failed command's message as its toast shows it.
+     */
     private fun run(name: String, input: JSONObject, light: Boolean = false, key: String = name, ordered: ExecutorService? = null,
-                    after: ExecutorService? = null, done: (JSONObject) -> Unit = {}) {
+                    after: ExecutorService? = null, admit: (() -> String?)? = null, failed: (String) -> Unit = {},
+                    done: (JSONObject) -> Unit = {}) {
         val runtime = shell.coreHost() ?: return
         if (!light && !inFlight.add(key)) return
         if (!light) running += 1
         val work = Runnable {
             val result = runCatching {
                 after?.submit {}?.get()
+                admit?.let { check -> onMain(check)?.let { refusal -> throw IllegalStateException("PASSPHRASE_REFUSED: $refusal") } }
                 runtime.syncCommand(name, input.toString())
             }
             shell.ui {
@@ -293,6 +300,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
                 result.exceptionOrNull()?.let { error ->
                     Log.w(CoreHost.TAG, "Sync screen command failed command=$name code=${error.message?.substringBefore(':')}")
                     val message = error.message.orEmpty()
+                    failed(message.substringAfter(": "))
                     shell.showToast(null, message.substringAfter(": "), if (message.startsWith("STALE_REVISION")) "warning" else "error")
                 }
                 settings.refresh()
@@ -317,6 +325,15 @@ class SyncSettingsModel(private val menu: MenuModel) {
     }
 
     private fun uuid() = UUID.randomUUID().toString()
+
+    /** [read] on the main thread, from a command's worker, after everything the main thread was already given. */
+    private fun <T> onMain(read: () -> T): T {
+        val answer = java.util.concurrent.atomic.AtomicReference<Result<T>>()
+        val done = java.util.concurrent.CountDownLatch(1)
+        shell.ui { answer.set(runCatching(read)); done.countDown() }
+        done.await()
+        return answer.get().getOrThrow()
+    }
 }
 
 // ---- The screen ----
@@ -673,30 +690,58 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
  */
 class PassphraseFields {
     var texts by mutableStateOf(emptyMap<String, String>()); private set
-    private var refused by mutableStateOf(emptySet<String>())
+    /** A refused field and what to say about it: core's limit, or core's answer to its `typed` command. */
+    private var refused by mutableStateOf(emptyMap<String, String>())
+    /** Each field's newest edit; core's answer to an older one changes nothing (the light queue answers in order). */
+    private val edits = HashMap<String, Int>()
     val submittable: Boolean get() = refused.isEmpty()
 
-    /** True when the edit is taken; false when [text] is past [maxLength] (the field keeps what it held). */
-    fun type(field: String, text: String, maxLength: Int): Boolean {
+    /**
+     * The edit's number when it is taken (it goes to core, whose answer comes to [settled]); null when [text] is past
+     * [maxLength] (the field keeps what it held and stays refused with [tooLong]).
+     */
+    fun type(field: String, text: String, maxLength: Int, tooLong: String): Int? {
+        val edit = next(field)
         if (text.length > maxLength) {
-            refused = refused + field
-            return false
+            refused = refused + (field to tooLong)
+            return null
         }
         texts = texts + (field to text)
         refused = refused - field
-        return true
+        return edit
     }
 
-    /** Generate's passphrase, in both new-passphrase fields. */
+    /** Core's answer to [edit] of [field]: null took it; a refusal ([refusal], core's words) stands until core takes a later edit. */
+    fun settled(field: String, edit: Int, refusal: String?) {
+        if (edits[field] != edit) return
+        refused = if (refusal == null) refused - field else refused + (field to refusal)
+    }
+
+    /** Generate's passphrase, in both new-passphrase fields (core set it, so an older edit's answer no longer counts). */
     fun generated(phrase: String) {
+        next("next"); next("confirm")
         texts = texts + mapOf("next" to phrase, "confirm" to phrase)
         refused = refused - "next" - "confirm"
     }
 
-    fun clear() {
-        texts = emptyMap()
-        refused = emptySet()
+    /**
+     * What blocks [action], or null. A flow change (open, cancel, retry) starts the fields afresh, so a refusal never outlives its
+     * flow; a submit waits for every refused field, except Abandon setup's, which asks for no passphrase.
+     */
+    fun admit(action: JSONObject): String? = when (action.optString("type")) {
+        "open", "cancel", "retry" -> { clear(); null }
+        "submit" -> if (action.optString("flow") == "abandon") null else refused.values.firstOrNull()
+        else -> null
     }
+
+    /** Counters are kept, so an answer to an edit made before the clear never matches a new one. */
+    fun clear() {
+        edits.keys.forEach { next(it) }
+        texts = emptyMap()
+        refused = emptyMap()
+    }
+
+    private fun next(field: String): Int = ((edits[field] ?: 0) + 1).also { edits[field] = it }
 }
 
 /** RN's folded card heading (Settings sync options, Recovery snapshots): its title, description and ▸ or ▾. */
