@@ -432,9 +432,12 @@ export const createSyncEncryptionStateStore = ({
         getSyncEncryptionStatus: async () => {
             const state = await loadSyncEncryptionLocalState();
             if (!state || state.state === 'off') {
+                // The mark belongs to one location (the block rule's own test): another folder is whole and offers Enable.
+                const partly = state?.partlyEncryptedScope
+                    && isSyncEncryptionStateBlocked({ state: 'off', partlyEncryptedScope: state.partlyEncryptedScope }, await readActiveScope().catch(() => null));
                 return {
                     state: 'off', incompleteTransition: state?.incompleteTransition,
-                    ...(state?.partlyEncryptedScope ? { partlyEncrypted: true } : {}),
+                    ...(partly ? { partlyEncrypted: true } : {}),
                 };
             }
             return {
