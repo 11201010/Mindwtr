@@ -40,4 +40,21 @@ class ProjectDetailsTest {
         // Notes keep their exact text, blank included.
         assertEquals(listOf("projectNotes" to ""), editsOnLeave(title = null, storedTitle = "Old", notes = "", storedNotes = "Old notes"))
     }
+
+    /** A reply applies only if it answers the newest read of its kind in the current session (review PD 3). */
+    @Test fun lateOrClosedRepliesNeverApply() {
+        val guard = ReplyGuard()
+        val older = guard.ticket("notes")
+        val newer = guard.ticket("notes")
+        assertFalse(guard.current(older))
+        assertTrue(guard.current(newer))
+        // Another kind's read does not outdate this one.
+        val picker = guard.ticket("picker")
+        assertTrue(guard.current(newer))
+        // Leaving the screen or another project closes the session: an Area read answering then never opens its picker.
+        guard.close()
+        assertFalse(guard.current(picker))
+        assertFalse(guard.current(newer))
+        assertTrue(guard.current(guard.ticket("picker")))
+    }
 }

@@ -547,7 +547,7 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /internal enum class Part \{ Focus, Projects, Project, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
+assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('internal fun readSucceeded(')));
     for (const part of ['Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -1764,6 +1764,16 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
         assert.match(start, /shell\.tryPerform\(late = late, finished = done\) \{ runtime ->[\s\S]*?menuRead\("\$\{item\.kind\}Prepare"[\s\S]*?late\.set\(action\)\s*runtime\.menuCommand\(action\.kind, action\.title\)/, 'the preparation and its commit run in one action');
         assert.doesNotMatch(details, /shell\.ui \{ shell\.ui \{/, 'no write waits on a posted callback');
         assert.match(model, /val action = action \?: late\?\.get\(\)/, 'a failure after the commit is made owes that commit');
+    }
+    // A Details reply applies only while it answers the newest read of its kind, in the session it was read in: another
+    // project or leaving the screen closes the session; a values read started before a write ended never clears a draft
+    // (review PD 3; ProjectDetailsTest's ReplyGuard).
+    {
+        const details = code(source('ProjectDetails.kt'));
+        assert.equal((details.match(/replies\.ticket\("/g) ?? []).length, 5, 'every Details read takes a ticket');
+        assert.equal((details.match(/replies\.current\(ticket\)/g) ?? []).length, 5, 'every Details reply checks its ticket');
+        assert.match(details, /shell\.fresh\(mine, InboxViewModel\.Part\.ProjectDetails\)/);
+        assert.match(details, /fun closeOverlays\(\) \{\s*replies\.close\(\)/);
     }
     // Back (closeProject) and opening another project store the open project's typed title and notes first (review PD 1;
     // ProjectDetailsTest's editsOnLeave), as RN's end of editing and blur do on close.

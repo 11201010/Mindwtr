@@ -1800,8 +1800,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private var commandAt = 0L
     private val shownAt = HashMap<Part, Long>()
 
-    /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices. */
-    internal enum class Part { Focus, Projects, Project, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
+    /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices, ProjectDetails the open project's Details values. */
+    internal enum class Part { Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
 
     /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
     internal fun issue(): Long = ++issued

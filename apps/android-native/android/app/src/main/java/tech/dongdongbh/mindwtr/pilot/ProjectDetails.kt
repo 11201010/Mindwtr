@@ -138,6 +138,7 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
             }
         }
         titleDraft = null
+        replies.close()
         projectId = id
         open = false; statusMenu = false; raw = null; notesExpanded = false; notesPreview = false; notesFullscreen = false
         notesDraft = null; notesView = null; areaPicker = null; tagPicker = null; tagDraft = ""; datePicker = null
@@ -146,15 +147,20 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
 
     private fun input(id: String) = JSONObject().put("projectId", id)
 
+    /** Which replies still apply: the newest read of each kind, in the current session (review PD 3). */
+    private val replies = ReplyGuard()
+
     /** Core's status, flow and notes options, in the background. */
     fun read() {
         val id = projectId ?: return
+        val ticket = replies.ticket("raw")
         shell.background(emptyList(), { runtime ->
             JSONObject().put("status", runtime.menuRead("projectStatusOptions", input(id).toString()))
                 .put("flow", runtime.menuRead("projectFlowOptions", input(id).toString()))
                 .put("notes", runtime.menuRead("projectNotesOptions", input(id).toString()))
-        }) { reply, _ ->
-            if (projectId != id) return@background
+        }) { reply, mine ->
+            // A read started before a write ended answers the old values: it must never clear a typed draft.
+            if (!replies.current(ticket) || !shell.fresh(mine, InboxViewModel.Part.ProjectDetails)) return@background
             raw = reply
             // The typed notes are stored: the field shows core's text again.
             if (notesDraft == storedNotes()) notesDraft = null
@@ -169,9 +175,10 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     fun readNotes() {
         val id = projectId ?: return
         val text = notesDraft ?: storedNotes()
+        val ticket = replies.ticket("notes")
         shell.background(emptyList(), { runtime ->
             runtime.menuRead("projectNotesPreview", input(id).put("text", text).toString())
-        }) { reply, _ -> if (projectId == id && (notesDraft ?: storedNotes()) == text) notesView = reply }
+        }) { reply, _ -> if (replies.current(ticket)) notesView = reply }
     }
 
     /** The area picker, on core's area options. */
@@ -180,26 +187,41 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
 
     /** The tag picker, on core's tag options (read again after each change while it is open). */
     fun openTags() { tagDraft = ""; choices("projectTagsOptions", JSONObject()) { tagPicker = it } }
-    fun readTags() { val id = projectId ?: return; if (tagPicker != null) shell.background(emptyList(), { it.menuRead("projectTagsOptions", input(id).toString()) }) { reply, _ -> if (projectId == id && tagPicker != null) tagPicker = reply } }
+    fun readTags() {
+        val id = projectId ?: return
+        if (tagPicker == null) return
+        val ticket = replies.ticket("tags")
+        shell.background(emptyList(), { it.menuRead("projectTagsOptions", input(id).toString()) }) { reply, _ -> if (replies.current(ticket) && tagPicker != null) tagPicker = reply }
+    }
     fun closeTags() { tagPicker = null }
 
     fun openDate(field: String) = choices("projectDateOptions", JSONObject().put("field", field)) { datePicker = field to it }
     fun closeDate() { datePicker = null }
 
     fun openSections() = choices("projectSectionOrderOptions", JSONObject()) { sections = it }
-    fun readSections() { val id = projectId ?: return; if (sections != null) shell.background(emptyList(), { it.menuRead("projectSectionOrderOptions", input(id).toString()) }) { reply, _ -> if (projectId == id && sections != null) sections = reply } }
+    fun readSections() {
+        val id = projectId ?: return
+        if (sections == null) return
+        val ticket = replies.ticket("sections")
+        shell.background(emptyList(), { it.menuRead("projectSectionOrderOptions", input(id).toString()) }) { reply, _ -> if (replies.current(ticket) && sections != null) sections = reply }
+    }
     fun closeSections() { sections = null; sectionDraft = null; sectionDelete = null }
 
     /** The project screen left (another tab, the editor over it): its pickers and menus close, as RN's modals go with their screen. */
-    fun closeOverlays() { statusMenu = false; areaPicker = null; tagPicker = null; datePicker = null; help = null; notesFullscreen = false; closeSections() }
+    fun closeOverlays() {
+        replies.close()
+        statusMenu = false; areaPicker = null; tagPicker = null; datePicker = null; help = null; notesFullscreen = false; closeSections()
+    }
 
     /** A picker's choices: core's options, read as a user action. */
     private fun choices(read: String, extra: JSONObject, show: (JSONObject) -> Unit) {
         val id = projectId ?: return
         statusMenu = false
+        // A picker opens only for its project, still on screen: its reply after a close or a newer read never shows.
+        val ticket = replies.ticket("picker")
         shell.perform { runtime ->
             val options = runtime.menuRead(read, JSONObject(extra.toString()).put("projectId", id).toString())
-            shell.ui { if (projectId == id) show(options) }
+            shell.ui { if (replies.current(ticket)) show(options) }
         }
     }
 
@@ -934,4 +956,22 @@ internal fun editsOnLeave(title: String?, storedTitle: String?, notes: String?, 
     val trimmed = title?.trim().orEmpty()
     if (trimmed.isNotEmpty() && trimmed != storedTitle?.trim()) add("projectRename" to trimmed)
     if (notes != null && storedNotes != null && notes != storedNotes) add("projectNotes" to notes)
+}
+
+/**
+ * Which read replies still apply: each read takes a ticket for its kind, and its reply applies only while that ticket is the
+ * kind's newest and the session it was taken in is still open. [close] ends the session: another project, or the screen left.
+ */
+internal class ReplyGuard {
+    data class Ticket(val session: Int, val kind: String, val number: Int)
+
+    private var session = 0
+    private var issued = 0
+    private val newest = HashMap<String, Int>()
+
+    fun ticket(kind: String): Ticket = Ticket(session, kind, ++issued).also { newest[kind] = it.number }
+
+    fun current(ticket: Ticket): Boolean = ticket.session == session && newest[ticket.kind] == ticket.number
+
+    fun close() { session += 1 }
 }
