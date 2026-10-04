@@ -1665,6 +1665,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun closeProject() {
         keepProject(null)
         project = null
+        // RN's project modal starts folded with every picker shut each time it opens.
+        projectDetails.follow(null)
     }
 
     /** The open project's next window at the loaded revision. */

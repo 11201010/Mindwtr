@@ -506,7 +506,12 @@ const shootProjectDetails = async (prefix, suffix, rn) => {
     const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
     try {
         if (rn) openLink('projects');
-        else { const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Projects')), 60_000); await tap(tab(nodes, 'Projects')); }
+        else {
+            const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Projects')), 60_000);
+            await tap(tab(nodes, 'Projects'));
+            // The tab keeps an open project (the attachments shots leave one): Back to the list.
+            if (button(await screen(), 'Back')) await back();
+        }
         const projects = await waitFor(PROJECT, (current) => Boolean(inList(current, PROJECT)), 45_000);
         await tap(inList(projects, PROJECT));
         const details = await waitFor('the Details toggle', (current) => Boolean(button(current, en['taskEdit.details'])) || current.some((node) => node.text === en['taskEdit.details']), 30_000);
