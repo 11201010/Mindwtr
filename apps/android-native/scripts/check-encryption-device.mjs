@@ -269,11 +269,28 @@ try {
     // confirm field holds one character, so core's Enable is enabled and only the refusal stops it). Each typed character is a
     // core command, so this takes minutes; a pasted text is one edit.
     const transitionsStarted = () => (logs().match(/transition \{[^\n]*"phase":"start"/g) ?? []).length;
-    await fillTag('sync-passphrase-next', '7'.repeat(1001));
     await fillTag('sync-passphrase-confirm', '7');
+    // adb's key events can outrun the field under load: type to 1,000 in chunks, reading the field back, then one more.
+    await fillTag('sync-passphrase-next', '7'.repeat(100));
+    // Read where it is: scrolling could move the focus the typing goes to.
+    const nextLength = async () => {
+        const node = tagged(await screen(), 'sync-passphrase-next') ?? await reveal((current) => tagged(current, 'sync-passphrase-next'), 'the passphrase field');
+        return (node.text ?? '').length;
+    };
+    for (let round = 0; round < 60; round += 1) {
+        const length = await nextLength();
+        if (length >= 1000) break;
+        requireAppFront();
+        sh(`input text '${'7'.repeat(Math.min(100, 1000 - length))}'`);
+        await sleep(2_000);
+    }
+    check(await nextLength() === 1000, '(2) the field took 1,000 characters');
+    requireAppFront();
+    sh("input text '7'");
+    await sleep(2_000);
     await hideKeyboard();
-    const shown = (await reveal((current) => tagged(current, 'sync-passphrase-next'), 'the passphrase field')).text ?? '';
-    check(shown.length === 1000, `(2) a passphrase field holds at most core's 1,000 characters (${shown.length} after 1,001 typed)`);
+    const shown = await nextLength();
+    check(shown === 1000, `(2) a passphrase field holds at most core's 1,000 characters (${shown} after the 1,001st was typed)`);
     const startedBefore = transitionsStarted();
     // Core's Enable is enabled once its fields hold text (the typed characters drain first): only then does the tap test the refusal.
     await until('Enable enabled by core', async () => {
