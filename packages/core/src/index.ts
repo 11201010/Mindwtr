@@ -331,3 +331,6 @@ export * from './taxonomy-policy';
 
 export type { NativeReferenceTasksMoveRequest, NativeReferenceTasksMovePrepared, NativeReferenceTasksMoveEnvelope,
     NativeReferenceTasksMoveResult, NativeReferenceTasksMovePreparation, NativeReferenceTasksMoveParams } from './native-host-contract-reference-bulk-status';
+
+export type { NativeReferenceTasksAddTagRequest, NativeReferenceTasksAddTagPrepared, NativeReferenceTasksAddTagEnvelope,
+    NativeReferenceTasksAddTagResult, NativeReferenceTasksAddTagPreparation } from './native-host-contract-reference-bulk-tag';

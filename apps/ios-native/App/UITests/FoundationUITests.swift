@@ -21376,6 +21376,161 @@ extension FoundationUITests {
 }
 
 
+// Task195 stages a fresh rich Reference fixture. Root verifies raw no-op/cancel
+// equality and the actual RN changed-task result independently of this UI test.
+extension FoundationUITests {
+    private var task195TagInput: String { "  ###Task195 café 🧭  " }
+
+    private func task195OpenTag(_ app: XCUIApplication) {
+        task192Tap(app, "reference-bulk-add-tag", scrollID: "reference-bulk-actions-scroll")
+        XCTAssertTrue(app.descendants(matching: .any)["reference-bulk-tag-dialog"].waitForExistence(timeout: 15))
+        boardEnabled(app.textFields["reference-bulk-tag-input"], timeout: 15)
+    }
+
+    private func task195TypeTag(_ app: XCUIApplication, _ text: String) {
+        let input = app.textFields["reference-bulk-tag-input"]
+        let scroll = app.scrollViews["reference-bulk-tag-scroll"]
+        if scroll.exists { revealPagedElement(app, input, in: scroll, ready: app.buttons["reference-bulk-tag-cancel"]) }
+        input.tap(); input.typeText(text)
+        XCTAssertTrue((input.value as? String ?? "").utf8.elementsEqual(text.utf8), "Exact Unicode/raw-space input must reach the text field")
+    }
+
+    private func task195Clean(_ app: XCUIApplication) {
+        XCTAssertFalse(app.staticTexts["reference-bulk-tag-error"].exists)
+        XCTAssertFalse(app.staticTexts["reference-bulk-tag-read-error"].exists)
+        XCTAssertFalse(app.buttons["persistence-retry"].exists)
+        XCTAssertFalse(app.buttons["task-referenceBulkTag-undo"].exists)
+        XCTAssertFalse(app.buttons["task-completion-undo"].exists)
+        XCTAssertFalse(app.buttons["reference-project-next-action-add"].exists)
+        XCTAssertFalse(app.buttons["task-editor-save"].exists)
+    }
+
+    private func task195Observe(_ app: XCUIApplication, library: String, tag: String, operation: String) {
+        let record: [String: Any] = ["fixture": library, "operation": operation, "source": "reference", "tag": tag,
+            "taskIds": task193IDs("inbox"), "params": ["groupBy": "none", "includeArchivedProjects": true,
+                "filters": ["searchQuery": task193Query("inbox")]], "beforeActionWallEpoch": Date().timeIntervalSince1970]
+        if let bytes = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]), let text = String(data: bytes, encoding: .utf8) {
+            print("Task195 action observation " + text)
+        } else { XCTFail("Cannot encode Task195 pre-action observation") }
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task195 before " + operation; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    private func task195Flow(_ library: String, rtl: Bool = false, largest: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = task192Arguments(library, rtl: rtl, largest: largest)
+        app.launch(); task186Open(app); referenceGroup(app, "none")
+        task193Range(app, status: "inbox", rtl: rtl)
+        task195OpenTag(app); task195TypeTag(app, "Task195 canceled input")
+        boardTap(app, "reference-bulk-tag-cancel")
+        XCTAssertTrue(app.textFields["reference-bulk-tag-input"].waitForNonExistence(timeout: 15))
+        task192Count(app, 4); task195Clean(app)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkTag-notice"].exists)
+
+        task195OpenTag(app)
+        XCTAssertFalse((app.textFields["reference-bulk-tag-input"].value as? String ?? "").contains("canceled input"))
+        XCTAssertFalse(app.buttons["reference-bulk-tag-save"].isEnabled)
+        task195TypeTag(app, "###") // Shared canSave permits it; the RN builder produces no updates.
+        boardEnabled(app.buttons["reference-bulk-tag-save"], timeout: 20)
+        task195Observe(app, library: library, tag: "###", operation: "addTag-noop")
+        boardTap(app, "reference-bulk-tag-save")
+        XCTAssertTrue(app.textFields["reference-bulk-tag-input"].waitForNonExistence(timeout: 20))
+        task192Count(app, 4); task195Clean(app)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkTag-notice"].exists)
+
+        task195OpenTag(app); task195TypeTag(app, task195TagInput)
+        boardEnabled(app.buttons["reference-bulk-tag-save"], timeout: 20)
+        task195Observe(app, library: library, tag: task195TagInput, operation: "addTag-changed")
+        boardTap(app, "reference-bulk-tag-save")
+        XCTAssertTrue(app.staticTexts["reference-bulk-count"].waitForNonExistence(timeout: 30))
+        XCTAssertTrue(app.textFields["reference-bulk-tag-input"].waitForNonExistence(timeout: 20))
+        let notice = app.staticTexts["task-referenceBulkTag-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertEqual(Int(notice.label.compactMap { $0.wholeNumberValue }.map(String.init).joined()), 3,
+                       "Fixture task04 already has the tag; only three tasks change")
+        for id in task193IDs("inbox") { XCTAssertTrue(task192Reveal(app, "task-title-" + id).exists) }
+        XCTAssertTrue(task192Reveal(app, "task-title-task193-inbox-05").exists)
+        task195Clean(app)
+        app.terminate(); app.launch(); task186Open(app); task193Filter(app, task193Query("inbox"), rtl: rtl)
+        for id in task193IDs("inbox") { XCTAssertTrue(task192Reveal(app, "task-title-" + id).exists) }
+        XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+        XCTAssertFalse(app.textFields["reference-bulk-tag-input"].exists)
+        XCTAssertFalse(app.staticTexts["task-referenceBulkTag-notice"].exists)
+        task195Clean(app); app.terminate()
+    }
+
+    func testTask195ReferenceBulkAddTagCancelNoopSuccessAndCold() { task195Flow("6513412d-cda5-4217-b6f1-ee7b8fcfe81c") }
+    func testTask195ReferenceBulkAddTagLargestDark() { task195Flow("c432cae6-6173-46dc-bd43-8664ecd49119", largest: true) }
+    func testTask195ReferenceBulkAddTagArabicRTL() { task195Flow("75e51f1c-322e-49d5-a8ea-4c42307498c4", rtl: true) }
+
+    private func task195SelectedRows(_ app: XCUIApplication, phase: String) {
+        for id in task193IDs("inbox") {
+            let selector = task192Reveal(app, "reference-select-none-" + id, buttons: true)
+            XCTAssertTrue(selector.isSelected, "Exact selected row must retain its trait: " + id)
+            print("Task195 selected row \(phase) id=\(selector.identifier) frame=\(selector.frame) selected=\(selector.isSelected)")
+        }
+    }
+
+    private func task195FailedState(_ app: XCUIApplication, phase: String) {
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "Task195 failed state AX " + phase; tree.lifetime = .keepAlways; add(tree)
+        let failure = task192Reveal(app, "reference-bulk-tag-error")
+        XCTAssertTrue(failure.label.contains("SAVE_FAILED"), "The exact Reference error must retain the save failure")
+        task195SelectedRows(app, phase: phase)
+    }
+
+    func testTask195ReferenceBulkAddTagTwoFailedSaveRetries() {
+        continueAfterFailure = false
+        let library = "c4032bee-cc81-4d95-8334-5dfefad0a142", app = XCUIApplication()
+        app.launchArguments = task192Arguments(library)
+        app.launch(); task186Open(app); referenceGroup(app, "none"); task193Range(app, status: "inbox")
+        task195SelectedRows(app, phase: "before Save")
+        task195OpenTag(app); task195TypeTag(app, task195TagInput)
+        boardEnabled(app.buttons["reference-bulk-tag-save"], timeout: 20)
+        task195Observe(app, library: library, tag: task195TagInput, operation: "addTag-failed-save")
+        boardTap(app, "reference-bulk-tag-save")
+        for id in ["reference-retry", "persistence-retry"] {
+            if id == "reference-retry" { task192Reveal(app, id, buttons: true) }
+            boardEnabled(app.buttons[id], timeout: 30)
+            task195FailedState(app, phase: "before " + id)
+            task192Count(app, 4)
+            XCTAssertFalse(app.textFields["reference-bulk-tag-input"].exists)
+            XCTAssertFalse(app.buttons["reference-overflow-button"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-bulk-exit"].isEnabled)
+            XCTAssertFalse(app.buttons["reference-bulk-add-tag"].isEnabled)
+            XCTAssertFalse(app.staticTexts["task-referenceBulkTag-notice"].exists)
+            task193Options(app, enabled: false); task193NoCompletionExtras(app)
+            task195Observe(app, library: library, tag: task195TagInput, operation: "retry-" + id)
+            if id == "reference-retry" { task192Reveal(app, id, buttons: true) }
+            app.buttons[id].tap()
+        }
+        task192Reveal(app, "reference-retry", buttons: true)
+        boardEnabled(app.buttons["reference-retry"], timeout: 30)
+        task195FailedState(app, phase: "after second retry"); task192Count(app, 4)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Task195 retained original tag request"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+    }
+
+    func testTask195ReferenceBulkAddTagOriginalJournalColdRecovery() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchArguments = task192Arguments("a6a0c147-cae4-4525-a4bc-4a3f94adad90")
+        // Native owner stages the actual failure DB and byte-exact original
+        // pending journal here, not a freshly synthesized target state.
+        for launch in 0..<2 {
+            app.launch()
+            if launch == 0 { boardEnabled(app.buttons["reference-overflow-button"], timeout: 30) }
+            else { task186Open(app) }
+            task193Filter(app, task193Query("inbox"))
+            for id in task193IDs("inbox") { XCTAssertTrue(task192Reveal(app, "task-title-" + id).exists) }
+            XCTAssertTrue(task192Reveal(app, "task-title-task193-inbox-05").exists)
+            XCTAssertFalse(app.staticTexts["reference-bulk-count"].exists)
+            XCTAssertFalse(app.textFields["reference-bulk-tag-input"].exists)
+            XCTAssertFalse(app.staticTexts["task-referenceBulkTag-notice"].exists)
+            task195Clean(app); app.terminate()
+        }
+    }
+}
+
 // Task193 keeps the Task192 measured viewport controls and exercises all shared
 // Reference status choices against fresh task-owned libraries staged by root.
 extension FoundationUITests {

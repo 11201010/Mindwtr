@@ -89,6 +89,7 @@ type TaskActions = Pick<
     | 'commitPreparedArchivedTaskRestore'
     | 'commitPreparedArchivedTasksRestore'
     | 'commitPreparedReferenceTasksMove'
+    | 'commitPreparedReferenceTasksAddTag'
     | 'commitPreparedArchivedTasksMutation'
     | 'commitPreparedTaskFocus'
     | 'commitPreparedFocusOrder'
@@ -979,7 +980,74 @@ export function buildDuplicateTask({ sourceTask, asNextAction, copyId, now, devi
     return newTask;
 }
 
-export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave, getSaveGeneration }: TaskActionContext): TaskActions => ({
+export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPendingSave, trackImmediateSave, hasQueuedSnapshotSave, getSaveGeneration }: TaskActionContext): TaskActions => {
+    // The family-specific full envelope and raw authority checks remain caller-owned.
+    const commitPreparedRawReferenceBatch = async (input: {
+        request: { taskIds: string[] }; effect: { tasks: { before: Task; after: Task }[];
+            projects: { before: Project; after: Project }[]; sections: { before: Section; after: Section }[];
+            createdTasks?: Task[] }; deviceIdBefore: string | null; deviceIdToInitialize: string | null; updateAt: string;
+    }, authority: PreparedAreaAuthority, loadFamilyValidator: () => Promise<{
+        validateEnvelope: () => boolean; authorityMatches: (data: AppData) => boolean;
+    }>, conflictMessage: string): Promise<PreparedTaskEditResult> => {
+        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: conflictMessage };
+        const adapter = getStorage();
+        // These modules import the store. Capture its adapter before loading any
+        // family or shared validator, then retain every guard after the await.
+        const [{ validateEnvelope, authorityMatches }, { historyRowLoadProjection }, { NativeReceiptSqliteAdapter }] =
+            await Promise.all([loadFamilyValidator(), import('./native-host-contract-task-checklist'),
+                import('./native-request-receipts')]);
+        try {
+            logInfo('Reference bulk action module loaded', {
+                scope: 'store', category: 'storage',
+                context: { releaseCheck: 'v1.3.4/ios-reference-bulk-init', outcome: 'loaded' },
+            });
+        } catch { /* Diagnostics must not affect the guarded action. */ }
+        if (getStorage() !== adapter || !(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
+            || !validateEnvelope()) return result;
+        set((memory) => {
+            const before = authority.state;
+            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
+                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
+                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
+                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
+            const durable = authority.snapshot;
+            try { if (!authorityMatches(durable)) return memory; } catch { return memory; }
+            const bindRows = <T extends { id: string }>(rows: T[], pairs: { before: T; after: T }[],
+                snapshot: (row: T) => T | null): Map<string, T> | null => {
+                const current = new Map(rows.map((row) => [row.id, row])); const after = new Map<string, T>();
+                for (const pair of pairs) {
+                    const saved = current.get(pair.before.id);
+                    if (!saved || pair.after.id !== pair.before.id || after.has(pair.before.id)
+                        || !taskEditValuesEqual(snapshot(saved), pair.before)) return null;
+                    after.set(pair.before.id, pair.after);
+                }
+                return after;
+            };
+            const taskAfter = bindRows(durable.tasks, input.effect.tasks, rawReadTaskSnapshot);
+            const projectAfter = bindRows(durable.projects, input.effect.projects, rawReadProjectSnapshot);
+            const sectionAfter = bindRows(durable.sections, input.effect.sections, (row) => row);
+            if (!taskAfter || !projectAfter || !sectionAfter) return memory;
+            const tasks = [...durable.tasks.map((row) => taskAfter.get(row.id) ?? row), ...(input.effect.createdTasks ?? [])];
+            const projects = durable.projects.map((row) => projectAfter.get(row.id) ?? row);
+            const sections = durable.sections.map((row) => sectionAfter.get(row.id) ?? row);
+            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
+            const freshTasks = tasks.map((row) => historyRowLoadProjection(row, input.updateAt));
+            const freshProjects = projects.map(normalizeProjectLifecycleFields);
+            clearDerivedCache();
+            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
+                _allSections: durable.sections, _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
+            { ...durable, tasks, projects, sections, settings });
+            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
+            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
+                generation: getSaveGeneration(), failure: memory.persistenceFailure };
+            result = { success: true, ids: [...input.request.taskIds], outcome: 'applied' };
+            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
+                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
+        });
+        return result;
+    };
+    return ({
+
     /**
      * Add a new task to the store and persist to storage.
      * @param title Task title
@@ -1806,64 +1874,23 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return result;
     },
 
-    commitPreparedReferenceTasksMove: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
-        let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Reference Move conflicts with saved data' };
-        const adapter = getStorage();
-        // Native validation imports the store; load it after store initialization.
-        // Every adapter, memory and durable authority guard remains after the await.
-        const [{ readReferenceTasksMoveEnvelope, referenceTasksMoveAuthorityMatches }, { historyRowLoadProjection }, { NativeReceiptSqliteAdapter }] =
-            await Promise.all([import('./native-host-contract-reference-bulk-status'),
-                import('./native-host-contract-task-checklist'), import('./native-request-receipts')]);
-        try {
-            logInfo('Reference bulk action module loaded', {
-                scope: 'store', category: 'storage',
-                context: { releaseCheck: 'v1.3.4/ios-reference-bulk-init', outcome: 'loaded' },
-            });
-        } catch { /* Diagnostics must not affect the guarded action. */ }
-        if (getStorage() !== adapter || !(adapter instanceof NativeReceiptSqliteAdapter) || !adapter.concurrentWritesGuarded
-            || !readReferenceTasksMoveEnvelope({ request: input.request, prepared: input })) return result;
-        set((memory) => {
-            const before = authority.state;
-            if (memory._allTasks !== before._allTasks || memory._allProjects !== before._allProjects
-                || memory._allAreas !== before._allAreas || memory._allSections !== before._allSections
-                || memory._allPeople !== before._allPeople || memory.settings !== before.settings
-                || memory.lastDataChangeAt !== before.lastDataChangeAt) return memory;
-            const durable = authority.snapshot;
-            try { if (!referenceTasksMoveAuthorityMatches(input, durable)) return memory; } catch { return memory; }
-            const bindRows = <T extends { id: string }>(rows: T[], pairs: { before: T; after: T }[],
-                snapshot: (row: T) => T | null): Map<string, T> | null => {
-                const current = new Map(rows.map((row) => [row.id, row])); const after = new Map<string, T>();
-                for (const pair of pairs) {
-                    const saved = current.get(pair.before.id);
-                    if (!saved || pair.after.id !== pair.before.id || after.has(pair.before.id)
-                        || !taskEditValuesEqual(snapshot(saved), pair.before)) return null;
-                    after.set(pair.before.id, pair.after);
-                }
-                return after;
-            };
-            const taskAfter = bindRows(durable.tasks, input.effect.tasks, rawReadTaskSnapshot);
-            const projectAfter = bindRows(durable.projects, input.effect.projects, rawReadProjectSnapshot);
-            const sectionAfter = bindRows(durable.sections, input.effect.sections, (row) => row);
-            if (!taskAfter || !projectAfter || !sectionAfter) return memory;
-            const tasks = [...durable.tasks.map((row) => taskAfter.get(row.id) ?? row), ...input.effect.createdTasks];
-            const projects = durable.projects.map((row) => projectAfter.get(row.id) ?? row);
-            const sections = durable.sections.map((row) => sectionAfter.get(row.id) ?? row);
-            const settings = input.deviceIdToInitialize ? { ...durable.settings, deviceId: input.deviceIdToInitialize } : durable.settings;
-            const freshTasks = tasks.map((row) => historyRowLoadProjection(row, input.updateAt));
-            const freshProjects = projects.map(normalizeProjectLifecycleFields);
-            clearDerivedCache();
-            persist(set, debouncedSave, { ...memory, _allTasks: durable.tasks, _allProjects: durable.projects,
-                _allSections: durable.sections, _allAreas: durable.areas, _allPeople: durable.people ?? [], settings: durable.settings },
-            { ...durable, tasks, projects, sections, settings });
-            const lastDataChangeAt = getNextDataChangeAt(memory.lastDataChangeAt);
-            authority.saveBoundary = { taskReference: freshTasks, lastDataChangeAt,
-                generation: getSaveGeneration(), failure: memory.persistenceFailure };
-            result = { success: true, ids: [...input.request.taskIds], outcome: 'applied' };
-            return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
-                _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
-        });
-        return result;
-    },
+    commitPreparedReferenceTasksMove: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
+        commitPreparedRawReferenceBatch(input, authority,
+            async () => {
+                const { readReferenceTasksMoveEnvelope, referenceTasksMoveAuthorityMatches } =
+                    await import('./native-host-contract-reference-bulk-status');
+                return { validateEnvelope: () => Boolean(readReferenceTasksMoveEnvelope({ request: input.request, prepared: input })),
+                    authorityMatches: (data) => referenceTasksMoveAuthorityMatches(input, data) };
+            }, 'Reference Move conflicts with saved data'),
+
+    commitPreparedReferenceTasksAddTag: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> =>
+        commitPreparedRawReferenceBatch(input, authority,
+            async () => {
+                const { readReferenceTasksAddTagEnvelope, referenceTasksAddTagAuthorityMatches } =
+                    await import('./native-host-contract-reference-bulk-tag');
+                return { validateEnvelope: () => Boolean(readReferenceTasksAddTagEnvelope({ request: input.request, prepared: input })),
+                    authorityMatches: (data) => referenceTasksAddTagAuthorityMatches(input, data) };
+            }, 'Reference Add tag conflicts with saved data'),
 
     commitPreparedArchivedTasksMutation: async (input, authority: PreparedAreaAuthority): Promise<PreparedTaskEditResult> => {
         let result: PreparedTaskEditResult = { success: false, reason: 'conflict', error: 'Archive Trash conflicts with saved data' };
@@ -2923,3 +2950,4 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         return get()._allTasks.filter((task) => taskMatchesQuery(task, options));
     },
 });
+};

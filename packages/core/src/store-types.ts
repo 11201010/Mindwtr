@@ -638,6 +638,9 @@ export interface TaskStore {
     /** Reference-only atomic batch, including all shared recurrence-created rows. */
     commitPreparedReferenceTasksMove: (input: import('./native-host-contract-reference-bulk-status').NativeReferenceTasksMovePrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
+    commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Selected-row raw Delete/Undo overlay; native validates the full effect and receipt guards. */
     commitPreparedArchivedTasksMutation: (input: {
         operation: 'delete' | 'undo'; before: Task[]; after: Task[];

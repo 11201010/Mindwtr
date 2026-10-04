@@ -894,7 +894,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -904,6 +904,17 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     const result = await activateAndVerify(adapter, recoveryLoad);
     bootAdapter = adapter;
     return result;
+});
+
+// Reference and Done use the RN list's single tag-input and count policy.
+const taskListBulkTagInput = (tag: string, changedCount: number): string => submit(async () => {
+    requireSaved();
+    if (typeof tag !== 'string' || tag.length > 2_000 || !Number.isInteger(changedCount) || changedCount < 0 || changedCount > 10_000) {
+        throw new Error('INVALID_INPUT: List tag input must be bounded text and a count from 0 to 10000');
+    }
+    const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+    return { canSave: canSaveTaskListTag(tag), notice: changedCount === 0 ? null
+        : { title: t('common.done'), message: formatListItemCount(changedCount, 'task', t) } };
 });
 
 globalThis.MindwtrHost = {
@@ -2439,6 +2450,18 @@ globalThis.MindwtrHost = {
     referenceTasksMoveOutcome(json: string): string {
         return submit(async () => unwrap(await contract.referenceTasksMoveOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksMoveOutcome>[0])));
     },
+    referenceTasksAddTagPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksAddTag>[0])); });
+    },
+    referenceTasksAddTagValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksAddTag>[0])));
+    },
+    referenceTasksAddTagCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksAddTag>[0])));
+    },
+    referenceTasksAddTagOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksAddTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksAddTagOutcome>[0])));
+    },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });
     },
@@ -2740,15 +2763,10 @@ globalThis.MindwtrHost = {
         return submit(async () => { requireSaved(); return unwrap(contract.getArchiveTaskSelection(completionJson(json, 2_000_000) as Parameters<typeof contract.getArchiveTaskSelection>[0])); });
     },
     doneBulkTagInput(tag: string, changedCount: number): string {
-        return submit(async () => {
-            requireSaved();
-            if (typeof tag !== 'string' || tag.length > 2_000 || !Number.isInteger(changedCount) || changedCount < 0 || changedCount > 10_000) {
-                throw new Error('INVALID_INPUT: Done tag input must be bounded text and a count from 0 to 10000');
-            }
-            const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
-            return { canSave: canSaveTaskListTag(tag), notice: changedCount === 0 ? null
-                : { title: t('common.done'), message: formatListItemCount(changedCount, 'task', t) } };
-        });
+        return taskListBulkTagInput(tag, changedCount);
+    },
+    referenceBulkTagInput(tag: string, changedCount: number): string {
+        return taskListBulkTagInput(tag, changedCount);
     },
     menuRead(name: string, json: string): string {
         return submit(async () => {

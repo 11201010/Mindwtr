@@ -49,7 +49,8 @@ import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
-import { mapSqliteTaskRow, SqliteAdapter } from './sqlite-adapter';
+import { mapSqliteTaskRow, rawReadTaskSnapshot, SqliteAdapter } from './sqlite-adapter';
+import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { SECTION_SQLITE_COLUMNS, sectionFromSqliteRow, sectionToSqliteRow } from './section-sync-schema';
 import { AREA_SQLITE_COLUMNS, areaFromSqliteRow, areaToSqliteRow } from './area-sync-schema';
@@ -865,7 +866,8 @@ describe('canonical local reads contract', () => {
                     }
                 }
                 setStorageAdapter(new TrackedReceiptAdapter(sqlite.client, {
-                    rejectConcurrentWrites: label === 'commitPreparedReferenceTasksMove',
+                    rejectConcurrentWrites: label === 'commitPreparedReferenceTasksMove'
+                        || label === 'commitPreparedReferenceTasksAddTag',
                 }));
                 await loadNativeRequestReceipts(sqlite.client);
             } else setStorageAdapter({
@@ -1242,6 +1244,53 @@ describe('canonical local reads contract', () => {
                 });
                 control.resetBaseline();
                 expect(await useTaskStore.getState().commitPreparedReferenceTasksMove(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedReferenceTasksAddTag: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-46', 'task-69'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'reference') throw new Error(`Reference Add-tag fixture missing: ${id}`);
+                    return source;
+                });
+                expect(sources[0].tags).toContain('#writing');
+                expect(sources[1].tags).not.toContain('#writing');
+                const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717195', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    tag: ' ###writing ', params: {} };
+                const planned = nativeValue(await host.prepareReferenceTasksAddTag(request));
+                if (planned.kind !== 'prepared') throw new Error('Reference Add-tag fixture unexpectedly produced a no-op');
+                expect(nativeValue(host.validatePreparedReferenceTasksAddTag({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 1, changed: true });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const rawSources = taskIds.map((id) => {
+                    const row = before.tasks.find((task) => task.id === id);
+                    const raw = row && rawReadTaskSnapshot(row);
+                    if (!raw) throw new Error(`Reference Add-tag raw fixture missing: ${id}`);
+                    return raw;
+                });
+                const expectedUpdates = buildBulkTaskTokenUpdates(taskIds,
+                    new Map(rawSources.map((row) => [row.id, row])), 'tags', request.tag.trim(), 'add');
+                expect(expectedUpdates.map((update) => update.id)).toEqual(['task-69']);
+                const tagged = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...tagged.keys()]).toEqual(['task-69']);
+                expect(tagged.get('task-69')).toMatchObject({ status: 'reference',
+                    tags: expectedUpdates[0].updates.tags, rev: (sources[1].rev ?? 0) + 1 });
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => tagged.get(row.id) ?? row));
+                    expect(written.tasks.find((row) => row.id === 'task-46')).toEqual(before.tasks.find((row) => row.id === 'task-46'));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas);
+                    expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedReferenceTasksAddTag(planned.prepared, durable.authority))
                     .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedArchivedTasksRestore: async (control) => {
@@ -2103,7 +2152,7 @@ describe('canonical local reads contract', () => {
         const notCanonical: Array<{ action: string; storeFields: string[]; readFields: string[] }> = [];
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
             const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
-                action === 'commitPreparedReferenceTasksMove');
+                action === 'commitPreparedReferenceTasksMove' || action === 'commitPreparedReferenceTasksAddTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
             }

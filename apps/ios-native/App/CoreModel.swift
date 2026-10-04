@@ -545,6 +545,18 @@ final class CoreModel: ObservableObject {
     private var referenceBulkDeleteConfirmationContext: String?
     private var referenceTasksMoveRequest: String?
     private var referenceTasksMoveGeneration = 0
+    @Published private(set) var referenceBulkTagPresented = false
+    @Published private(set) var referenceBulkTagText = ""
+    @Published private(set) var referenceBulkTagOptions: CoreObject = [:]
+    @Published private(set) var referenceBulkTagCanSave = false
+    @Published private(set) var referenceBulkTagReadError: String?
+    @Published private(set) var referenceBulkTagWriteError = false
+    private var referenceBulkTagReadTask: Task<Void, Never>?
+    private var referenceBulkTagReadGeneration = 0
+    private var referenceBulkTagIDs: [String] = []
+    private var referenceBulkTagRevisions: CoreObject = [:]
+    private var referenceBulkTagParams: CoreObject = [:]
+    private var referenceTasksAddTagRequest: String?
     @Published var referencePanel = ""
     @Published private(set) var referenceSortOptions: CoreObject = [:]
     @Published private(set) var referenceSortError: String?
@@ -1802,11 +1814,11 @@ final class CoreModel: ObservableObject {
     var somedayMoveUndoCanRetry: Bool { somedayMoveUndoRequest != nil || somedayMoveUndoAwaitingRefresh }
     var referenceActionsEnabled: Bool {
         ready && selectedSurface == .reference && referenceCurrent && !busy && !retryNeeded && !taskPresented
-            && archiveBulkDeleteConfirmation.isEmpty
+            && archiveBulkDeleteConfirmation.isEmpty && !referenceBulkTagPresented
     }
     var referenceActionPending: Bool {
         selectedSurface == .reference && retryNeeded &&
-            (referenceTasksMoveRequest != nil || archivedTasksDeleteRequest != nil || referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceTaskBackdateRequest != nil || referenceTaskDestinationRequest != nil || referenceCompletionPending
+            (referenceTasksMoveRequest != nil || referenceTasksAddTagRequest != nil || archivedTasksDeleteRequest != nil || referenceTaskNextRequest != nil || referenceTaskStatusRequest != nil || referenceTaskBackdateRequest != nil || referenceTaskDestinationRequest != nil || referenceCompletionPending
                 || referenceTaskDeleteRequest != nil || taskActionUndoRequest != nil && taskActionNotice.text("source") == "reference")
     }
     var referenceBulkDeleteEnabled: Bool {
@@ -1818,6 +1830,15 @@ final class CoreModel: ObservableObject {
     func referenceBulkStatusEnabled(_ status: String) -> Bool {
         referenceBulkDeleteEnabled && referenceTasksMoveRequest == nil
             && referenceBulk.object("bar").objects("statuses").contains { $0.text("status") == status && $0.flag("enabled") }
+    }
+    var referenceBulkTagEnabled: Bool {
+        referenceBulkDeleteEnabled && referenceTasksAddTagRequest == nil
+            && referenceBulk.object("bar").object("addTag").flag("enabled")
+    }
+    var referenceBulkTagSaveEnabled: Bool {
+        referenceBulkTagPresented && referenceBulkTagCanSave && referenceBulkTagReadError == nil
+            && ready && !busy && !retryNeeded && referenceTasksAddTagRequest == nil
+            && (try? referenceBulkTagContextIsCurrent()) == true
     }
     var referencePickerActionsEnabled: Bool { referenceActionsEnabled && referencePickerCurrent }
     var historyArchived: Bool { historyTabs.text("tab") == "archived" }
@@ -2924,7 +2945,7 @@ final class CoreModel: ObservableObject {
                     referenceProjectNextActionEditID = result.text("id")
                 }
             }
-            if recovery.text("method") == "referenceTasksMoveCommit", recovery.text("source") == "reference" {
+            if ["referenceTasksMoveCommit", "referenceTasksAddTagCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
                 selectedSurface = .reference
             }
             if ["referenceTaskBackdateCommit", "referenceTaskDestinationCommit"].contains(recovery.text("method")), recovery.text("source") == "reference" {
@@ -12671,6 +12692,7 @@ final class CoreModel: ObservableObject {
     }
 
     private func clearReferenceTaskSelection() {
+        closeReferenceBulkTag(clearInput: referenceTasksAddTagRequest == nil)
         referenceTasksMoveGeneration += 1
         if referenceBulkDeleteConfirmationContext != nil { cancelArchiveBulkDeleteConfirmation() }
         referenceSelectionMode = false
@@ -12687,6 +12709,7 @@ final class CoreModel: ObservableObject {
     }
 
     func referenceSelectionOwnerChanged() {
+        if selectedSurface != .reference { closeReferenceBulkTag(clearInput: referenceTasksAddTagRequest == nil) }
         guard selectedSurface != .reference, !referenceActionPending else { return }
         clearReferenceTaskSelection()
     }
@@ -12760,6 +12783,132 @@ final class CoreModel: ObservableObject {
             referenceBulkDeleteConfirmationContext = try json(referenceParams)
             archiveBulkDeleteConfirmation = copy
         } catch { referenceError = error.localizedDescription }
+    }
+
+    private func referenceBulkTagContextIsCurrent() throws -> Bool {
+        guard selectedSurface == .reference, referenceCurrent, referenceSelectionMode, !taskPresented,
+              referenceTextEdits.isEmpty, referencePendingEdit == nil else { return false }
+        return try json(referenceSelectedIDs).utf8.elementsEqual(json(referenceBulkTagIDs).utf8)
+            && json(referenceSelectedRevisions).utf8.elementsEqual(json(referenceBulkTagRevisions).utf8)
+            && json(referenceParams).utf8.elementsEqual(json(referenceBulkTagParams).utf8)
+    }
+
+    func openReferenceBulkTag() {
+        guard referenceBulkTagEnabled else { return }
+        referenceBulkTagOptions = referenceBulk.object("addTag")
+        referenceBulkTagIDs = referenceSelectedIDs
+        referenceBulkTagRevisions = referenceSelectedRevisions
+        referenceBulkTagParams = referenceParams
+        referenceBulkTagPresented = true
+        referenceBulkTagWriteError = false
+        taskStatusMenuPresented = true
+        setReferenceBulkTagText(referenceBulkTagText)
+    }
+
+    func closeReferenceBulkTag(clearInput: Bool = true) {
+        if referenceBulkTagPresented { taskStatusMenuPresented = false }
+        referenceBulkTagPresented = false
+        referenceBulkTagReadGeneration += 1
+        referenceBulkTagReadTask?.cancel()
+        referenceBulkTagReadTask = nil
+        referenceBulkTagCanSave = false
+        referenceBulkTagReadError = nil
+        if clearInput {
+            referenceBulkTagText = ""
+            referenceBulkTagIDs = []
+            referenceBulkTagRevisions = [:]
+            referenceBulkTagParams = [:]
+        }
+    }
+
+    func setReferenceBulkTagText(_ text: String) {
+        guard referenceBulkTagPresented, !busy, !retryNeeded else { return }
+        referenceBulkTagText = text
+        referenceBulkTagCanSave = false
+        referenceBulkTagReadError = nil
+        referenceBulkTagReadGeneration += 1
+        let generation = referenceBulkTagReadGeneration
+        referenceBulkTagReadTask?.cancel()
+        referenceBulkTagReadTask = Task {
+            do {
+                let input = try await query("referenceBulkTagInput", [text, 0])
+                guard !Task.isCancelled, referenceBulkTagPresented, generation == referenceBulkTagReadGeneration,
+                      referenceBulkTagText.utf8.elementsEqual(text.utf8), !retryNeeded,
+                      try referenceBulkTagContextIsCurrent() else { return }
+                guard Set(input.keys) == Set(["canSave", "notice"]), input["notice"] is NSNull,
+                      let canSave = input["canSave"] as? NSNumber, CFGetTypeID(canSave) == CFBooleanGetTypeID() else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                referenceBulkTagCanSave = canSave.boolValue
+            } catch {
+                guard !Task.isCancelled, referenceBulkTagPresented, generation == referenceBulkTagReadGeneration,
+                      referenceBulkTagText.utf8.elementsEqual(text.utf8), selectedSurface == .reference else { return }
+                referenceBulkTagReadError = error.localizedDescription
+            }
+        }
+    }
+
+    func saveReferenceBulkTag() async {
+        guard referenceBulkTagSaveEnabled else { return }
+        let tag = referenceBulkTagText, ids = referenceBulkTagIDs
+        let revisions = referenceBulkTagRevisions, params = referenceBulkTagParams
+        closeReferenceBulkTag(clearInput: false)
+        busy = true
+        referenceError = nil
+        defer { finishOperation() }
+        do {
+            let request = try json(["requestId": UUID().uuidString.lowercased(), "taskIds": ids,
+                                    "taskRevisions": revisions, "tag": tag, "params": params])
+            referenceTasksAddTagRequest = request
+            let result = try await query("referenceTasksAddTagWrite", [request])
+            try acknowledgeReferenceTasksAddTag(result, request: request, allowNoop: true)
+            let generation = referenceBulkTagReadGeneration
+            if result.flag("changed") { _ = await readReference() }
+            await showReferenceTasksAddTagNotice(result, generation: generation)
+        } catch { referenceBulkTagWriteError = true; await handleReferenceTasksAddTagError(error) }
+    }
+
+    private func acknowledgeReferenceTasksAddTag(_ result: CoreObject, request: String, allowNoop: Bool = false) throws {
+        guard referenceTasksAddTagRequest?.utf8.elementsEqual(request.utf8) == true else { throw CocoaError(.coderReadCorrupt) }
+        let frozen = try decode(request)
+        guard let ids = frozen["taskIds"] as? [String], Set(result.keys) == Set(["count", "changed"]),
+              let changed = result["changed"] as? NSNumber, CFGetTypeID(changed) == CFBooleanGetTypeID(),
+              let count = result["count"] as? NSNumber, CFGetTypeID(count) != CFBooleanGetTypeID(),
+              count.doubleValue.rounded() == count.doubleValue,
+              changed.boolValue ? (count.doubleValue > 0 && count.doubleValue <= Double(ids.count)) : (allowNoop && count.doubleValue == 0) else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        referenceTasksAddTagRequest = nil
+        retryNeeded = false
+        referenceError = nil
+        referenceBulkTagWriteError = false
+        error = nil
+        closeReferenceBulkTag()
+        if changed.boolValue { clearReferenceTaskSelection() }
+    }
+
+    private func showReferenceTasksAddTagNotice(_ result: CoreObject, generation: Int) async {
+        guard result.flag("changed"), result.number("count") > 0, selectedSurface == .reference,
+              generation == referenceBulkTagReadGeneration,
+              let input = try? await query("referenceBulkTagInput", ["", result.number("count")]),
+              generation == referenceBulkTagReadGeneration, selectedSurface == .reference,
+              let notice = input["notice"] as? CoreObject, Set(notice.keys) == Set(["title", "message"]),
+              !notice.text("title").isEmpty, !notice.text("message").isEmpty else { return }
+        showTaskActionNotice(["operation": "referenceBulkTag", "source": "reference", "undoEnabled": false,
+                              "message": notice.text("title") + ": " + notice.text("message")])
+    }
+
+    private func handleReferenceTasksAddTagError(_ failure: Error) async {
+        if isDefiniteRejection(failure) {
+            referenceTasksAddTagRequest = nil
+            retryNeeded = false
+            error = nil
+            _ = await readReference()
+        } else {
+            retryNeeded = referenceTasksAddTagRequest != nil
+            error = failure.localizedDescription
+        }
+        referenceError = failure.localizedDescription
     }
 
     func moveSelectedReferenceTasks(status: String) async {
@@ -20167,6 +20316,25 @@ final class CoreModel: ObservableObject {
                 await showReferenceTasksMoveNotice(result, generation: noticeGeneration)
                 return
             }
+            if let request = referenceTasksAddTagRequest {
+                let outcome = try await query("referenceTasksAddTagRetryOutcome", [request])
+                if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
+                    let unknown = label("task.doneTagOutcomeUnknown")
+                    referenceError = unknown
+                    self.error = unknown
+                    return
+                }
+                guard Set(outcome.keys) == Set(["kind", "result"]), outcome.text("kind") == "confirmed" else {
+                    throw CocoaError(.coderReadCorrupt)
+                }
+                let result = outcome.object("result")
+                if let acknowledgment, try !json(result).utf8.elementsEqual(json(decode(acknowledgment)).utf8) { throw CocoaError(.coderReadCorrupt) }
+                try acknowledgeReferenceTasksAddTag(result, request: request)
+                let noticeGeneration = referenceBulkTagReadGeneration
+                _ = await readReference()
+                await showReferenceTasksAddTagNotice(result, generation: noticeGeneration)
+                return
+            }
             if let request = archivedTasksRestoreRequest {
                 let outcome = try await query("archivedTasksRestoreRetryOutcome", [request])
                 if Set(outcome.keys) == Set(["kind"]), outcome.text("kind") == "unproven" {
@@ -20752,6 +20920,10 @@ final class CoreModel: ObservableObject {
             }
             if referenceTasksMoveRequest != nil {
                 await handleReferenceTasksMoveError(error)
+                return
+            }
+            if referenceTasksAddTagRequest != nil {
+                await handleReferenceTasksAddTagError(error)
                 return
             }
             if archivedTasksRestoreRequest != nil {

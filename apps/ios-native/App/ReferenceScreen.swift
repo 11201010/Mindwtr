@@ -8,6 +8,7 @@ struct ReferenceScreen: View {
     @State private var bulkDeletePresented = false
 
     var body: some View {
+        ZStack {
         VStack(spacing: 0) {
             if model.referenceSelectionMode { bulkDeleteBar }
         StatusListContent(model: model, palette: palette, data: model.reference, prefix: "reference",
@@ -27,9 +28,13 @@ struct ReferenceScreen: View {
                           onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) },
                           onDestinationOptions: { row, query, offset in await model.referenceTaskDestinationOptions(row, query: query, offset: offset) },
                           onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) },
+                          errorIdentifier: model.referenceBulkTagWriteError ? "reference-bulk-tag-error" : nil,
                           selectionActive: model.referenceSelectionMode, selectedTaskIDs: model.referenceSelectedIDs,
                           onSelection: { row in Task { await model.selectReferenceTask(row) } },
                           onSelectionStart: { row in Task { await model.selectReferenceTask(row) } })
+        }
+        .accessibilityHidden(model.referenceBulkTagPresented)
+        if model.referenceBulkTagPresented { ReferenceBulkTagDialog(model: model, palette: palette) }
         }
         .alert(model.archiveBulkDeleteConfirmation.text("title"), isPresented: $bulkDeletePresented) {
             Button(model.archiveBulkDeleteConfirmation.text("cancelLabel"), role: .cancel) {
@@ -52,7 +57,7 @@ struct ReferenceScreen: View {
                 // A periodic reread disables the current controls while it runs.
                 // Keep an in-progress selection usable; writes still validate
                 // the selected revisions against durable data before committing.
-                guard !model.referenceSelectionMode else {
+                guard !model.referenceSelectionMode, !model.referenceBulkTagPresented, !model.referenceActionPending else {
                     NSLog("Native iOS Reference periodic refresh deferred releaseCheck=v1.3.4/ios-reference-bulk-refresh outcome=selection")
                     continue
                 }
@@ -101,6 +106,12 @@ struct ReferenceScreen: View {
                     .buttonStyle(.plain).disabled(!model.referenceBulkDeleteEnabled)
                     .accessibilityAddTraits(model.referenceBulk.object("bar").object("range").flag("active") ? .isSelected : [])
                     .accessibilityIdentifier("reference-bulk-range")
+                    Button { model.openReferenceBulkTag() } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("addTag").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkTagEnabled)
+                    .accessibilityLabel(model.referenceBulk.object("bar").object("addTag").text("accessibilityLabel"))
+                    .accessibilityIdentifier("reference-bulk-add-tag")
                     Button {
                         model.requestDeleteSelectedReferenceTasks()
                         bulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
@@ -125,6 +136,73 @@ struct ReferenceScreen: View {
             .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border).allowsHitTesting(false))
             .contentShape(Rectangle())
+    }
+}
+
+private struct ReferenceBulkTagDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.referenceBulkTagOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+            TextField(model.referenceBulkTagOptions.text("placeholder"), text: Binding(
+                get: { model.referenceBulkTagText }, set: { model.setReferenceBulkTagText($0) }))
+                .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(model.busy || model.retryNeeded)
+                .accessibilityLabel(model.referenceBulkTagOptions.text("placeholder"))
+                .accessibilityIdentifier("reference-bulk-tag-input")
+            if let error = model.referenceBulkTagReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("reference-bulk-tag-read-error")
+                Button { model.setReferenceBulkTagText(model.referenceBulkTagText) } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded)
+                .accessibilityIdentifier("reference-bulk-tag-read-retry")
+            }
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture {
+                    if !model.busy && !model.retryNeeded { model.closeReferenceBulkTag() }
+                }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        ScrollView { fields }
+                            .frame(maxHeight: min(420, max(120, geometry.size.height - 132)))
+                            .accessibilityIdentifier("reference-bulk-tag-scroll")
+                    } else { fields }
+                    HStack {
+                        Spacer()
+                        Button { model.closeReferenceBulkTag() } label: {
+                            Text(model.referenceBulkTagOptions.text("cancelLabel")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("reference-bulk-tag-cancel")
+                        Button { Task { await model.saveReferenceBulkTag() } } label: {
+                            Text(model.referenceBulkTagOptions.text("saveLabel")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkTagSaveEnabled)
+                        .accessibilityIdentifier("reference-bulk-tag-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("reference-bulk-tag-dialog").accessibilityAction(.escape) {
+                if !model.busy && !model.retryNeeded { model.closeReferenceBulkTag() }
+            }
+        }
     }
 }
 

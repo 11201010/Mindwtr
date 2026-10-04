@@ -377,7 +377,7 @@ assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -3188,8 +3188,24 @@ export function createNativeHostContract() {
       return { ok: true, value: { language: input.storedLanguage ?? 'en' } };
     },
     getStrings(input) {
-      globalThis.languageInputs.push(JSON.stringify(input));
-      return { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } };
+        globalThis.languageInputs.push(JSON.stringify(input));
+        return { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } };
+    },
+    async prepareReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async referenceTasksAddTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
     },
     getProjects() {
       globalThis.projectInputs.push('projects');
@@ -3390,6 +3406,29 @@ assert.equal(secondRead.saveCount, 0);
 
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
+// Task195: real shared tag-input policy, bounded wrappers and exact raw payload
+// transport. Store/receipt/CAS behavior runs in core and real Swift/JSC tests.
+{
+    const tag195 = makeState('auto');
+    assert.equal((await poll(tag195, tag195.MindwtrHost.boot())).ok, true);
+    for (const [text, count] of [['', 0], [' \n\t', 0], ['###', 0], ['  ###café 🧭  ', 3], ['x'.repeat(2000), 0]]) {
+        assert.deepEqual(await poll(tag195, tag195.MindwtrHost.referenceBulkTagInput(text, count)),
+            await poll(tag195, tag195.MindwtrHost.doneBulkTagInput(text, count)));
+    }
+    for (const [text, count] of [['x'.repeat(2001), 0], ['x', -1], ['x', 0.5], ['x', true], ['x', 10001]]) {
+        assert.equal((await poll(tag195, tag195.MindwtrHost.referenceBulkTagInput(text, count))).ok, false);
+    }
+    const request = { requestId: '19500000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision195' }, tag: '  ###café 🧭  ', params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(tag195, tag195.MindwtrHost.referenceTasksAddTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    for (const [method, phase] of [['referenceTasksAddTagValidate', 'Validate'], ['referenceTasksAddTagCommit', 'Commit'], ['referenceTasksAddTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(tag195, tag195.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(tag195.menuInputs.at(-1)), ['referenceTag' + phase, envelope]);
+        assert.equal((await poll(tag195, tag195.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
 assert.equal(ready.activationCount, 1);
 // Startup #4: a non-legacy boot sets the schema up, and the activation's validated read is its first full read. Activation may
 // write (core backfills a person per assignee): the store is checked against the database after its save, by id, from core's
@@ -3434,7 +3473,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);

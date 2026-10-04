@@ -286,6 +286,7 @@ import { createProjectDuplicateMethods } from './native-host-contract-project-du
 import { createProjectLifecycleMethods } from './native-host-contract-project-lifecycle';
 import { createArchivedTaskRestoreMethods } from './native-host-contract-archive-task-restore';
 import { createReferenceTasksMoveMethods } from './native-host-contract-reference-bulk-status';
+import { createReferenceTasksAddTagMethods } from './native-host-contract-reference-bulk-tag';
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
 import { createArchivedTasksDeleteMethods } from './native-host-contract-archive-bulk-delete';
 import { createProjectDateMethods } from './native-host-contract-project-date';
@@ -1834,6 +1835,7 @@ export function createNativeHostContract(options: {
         ...createArchivedTaskRestoreMethods({ readiness, save }),
         ...createArchivedTasksRestoreMethods({ readiness, save }),
         ...createReferenceTasksMoveMethods({ readiness, save }),
+        ...createReferenceTasksAddTagMethods({ readiness, save }),
         ...createArchivedTasksDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
