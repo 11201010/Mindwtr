@@ -531,6 +531,7 @@ The maintainer approved these native Android behaviors that differ from the Reac
 - Process Inbox's AI toast "Open" closes Process Inbox, then opens Settings › AI (RN pushes the route under its modal; that RN behavior is a suspected bug, not yet verified).
 - A Settings row's text wraps about 12 dp wider than RN's.
 - Attachments (approved 2026-10-01): a picked image keeps its original bytes; RN's picker re-encodes it at quality 0.9.
+- Project details (approved 2026-10-04): the area and tag pickers, the section manager and the help are full-screen overlays with RN's scrim, drawn over the whole screen; the tab bar stays visible on the open project's screen (RN's project screen is a full-screen modal).
 
 
 Task Editor backdated completion (2026-10-01, Task115): the native editor offers an accessible secondary completion-time action with a native date/time wheel. Shared TypeScript helpers own opening fallback, instant validation and optional minutes normalization, and RN consumes the same helpers. Open and Cancel preserve parent draft inputs; Confirm resolves parent inputs and applies one session-fenced draft edit. Save uses the existing prepared checklist transaction. Unchanged picker values retain seconds and milliseconds. No new writer, schema or dependency.
