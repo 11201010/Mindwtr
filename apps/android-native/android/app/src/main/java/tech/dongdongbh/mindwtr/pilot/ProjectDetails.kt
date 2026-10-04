@@ -76,7 +76,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import org.json.JSONObject
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicReference
+import android.util.Log
+import org.json.JSONArray
+import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import android.os.Handler
 import android.os.Looper
 
@@ -84,14 +86,10 @@ import android.os.Looper
  * Project details' writes: each is core's prepared commit (native-host-contract-project-*.ts), sent as a Menu command with its
  * request and its frozen preparation, journaled as it is, so a retry or a replay sends exactly that commit again.
  */
-val PROJECT_DETAIL_KINDS = setOf("projectRename", "projectStatus", "projectFlow", "projectArea", "projectTags", "projectNotes", "projectDate",
-    "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder")
+val PROJECT_DETAIL_KINDS = setOf("projectEdit")
 
 /** RN's status menu choices (ProjectDetailModal), in RN's order. */
 private val PROJECT_STATUSES = listOf("active" to "status.active", "waiting" to "status.waiting", "someday" to "status.someday")
-
-/** The project's token as core's options gave it: the options' project without its id. */
-private fun expected(options: JSONObject): JSONObject = JSONObject(options.getJSONObject("project").toString()).apply { remove("id") }
 
 /** A section manager editor: a section's id (null for Add Section) and the typed title. */
 data class SectionDraft(val sectionId: String?, val title: String)
@@ -114,6 +112,9 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     var notesDraft by mutableStateOf<String?>(null)
     /** The header's typed title not yet stored; null when it shows core's title. */
     var titleDraft by mutableStateOf<String?>(null)
+    /** The title and the notes last journaled for this project. */
+    private var sentTitle: String? = null
+    private var sentNotes: String? = null
     /** Core's resolved notes blocks (getProjectNotes) for the preview. */
     var notesView by mutableStateOf<JSONObject?>(null); private set
     var areaPicker by mutableStateOf<JSONObject?>(null); private set
@@ -133,11 +134,15 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         if (id == projectId) return
         // Leaving a project stores its typed title and notes, as RN's end of editing and blur do on close (review PD 1).
         projectId?.let { old ->
-            for ((kind, text) in editsOnLeave(titleDraft, shell.projects?.title(old), notesDraft, raw?.let { storedNotes() })) {
+            // Compared with what was last journaled (a field let go just now), else with core's: never journaled twice.
+            for ((kind, text) in editsOnLeave(titleDraft, sentTitle ?: shell.projects?.title(old), notesDraft,
+                sentNotes ?: raw?.let { storedNotes() })) {
                 if (kind == "projectRename") rename(text, old) else writeNotes(text, old)
             }
         }
         titleDraft = null
+        sentTitle = null
+        sentNotes = null
         replies.close()
         projectId = id
         open = false; statusMenu = false; raw = null; notesExpanded = false; notesPreview = false; notesFullscreen = false
@@ -225,45 +230,40 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         }
     }
 
-    // ---- Writes: core's options (the token the request carries), its preparation, then the journaled commit ----
+    // ---- Writes: the user's edit, journaled at once, then sent (core's runProjectEdit) ----
 
     fun rename(title: String, projectId: String? = this.projectId) {
         val text = title.trim()
         if (text.isEmpty()) return
-        write("projectRename", projectId = projectId) { options -> JSONObject().put("title", text).put("expected", expected(options)).takeIf { options.getBoolean("canRename") } }
+        if (projectId == this.projectId) sentTitle = text
+        edit(projectId, "title") { put("title", text) }
     }
 
     fun setStatus(status: String) {
         statusMenu = false
-        write("projectStatus") { options -> JSONObject().put("status", status).put("expected", expected(options)) }
+        edit(projectId, "status") { put("status", status) }
     }
 
-    fun toggleType() = write("projectFlow") { options -> JSONObject().put("action", JSONObject().put("kind", "toggleType")).put("expected", expected(options)) }
+    /** Type: the other of what the panel shows (Sequential or Parallel), as a target state. */
+    fun setSequential(sequential: Boolean) = edit(projectId, "type") { put("sequential", sequential) }
 
-    fun setScope(scope: String) = write("projectFlow") { options ->
-        JSONObject().put("action", JSONObject().put("kind", "setScope").put("scope", scope)).put("expected", expected(options))
-    }
+    fun setScope(scope: String) = edit(projectId, "scope") { put("scope", scope) }
 
-    /** An area of the picker (null: No area), with its name as core's witness. */
+    /** An area of the picker (null: No area). */
     fun setArea(area: JSONObject?) {
         areaPicker = null
-        write("projectArea") { options ->
-            JSONObject().put("areaId", area?.getString("id") ?: JSONObject.NULL).put("expected", expected(options))
-                .put("selectedArea", area?.let { JSONObject().put("id", it.getString("id")).put("name", it.getString("label")) } ?: JSONObject.NULL)
-        }
+        edit(projectId, "area") { put("areaId", area?.getString("id") ?: JSONObject.NULL) }
     }
 
-    /** A tag chip: toggles its tag. */
-    fun toggleTag(tag: String) = changeTag("toggle", tag)
+    /** A tag chip: the tag on or off, as the chip shows the other. */
+    fun setTag(tag: String, present: Boolean) {
+        if (tag.isBlank()) return
+        edit(projectId, "tag") { put("tag", tag).put("present", present) }
+    }
 
     /** The picker's +: adds the typed tag; one the project already has stays (dd 2026-10-04; RN fixed the same way). */
     fun addTag(tag: String) {
-        changeTag("add", tag)
-    }
-
-    private fun changeTag(kind: String, tag: String) {
-        if (tag.isBlank()) return
-        write("projectTags") { options -> JSONObject().put("intent", JSONObject().put("kind", kind).put("input", tag)).put("expected", expected(options)) }
+        setTag(tag, present = true)
     }
 
     /** The typed notes, stored once the field lets go (RN's blur and end of editing). */
@@ -273,21 +273,18 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         writeNotes(text, projectId)
     }
 
-    private fun writeNotes(text: String, projectId: String?) =
-        write("projectNotes", projectId = projectId) { options -> JSONObject().put("text", text).put("expected", expected(options)) }
+    private fun writeNotes(text: String, projectId: String?) {
+        if (projectId == this.projectId) sentNotes = text
+        edit(projectId, "notes") { put("text", text) }
+    }
 
     /**
-     * A date field's new value: the picked `yyyy-MM-dd`, or null to clear it. A review date is an instant: the picked day at the
-     * time of day of the picker's [opened] instant, as RN's Android picker answers it (host-entry's projectReviewInstant).
+     * A date field's new value: the picked `yyyy-MM-dd`, or null to clear it. A review date is an instant: core takes the picked
+     * day at the hour and minute of the picker's [opened] instant, as RN's Android picker answers it (projectReviewPickerValue).
      */
     fun setDate(field: String, day: String?, opened: String? = null) {
         datePicker = null
-        write("projectDate", JSONObject().put("field", field)) { options ->
-            val value = if (day != null && opened != null) {
-                checkNotNull(shell.coreHost()).menuRead("projectReviewInstant", JSONObject().put("date", day).put("instant", opened).toString()).getString("instant")
-            } else day
-            JSONObject().put("field", field).put("value", value ?: JSONObject.NULL).put("expected", expected(options))
-        }
+        edit(projectId, "date") { put("field", field).put("value", day ?: JSONObject.NULL).put("opened", opened ?: JSONObject.NULL) }
     }
 
     fun saveSection() {
@@ -295,42 +292,42 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         val title = draft.title.trim()
         if (title.isEmpty()) return
         sectionDraft = null
-        if (draft.sectionId == null) write("projectSectionCreate") { options -> JSONObject().put("title", title).takeIf { options.getBoolean("canCreate") } }
-        else write("projectSectionRename", JSONObject().put("sectionId", draft.sectionId)) { options ->
-            JSONObject().put("sectionId", draft.sectionId).put("title", title).put("expected", options.getJSONObject("token"))
-        }
+        if (draft.sectionId == null) edit(projectId, "sectionCreate") { put("title", title) }
+        else edit(projectId, "sectionRename") { put("sectionId", draft.sectionId).put("title", title) }
     }
 
     fun deleteSection(sectionId: String) {
         sectionDelete = null
-        write("projectSectionDelete", JSONObject().put("sectionId", sectionId)) { options ->
-            JSONObject().put("sectionId", sectionId).put("expected", options.getJSONObject("token")).takeIf { options.getBoolean("canDelete") }
-        }
+        edit(projectId, "sectionDelete") { put("sectionId", sectionId) }
     }
 
-    fun moveSection(sectionId: String, direction: String) = write("projectSectionOrder") { options ->
-        JSONObject().put("sectionId", sectionId).put("direction", direction).put("expectedSections", options.getJSONArray("token"))
+    /** Move up or down from the order the manager shows: core moves it only from that order. */
+    fun moveSection(sectionId: String, direction: String) {
+        val order = JSONArray().apply { sections?.menuObjects("sections")?.forEach { put(it.getString("id")) } }
+        edit(projectId, "sectionMove") { put("sectionId", sectionId).put("direction", direction).put("order", order) }
     }
-
-    /** One write waiting to start: its project, its command, the options read's extra input, and how its request is built. */
-    private class Write(val projectId: String, val kind: String, val extra: JSONObject, val build: (JSONObject) -> JSONObject?)
 
     private val main = Handler(Looper.getMainLooper())
-    private val writes = WriteQueue<Write> { item, done -> start(item, done) }
+    private val writes = WriteQueue<FailedAction> { action, done -> start(action, done) }
     private var pumping = false
 
     /**
-     * One write for [projectId] (the open project): core's options for the project as it is then, the request [build] makes
-     * from them (null: nothing to send), core's preparation, and the prepared commit. Writes wait their turn in order (another
-     * action running, an owed retry) and none is dropped. Core's no-op and its blocked (an archived project) write nothing.
+     * One edit of [projectId]: the user's intent (its request UUID, the field, the new value) is journaled at once, on this
+     * thread, before anything else (CoreHost.journalAhead), so a death at any later step leaves it for the boot's replay. Its
+     * send waits its turn in order (another action, an owed retry); none is dropped. Core's runProjectEdit reads the project as
+     * it is then, prepares and commits, preparing again if a sync lands between the steps.
      */
-    private fun write(kind: String, extra: JSONObject = JSONObject(), projectId: String? = this.projectId, build: (JSONObject) -> JSONObject?) {
+    private fun edit(projectId: String?, kind: String, fields: JSONObject.() -> Unit) {
         val id = projectId ?: return
-        writes.add(Write(id, kind, extra, build))
+        val requestId = UUID.randomUUID().toString()
+        val json = projectEdit(requestId, id, kind, JSONObject().apply(fields)).toString()
+        runCatching { checkNotNull(shell.coreHost()).journalAhead("projectEdit", json) }
+            .onFailure { Log.e(CoreHost.TAG, "Native Android project edit not journaled ahead ${failureForLog(it)}") }
+        writes.add(FailedAction("projectEdit", requestId, json))
         pump()
     }
 
-    /** Starts the next write when the shell is free; looks again shortly while one waits. */
+    /** Starts the next send when the shell is free; looks again shortly while one waits. */
     private fun pump() {
         writes.pump()
         if (!writes.waiting || pumping) return
@@ -338,28 +335,16 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
         main.postDelayed({ pumping = false; pump() }, 250)
     }
 
-    /**
-     * [item]'s options, preparation and commit in one action: the commit's journal entry (callAsync writes it before the engine
-     * sees it) holds the exact preparation, so nothing between the preparation and the journal can lose the write. From then
-     * on the action is that commit ([late]): a failure owes its exact retry. False while the shell cannot start it.
-     */
-    private fun start(item: Write, done: () -> Unit): Boolean {
+    /** [action]'s send (its journal entry is already on disk); a failure owes its exact retry. False while it cannot start. */
+    private fun start(action: FailedAction, done: () -> Unit): Boolean {
         if (shell.busy || shell.failedAction != null) return false
-        val late = AtomicReference<FailedAction?>()
-        return shell.tryPerform(late = late, finished = done) { runtime ->
-            val options = runtime.menuRead("${item.kind}Options", JSONObject(item.extra.toString()).put("projectId", item.projectId).toString())
-            val request = item.build(options)?.put("requestId", UUID.randomUUID().toString())?.put("projectId", item.projectId) ?: return@tryPerform
-            val plan = runtime.menuRead("${item.kind}Prepare", request.toString())
-            if (plan.getString("kind") != "prepared") return@tryPerform
-            val action = FailedAction(item.kind, request.getString("requestId"),
-                JSONObject().put("request", request).put("prepared", plan.getJSONObject("prepared")).toString())
-            late.set(action)
+        return shell.tryPerform(action, finished = done) { runtime ->
             runtime.menuCommand(action.kind, action.title)
             shell.acknowledged(action)
         }
     }
 
-    /** The failure banner's Try again: the owed commit, exactly as first sent. */
+    /** The failure banner's Try again: the owed edit, exactly as first sent. */
     private fun send(action: FailedAction) = shell.perform(action) { runtime ->
         runtime.menuCommand(action.kind, action.title)
         shell.acknowledged(action)
@@ -521,7 +506,7 @@ private fun DetailsStatus(model: InboxViewModel, detail: ProjectDetail, metadata
             DetailsLabel(t("projects.projectTypeLabel"), Modifier.weight(1f))
             val shape = RoundedCornerShape(8.dp)
             Box(Modifier.fade(if (archived) 0.5f else 1f).heightIn(min = 30.dp).clip(shape).background(if (sequential) c.tint else c.filterBg)
-                .border(1.dp, if (sequential) c.tint else c.border, shape).clickable(enabled = enabled && flow() != null, role = Role.Button) { toggleType() }
+                .border(1.dp, if (sequential) c.tint else c.border, shape).clickable(enabled = enabled && flow() != null, role = Role.Button) { setSequential(!sequential) }
                 .testTag("project-type-toggle").padding(horizontal = 10.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
                 Text(metadata.getString("typeLabel"), style = rnText(12, 600), color = if (sequential) c.onTint else c.secondaryText)
             }
@@ -787,7 +772,7 @@ fun ProjectDetailsDialogs(model: InboxViewModel) = with(model.projectDetails) {
                 for (tag in options.getJSONArray("suggestions").let { list -> List(list.length()) { list.getString(it) } }) {
                     val on = tag in current
                     Text(tag, style = rnText(12, 600), color = c.text, modifier = Modifier.clip(CircleShape).background(if (on) c.filterBg else c.cardBg)
-                        .border(1.dp, c.border, CircleShape).clickable(enabled = !model.busy, role = Role.Button) { toggleTag(tag) }.semantics { selected = on }
+                        .border(1.dp, c.border, CircleShape).clickable(enabled = !model.busy, role = Role.Button) { setTag(tag, present = !on) }.semantics { selected = on }
                         .padding(horizontal = 10.dp, vertical = 6.dp))
                 }
             }
@@ -975,3 +960,9 @@ internal class ReplyGuard {
 
     fun close() { session += 1 }
 }
+
+/** A Project details edit as journaled: its request UUID, project, field kind, and the field's new value (core's NativeProjectEdit). */
+internal fun projectEdit(requestId: String, projectId: String, kind: String, fields: JSONObject): JSONObject =
+    JSONObject().put("requestId", requestId).put("projectId", projectId).put("kind", kind).apply {
+        for (name in fields.keys()) put(name, fields.get(name))
+    }

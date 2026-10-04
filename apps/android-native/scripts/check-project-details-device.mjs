@@ -13,8 +13,9 @@
 //       typed notes and stores nothing; Back stores them),
 //       (i) Attachments' Add link and Remove, (j) Start, Due and Review dates (the picker's day), and a Clear, (k) the title:
 //       each write is stored once (the pulled database: the value, and the project's rev one higher);
-//   (l) a restart replays a journaled commit: one stopped before the engine saw it (Status → Someday) is stored by the boot's
-//       replay, one stopped after core's reply (a tag) is replayed and stores nothing more;
+//   (l) a restart replays a journaled edit: one stopped before the engine saw it (Status → Someday) is stored by the boot's
+//       replay, one stopped after core's reply (a tag) is replayed and stores nothing more; Back with typed notes and a typed
+//       title, killed while the first is held, replays both, stored once each;
 //   (m) a restart keeps every value: the reopened Details shows core's labels for the stored values.
 // It touches only the development package (it refuses any other APK), never launches over another app, leaves the app on its
 // Inbox tab, and restores rotation and clears its debug properties on exit. Leave the device on its home screen. It needs host
@@ -45,13 +46,13 @@ const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-ui.xml';
 const STAGED = '/data/local/tmp/mindwtr-native-dev-details.db';
-const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', 'journal_stop'];
+const PROPS = ['fail_commit', 'delay_before_ms', 'delay_after_ms', 'language', 'journal_stop', 'delay_action_ms'];
 const DB = 'mindwtr-native-dev.db';
 const work = resolve(app, 'android/build/project-details-check');
 const coreSrc = resolve(app, '../../packages/core/src');
 const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const run = '535353535353';
-const names = { area: `PDArea${run}`, project: `PD${run}`, renamed: `PDR${run}`, backTitle: `PDB${run}`, task: `55${run}`, first: `S1${run}`, second: `S2${run}`,
+const names = { area: `PDArea${run}`, project: `PD${run}`, renamed: `PDR${run}`, backTitle: `PDB${run}`, killTitle: `PDK${run}`, killNotes: `Kill notes ${run}`, task: `55${run}`, first: `S1${run}`, second: `S2${run}`,
     edited: `S3${run}`, tag: `pd${run}`, replayTag: `pdr${run}`, notes: `Notes ${run}`, link: `https://example.com/pd/${run}` };
 
 const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
@@ -115,7 +116,7 @@ const core = (db, mode) => JSON.parse(execFileSync('bun', ['-e', `
             await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' } });
             await flushPendingSave();
         }
-        const found = live(store()._allProjects).filter((project) => [names.project, names.renamed, names.backTitle].includes(project.title));
+        const found = live(store()._allProjects).filter((project) => [names.project, names.renamed, names.backTitle, names.killTitle].includes(project.title));
         if (found.length > 1) throw new Error('the fixture project title is not unique');
         let area = live(store()._allAreas).find((item) => item.name === names.area);
         if (!area) area = await store().addArea(names.area);
@@ -491,7 +492,7 @@ try {
     // (l) Restart replay: stopped before the engine saw it, the boot's replay stores it; stopped after core's reply, the replay
     // stores nothing more.
     let before = stored('before');
-    let stopped = await stopAt('before', 'projectStatus', async () => {
+    let stopped = await stopAt('before', 'projectEdit', async () => {
         await tap(tagged(await revealTag('project-status-picker'), 'project-status-picker'));
         await tap(tagged(await waitFor('the status menu', (current) => Boolean(tagged(current, 'project-status-menu-item-someday'))), 'project-status-menu-item-someday'));
     });
@@ -503,7 +504,7 @@ try {
     processId = relaunched.processId;
     await openDetails();
     before = stored('before');
-    stopped = await stopAt('after', 'projectTags', async () => {
+    stopped = await stopAt('after', 'projectEdit', async () => {
         await tap(tagged(await revealTag('project-tag-picker'), 'project-tag-picker'));
         nodes = await waitFor('the tag picker', (current) => Boolean(tagged(current, 'project-tag-input')), 15_000);
         await typeText(tagged(nodes, 'project-tag-input'), names.replayTag);
@@ -514,6 +515,39 @@ try {
     row = stored();
     check(row.tags.includes(`#${names.replayTag}`) && row.rev === before.rev + 1, `(l) the tag stored once through the replay (rev ${before.rev} → ${row.rev})`);
     processId = relaunched.processId;
+
+    // (l) Back with typed notes and a typed title, killed while the first edit is held (debug delay_action_ms): each edit was
+    // journaled the moment its field let go or Back was pressed, so the boot's replay stores both, once each.
+    nodes = await openDetails();
+    before = stored('before');
+    await tap(tagged(await revealTag('project-notes-toggle'), 'project-notes-toggle'));
+    await typeText(tagged(await revealTag('project-notes-input'), 'project-notes-input'), names.killNotes);
+    setProp('delay_action_ms', '20000');
+    try {
+        // The title takes the focus: the notes let go (journaled, sent, held); then the title, and Back.
+        nodes = await revealIn((current) => Boolean(tagged(current, 'project-title-input')), 'the title');
+        await typeText(tagged(nodes, 'project-title-input'), names.killTitle);
+        await tap(button(await screen(), 'Back') ?? fail('no Back in the project header'));
+        await sleep(1500);
+        check(stored().rev === before.rev, '(l) nothing stored yet while the first edit is held');
+        stopped = pid();
+        sh(`run-as ${PKG} kill -9 ${stopped}`);
+        await waitFor('process death', () => pid() !== stopped, 10_000);
+    } finally {
+        setProp('delay_action_ms', '');
+    }
+    relaunched = await relaunch(stopped);
+    check(relaunched.replay.includes('sent=2 dropped=2 left=0 owed=none'), `(l) the boot replayed both journaled edits: ${relaunched.replay.split('journal replay ')[1]}`);
+    row = stored();
+    check(row.title === names.killTitle && row.supportNotes === names.killNotes && row.rev === before.rev + 2,
+        `(l) the typed notes and title were stored once each (rev ${before.rev} → ${row.rev})`);
+    processId = relaunched.processId;
+    nodes = await openFixture(names.killTitle);
+    row = await write('(l) Title named back', async () => {
+        await typeText(tagged(await screen(), 'project-title-input'), names.renamed);
+        sh('input keyevent KEYCODE_ENTER');
+    }, (current) => current.title === names.renamed);
+    await hideKeyboard();
 
     // (m) After the restarts: the reopened Details shows core's labels for every stored value.
     nodes = await openDetails();

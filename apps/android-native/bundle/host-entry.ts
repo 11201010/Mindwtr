@@ -5,7 +5,6 @@ import {
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
     NATIVE_HOST_CONTRACT_VERSION,
     NATIVE_REMINDER_STATE_STORAGE_KEY,
-    projectReviewPickerValue,
     REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
@@ -429,9 +428,8 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 /** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
 type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
-/** Project details' writes, sent by ProjectDetails.kt: each is core's prepared commit, `{ request, prepared }`, journaled as it is. */
-type ProjectDetailCommand = 'projectRename' | 'projectStatus' | 'projectFlow' | 'projectArea' | 'projectTags' | 'projectNotes' | 'projectDate'
-    | 'projectSectionCreate' | 'projectSectionRename' | 'projectSectionDelete' | 'projectSectionOrder';
+/** Project details' edit, sent by ProjectDetails.kt (journaled ahead): core's runProjectEdit. */
+type ProjectDetailCommand = 'projectEdit';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
     | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | 'reminderDone' | 'reminderSnooze' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
@@ -790,40 +788,16 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
         const applied = contract.applyAttachmentUpdate(input);
         return applied.ok ? { ok: true, value: { attachments: applied.value } } : applied;
     },
-    // Project details (ProjectDetails.kt): each write's options (the project's token and choices) and its preparation, which
-    // writes nothing; the notes' resolved blocks for the preview of the typed draft and a reference's target.
-    projectRenameOptions: (input) => contract.getProjectRenameOptions(input),
-    projectRenamePrepare: (input) => contract.prepareProjectRename(input),
+    // Project details (ProjectDetails.kt): the values its panel and pickers show (a project's options; none writes), and core's
+    // blocks for the notes as typed.
     projectStatusOptions: (input) => contract.getProjectStatusOptions(input),
-    projectStatusPrepare: (input) => contract.prepareProjectStatus(input),
     projectFlowOptions: (input) => contract.getProjectFlowOptions(input),
-    projectFlowPrepare: (input) => contract.prepareProjectFlow(input),
-    projectAreaOptions: (input) => contract.getProjectAreaOptions(input),
-    projectAreaPrepare: (input) => contract.prepareProjectArea(input),
-    projectTagsOptions: (input) => contract.getProjectTagsEditOptions(input),
-    projectTagsPrepare: (input) => contract.prepareProjectTagsWrite(input),
     projectNotesOptions: (input) => contract.getProjectNotesEditOptions(input),
-    projectNotesPrepare: (input) => contract.prepareProjectNotesWrite(input),
+    projectAreaOptions: (input) => contract.getProjectAreaOptions(input),
+    projectTagsOptions: (input) => contract.getProjectTagsEditOptions(input),
     projectDateOptions: (input) => contract.getProjectDateOptions(input),
-    projectDatePrepare: (input) => contract.prepareProjectDate(input),
-    projectSectionCreateOptions: (input) => contract.getProjectSectionOptions(input),
-    projectSectionCreatePrepare: (input) => contract.prepareProjectSectionCreate(input),
-    projectSectionRenameOptions: (input) => contract.getProjectSectionRenameOptions(input),
-    projectSectionRenamePrepare: (input) => contract.prepareProjectSectionRename(input),
-    projectSectionDeleteOptions: (input) => contract.getProjectSectionDeleteOptions(input),
-    projectSectionDeletePrepare: (input) => contract.prepareProjectSectionDelete(input),
     projectSectionOrderOptions: (input) => contract.getProjectSectionOrderOptions(input),
-    projectSectionOrderPrepare: (input) => contract.prepareProjectSectionOrder(input),
-    // RN's Android date picker answers the picked day at the hour and minute of the value it opened on (core's picker instant),
-    // seconds 0, in the device's zone (core's projectReviewPickerValue); core's review date write takes that instant.
-    projectReviewInstant: (input) => {
-        const { date, instant } = (input ?? {}) as { date?: unknown; instant?: unknown };
-        const value = typeof date === 'string' && typeof instant === 'string' ? projectReviewPickerValue(date, instant) : null;
-        return value ? { ok: true, value: { instant: value } }
-            : { ok: false, error: { code: 'INVALID_INPUT', message: 'A picked day and the picker instant are required' } };
-    },
     projectNotesPreview: (input) => contract.getProjectNotesPreview(input),
-    projectNotesTarget: (input) => contract.getProjectNotesReferenceTarget(input),
 };
 /**
  * The attachments' long calls (native-host-contract-attachments.ts): Download and Open wait on the network (a synced file's bytes),
@@ -920,18 +894,8 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     attachmentAddFile: (input) => contract.addAttachmentFile(input),
     attachmentLinks: (input) => contract.submitAttachmentLinks(input),
     attachmentRemove: (input) => contract.removeAttachment(input),
-    // Project details (ProjectDetails.kt): core's prepared commits, each `{ request, prepared }` as its preparation answered.
-    projectRename: (input) => contract.commitPreparedProjectRename(input),
-    projectStatus: (input) => contract.commitPreparedProjectStatus(input),
-    projectFlow: (input) => contract.commitPreparedProjectFlow(input),
-    projectArea: (input) => contract.commitPreparedProjectArea(input),
-    projectTags: (input) => contract.commitPreparedProjectTagsWrite(input),
-    projectNotes: (input) => contract.commitPreparedProjectNotesWrite(input),
-    projectDate: (input) => contract.commitPreparedProjectDate(input),
-    projectSectionCreate: (input) => contract.commitPreparedProjectSectionCreate(input),
-    projectSectionRename: (input) => contract.commitPreparedProjectSectionRename(input),
-    projectSectionDelete: (input) => contract.commitPreparedProjectSectionDelete(input),
-    projectSectionOrder: (input) => contract.commitPreparedProjectSectionOrder(input),
+    // Project details (ProjectDetails.kt): the user's edit, journaled ahead of its send; core reads, prepares and commits it.
+    projectEdit: (input) => contract.runProjectEdit(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;

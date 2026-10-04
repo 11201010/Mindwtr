@@ -10,7 +10,8 @@ import java.io.IOException
  * The write-ahead journal under the app's `files/journal`: every write request (a [WRITES] method and its exact arguments,
  * its request UUID included) is on disk before the engine sees it, and leaves only after core's final reply. After process
  * death or a stopped engine, the next boot replays what is left, in order (CoreHost.replayJournal); core's crash-safe
- * commands make a replay write nothing wrong. Engine thread only.
+ * commands make a replay write nothing wrong. The engine thread sends and settles; a Project details edit is also journaled
+ * ahead from the main thread (CoreHost.journalAhead), so [pending], [append] and [settle] are synchronized.
  *
  * An entry is one file, `<sequence>.json`: written whole to a temporary file, synced, renamed into place, and the directory
  * synced. A temporary file left by a death mid-write was never sent, so it is removed. An entry that cannot be read, or names
@@ -30,7 +31,7 @@ class WriteJournal(
          * CoreHost's write methods (host-entry.ts's task commands, each answered through taskResult) and the arguments each takes,
          * which an entry read at boot must still fit to be replayed: "id" non-empty text (an id, a revision, a request UUID),
          * "text" any text, "bool" a boolean, "menu" a command of [MENU], and "{a,b[]}" a JSON object text whose `a` is non-empty
-         * text and `b` an array, `c{}` an object ("{menu}": the keys [MENU] gives the command). check-boot-gates.mjs keeps the methods and their
+         * text and `b` an array ("{menu}": the keys [MENU] gives the command). check-boot-gates.mjs keeps the methods and their
          * arguments equal to host-entry's, and the methods to core's write commands.
          */
         val SHAPES = mapOf(
@@ -55,16 +56,13 @@ class WriteJournal(
             "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
             // Attachments: Add file and Add photo, the link sheet's Save, Remove (a project's written at once through receipts).
             "attachmentAddFile" to "{requestId}", "attachmentLinks" to "{requestId}", "attachmentRemove" to "{requestId,attachmentId}",
-            // Project details (ProjectDetails.kt): each is core's prepared commit, its request and its frozen preparation.
-            "projectRename" to PREPARED, "projectStatus" to PREPARED, "projectFlow" to PREPARED, "projectArea" to PREPARED,
-            "projectTags" to PREPARED, "projectNotes" to PREPARED, "projectDate" to PREPARED, "projectSectionCreate" to PREPARED,
-            "projectSectionRename" to PREPARED, "projectSectionDelete" to PREPARED, "projectSectionOrder" to PREPARED,
+            // Project details (ProjectDetails.kt): the user's edit, journaled ahead of its send (core's runProjectEdit).
+            "projectEdit" to "{requestId,projectId,kind}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
             "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",
             "openAISettings").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
-        private const val PREPARED = "{request{},prepared{}}"
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
@@ -133,13 +131,13 @@ class WriteJournal(
     }
 
     /** The entries on disk, oldest first. */
-    fun pending(): List<Entry> = entries.toList()
+    @Synchronized fun pending(): List<Entry> = entries.toList()
 
     /**
      * [method] with [args], durable before this returns; null for an [UNJOURNALED] write, which never reaches the disk. The
      * same request while its entry is still here (an owed retry) returns that entry: the journal never holds a request twice.
      */
-    fun append(method: String, args: List<Any?>): Entry? {
+    @Synchronized fun append(method: String, args: List<Any?>): Entry? {
         require(method in WRITES) { "$method is not a write" }
         if (key(method, args) in UNJOURNALED) return null
         val text = JSONObject().put("method", method).put("args", JSONArray().apply { args.forEach { put(requireNotNull(it)) } }).toString()
@@ -165,7 +163,7 @@ class WriteJournal(
      * move and the folder sync: one that fails keeps it for the next boot's replay (core's crash-safe commands allow that), and
      * no receipt it may need is pruned while it stays.
      */
-    fun settle(entry: Entry, error: String?, replay: Boolean = false): Boolean {
+    @Synchronized fun settle(entry: Entry, error: String?, replay: Boolean = false): Boolean {
         if (keeps(error)) return false
         if (replay && malformed(error)) {
             if (!moveAside(entry.file)) return false
@@ -209,15 +207,11 @@ class WriteJournal(
         }
     }
 
-    /** [arg] is a JSON object text with [keys] (`{a,b[],c{}}`): `a` non-empty text, `b` an array, `c` an object. */
+    /** [arg] is a JSON object text with [keys] (`{a,b[]}`): `a` non-empty text, `b` an array. */
     private fun holds(arg: Any?, keys: String): Boolean {
         val json = (arg as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return false
         return keys.removeSurrounding("{", "}").split(',').all { key ->
-            when {
-                key.endsWith("[]") -> json.opt(key.dropLast(2)) is JSONArray
-                key.endsWith("{}") -> json.opt(key.dropLast(2)) is JSONObject
-                else -> (json.opt(key) as? String).orEmpty().isNotEmpty()
-            }
+            if (key.endsWith("[]")) json.opt(key.dropLast(2)) is JSONArray else (json.opt(key) as? String).orEmpty().isNotEmpty()
         }
     }
 

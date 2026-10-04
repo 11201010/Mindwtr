@@ -518,8 +518,7 @@ assert.match(model, /if \(stale\) acknowledged\(action!!\)\s+else ui \{/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
-// A command whose work makes its exact request ([late], a prepared Project details commit) outdates reads from its start too.
-assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return false\s+busy = true\s+if \(action != null \|\| late != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
+assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return false\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
 assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and a read\'s success (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
 assert.match(model, /if \(error != null && error == editRefusal\) error = null/);
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
@@ -540,7 +539,7 @@ assert.match(model, /fun refreshProjects\(\) \{\s+\/\/[^\n]*\s+if \(projects == 
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
 assert.match(model, /try \{\s+\/\/[^\n]*\s+debugProperty\("delay_action_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+work\(runtime\); done = true\s+\}/);
-assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && \(action \?: late\?\.get\(\)\) != null\) refreshAll\(\)\s+finished\?\.invoke\(\)\s+\}/);
+assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+finished\?\.invoke\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
 // a result is shown only if nothing newer was shown first (a background failure too).
@@ -902,11 +901,6 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
-    // Project details' prepared commits: Kotlin journals them as Menu commands (ProjectDetails.kt), and the iOS host's own commit
-    // methods (projectRenameCommit, …) send the same core writes from its own journal, so Kotlin never calls those by name.
-    const projectDetailWrites = ['commitPreparedProjectRename', 'commitPreparedProjectStatus', 'commitPreparedProjectFlow', 'commitPreparedProjectArea',
-        'commitPreparedProjectTagsWrite', 'commitPreparedProjectNotesWrite', 'commitPreparedProjectDate', 'commitPreparedProjectSectionCreate',
-        'commitPreparedProjectSectionRename', 'commitPreparedProjectSectionDelete', 'commitPreparedProjectSectionOrder'];
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
     // Core writes no host method calls yet (Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
@@ -940,8 +934,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment',
         // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
         'completeReminderTask', 'snoozeReminder',
-        // Project details: core's prepared commits (each its request and its frozen preparation, replay-safe by its after-row).
-        ...projectDetailWrites];
+        // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
+        'runProjectEdit'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -951,16 +945,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.deepEqual([...new Set(writeCalls)].sort(), [...coreWrites].sort(), 'the journaled methods call exactly core\'s write commands');
     // iOS's own write methods (taskAttachmentLinks, taskAttachmentRemove: core writes Kotlin journals as a project's, pass A2) are
     // left out by name: the check above proves no Kotlin file names them, and iOS journals them.
-    const iosProjectCommits = methods.filter((m) => !writes.includes(m.name) && called(m.body).some((name) => projectDetailWrites.includes(name))).map((m) => m.name);
-    assert.deepEqual(iosProjectCommits, ['projectSectionCreateCommit', 'projectSectionRenameCommit', 'projectSectionDeleteCommit', 'projectSectionOrderCommit',
-        'projectRenameCommit', 'projectFlowCommit', 'projectNotesWriteCommit', 'projectTagsWriteCommit', 'projectStatusCommit', 'projectDateCommit',
-        'projectAreaCommit'], 'each Project details commit has its iOS host method');
-    {
-        const java = resolve(app, 'android/app/src/main/java');
-        const kotlin = readdirSync(java, { recursive: true }).filter((file) => file.endsWith('.kt')).map((file) => readFileSync(resolve(java, file), 'utf8')).join('\n');
-        assert.equal(kotlin.match(new RegExp(`"(${iosProjectCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS host\'s Project details commits');
-    }
-    const readCalls = [...methods.filter((m) => !writes.includes(m.name) && !iosOnlyMethods.includes(m.name) && !iosProjectCommits.includes(m.name)).flatMap((m) => called(m.body)),
+    const readCalls = [...methods.filter((m) => !writes.includes(m.name) && !iosOnlyMethods.includes(m.name)).flatMap((m) => called(m.body)),
         ...called(table('MENU_READS'))];
     assert.deepEqual(readCalls.filter((name) => coreWrites.includes(name)), [], 'no unjournaled host method calls a core write');
     // The AI's requests are reads too: they send task text to the provider and write nothing (an answer applies through the screen's edits).
@@ -1756,14 +1741,16 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
     assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
-    // A Project details write is prepared and committed in one action, so the commit's journal entry holds the exact preparation
-    // and nothing between them can drop it; writes wait in order for a free shell (review PD 2; ProjectDetailsTest).
+    // A Project details edit is the user's intent, journaled at once before anything else (CoreHost.journalAhead), then sent
+    // in order when the shell is free; core's runProjectEdit reads, prepares (again after a sync) and commits it, so a death
+    // at any step leaves the edit for the boot's replay (review PD 1, 2; WriteJournalTest, ProjectDetailsTest).
     {
         const details = code(source('ProjectDetails.kt'));
-        const start = details.slice(details.indexOf('private fun start(item: Write, done: () -> Unit): Boolean {'), details.indexOf('private fun send(action: FailedAction)'));
-        assert.match(start, /shell\.tryPerform\(late = late, finished = done\) \{ runtime ->[\s\S]*?menuRead\("\$\{item\.kind\}Prepare"[\s\S]*?late\.set\(action\)\s*runtime\.menuCommand\(action\.kind, action\.title\)/, 'the preparation and its commit run in one action');
-        assert.doesNotMatch(details, /shell\.ui \{ shell\.ui \{/, 'no write waits on a posted callback');
-        assert.match(model, /val action = action \?: late\?\.get\(\)/, 'a failure after the commit is made owes that commit');
+        assert.match(details, /private fun edit\(projectId: String\?, kind: String, fields: JSONObject\.\(\) -> Unit\) \{[\s\S]*?journalAhead\("projectEdit", json\)[\s\S]*?writes\.add\(FailedAction\("projectEdit", requestId, json\)\)/, 'an edit is journaled before it is queued');
+        assert.doesNotMatch(details, /menuRead\("[^"]*Prepare"|commitPrepared/, 'Kotlin never prepares or commits an edit itself');
+        assert.match(coreHost, /fun journalAhead\(name: String, json: String\) \{\s*require\(name == "projectEdit"\)[\s\S]{0,160}?\.append\("menuCommand", listOf\(name, json\)\)/);
+        const journalKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8');
+        for (const fn of ['pending', 'append', 'settle']) assert.match(journalKt, new RegExp(`@Synchronized fun ${fn}\\(`), `the journal's ${fn} is synchronized`);
     }
     // A Details reply applies only while it answers the newest read of its kind, in the session it was read in: another
     // project or leaving the screen closes the session; a values read started before a write ended never clears a draft
@@ -1784,8 +1771,8 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');
     // The picker's + only adds the typed tag (core's `add` intent; dd 2026-10-04): a tag already there stays. A chip toggles.
     const detailsKt = code(source('ProjectDetails.kt'));
-    assert.match(detailsKt, /fun addTag\(tag: String\) \{\s*changeTag\("add", tag\)\s*\}/, 'the picker\'s + writes core\'s add intent');
-    assert.match(detailsKt, /private fun changeTag\(kind: String, tag: String\) \{[\s\S]{0,200}?put\("intent", JSONObject\(\)\.put\("kind", kind\)/);
+    assert.match(detailsKt, /fun addTag\(tag: String\) \{\s*setTag\(tag, present = true\)\s*\}/, 'the picker\'s + only adds');
+    assert.match(detailsKt, /edit\(projectId, "tag"\) \{ put\("tag", tag\)\.put\("present", present\) \}/);
     assert.match(detailsKt, /testTag\("project-tag-add"\)/);
     assert.match(detailsKt, /\.clickable\(role = Role\.Button\) \{ addTag\(tagDraft\); tagDraft = "" \}/, '+ adds the typed tag');
     // RN's Notes Preview shows the unsaved draft (dd 2026-10-04): the preview reads core's blocks for the draft text, and
@@ -3326,7 +3313,6 @@ export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
   return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
     confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
 }
-export { projectReviewPickerValue } from ${JSON.stringify(resolve(app, '../../packages/core/src/project-details-presentation.ts'))};
 export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {

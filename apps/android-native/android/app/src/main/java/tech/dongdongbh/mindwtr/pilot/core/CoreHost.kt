@@ -460,6 +460,16 @@ class CoreHost(
     /** A Menu tab command (host-entry.ts MENU_COMMANDS) with [json] unchanged; its request or capture UUID makes a retry exact. */
     fun menuCommand(name: String, json: String): JSONObject = callAsync("menuCommand", name, json)
 
+    /**
+     * A Menu command journaled now, on the caller's thread, ahead of its send: its later [menuCommand] finds the same entry
+     * (the journal never holds a request twice), and a death before then leaves it for the boot's replay. Project details'
+     * edits only: what the user typed is on disk the moment the field lets go or Back is pressed.
+     */
+    fun journalAhead(name: String, json: String) {
+        require(name == "projectEdit") { "$name is not journaled ahead" }
+        checkNotNull(journal) { "The write journal is not open" }.append("menuCommand", listOf(name, json))
+    }
+
     /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 

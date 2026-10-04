@@ -249,20 +249,25 @@ class WriteJournalTest {
         assertTrue(File(dir, "${WriteJournal.ASIDE}/0000000000000099.json").exists())
     }
 
-    /** A Project details write is core's prepared commit: its request and its frozen preparation, both objects, or no replay. */
-    @Test fun aProjectDetailsCommitReplaysOnlyWithItsRequestAndPreparation() {
-        val dir = File(folder.root, "journal").apply { mkdirs() }
-        val fits = """{"request":{"requestId":"r-1","projectId":"p"},"prepared":{"version":1}}"""
-        val misfits = listOf("""{"request":"r-1","prepared":{"version":1}}""", """{"request":{"requestId":"r-1"}}""")
-        misfits.forEachIndexed { index, json ->
-            File(dir, "000000000000000${index + 1}.json").writeText("""{"method":"menuCommand","args":["projectRename",${org.json.JSONObject.quote(json)}]}""")
-        }
+    /**
+     * A Project details edit is the user's intent (`projectEdit`: request UUID, project, field, value), journaled ahead of its
+     * send: a kill at any later step finds it on disk, in order, and the send itself finds the same entry, never a second one.
+     */
+    @Test fun aProjectEditJournaledAheadSurvivesAKillAndIsSentOnce() {
+        val dir = File(folder.root, "journal")
+        val title = """{"requestId":"r-1","projectId":"p","kind":"title","title":"New"}"""
+        val notes = """{"requestId":"r-2","projectId":"p","kind":"notes","text":"Typed"}"""
         val journal = open(dir)
-        assertEquals(emptyList<WriteJournal.Entry>(), journal.pending())
-        for (kind in listOf("projectRename", "projectStatus", "projectFlow", "projectArea", "projectTags", "projectNotes", "projectDate",
-            "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder")) {
-            assertTrue(kind, journal.append("menuCommand", listOf(kind, fits)) != null)
-        }
-        assertEquals(11, open(dir).pending().size)
+        val first = journal.append("menuCommand", listOf("projectEdit", title))!!
+        journal.append("menuCommand", listOf("projectEdit", notes))
+        // Killed before anything was sent: both edits wait for the boot's replay, in the order they were made.
+        assertEquals(listOf(title, notes), open(dir).pending().map { it.args[1] })
+        // The send appends the same request and finds its entry; once core answered, a kill leaves only the notes.
+        assertSame(first, journal.append("menuCommand", listOf("projectEdit", title)))
+        assertTrue(journal.settle(first, null))
+        assertEquals(listOf(notes), open(dir).pending().map { it.args[1] })
+        // An edit without its project or field never replays.
+        File(dir, "0000000000000099.json").writeText("""{"method":"menuCommand","args":["projectEdit",${org.json.JSONObject.quote("""{"requestId":"r-3","projectId":"p"}""")}]}""")
+        assertEquals(listOf(notes), open(dir).pending().map { it.args[1] })
     }
 }

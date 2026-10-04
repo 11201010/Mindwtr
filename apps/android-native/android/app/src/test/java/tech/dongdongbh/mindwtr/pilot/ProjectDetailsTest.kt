@@ -57,4 +57,12 @@ class ProjectDetailsTest {
         assertFalse(guard.current(newer))
         assertTrue(guard.current(guard.ticket("picker")))
     }
+
+    /** An edit as journaled: core's NativeProjectEdit (request UUID, project, kind, the field's new value), nothing else. */
+    @Test fun anEditCarriesItsRequestProjectKindAndValue() {
+        val edit = projectEdit("r-1", "p", "date", org.json.JSONObject().put("field", "reviewAt").put("value", "2026-11-20").put("opened", "2026-10-04T21:23:37.456Z"))
+        assertEquals(setOf("requestId", "projectId", "kind", "field", "value", "opened"), edit.keys().asSequence().toSet())
+        assertEquals("date", edit.getString("kind"))
+        assertEquals("2026-11-20", edit.getString("value"))
+    }
 }
