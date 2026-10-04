@@ -523,8 +523,12 @@ try {
     nodes = await revealIn((current) => Boolean(tagged(current, 'project-title-input')), 'the title');
     await typeText(tagged(nodes, 'project-title-input'), names.killTitle);
     await tap(tagged(await revealTag('project-notes-toggle'), 'project-notes-toggle'));
-    await typeText(tagged(await revealTag('project-notes-input'), 'project-notes-input'), names.killNotes);
+    // The notes field takes the focus: the title lets go and is stored (the fields lock while it saves).
+    await tap(tagged(await revealTag('project-notes-input'), 'project-notes-input'));
     await waitFor('the title stored', () => stored().title === names.killTitle, 30_000);
+    await waitFor('the notes field free again', (current) => tagged(current, 'project-notes-input')?.enabled === 'true', 15_000);
+    await typeText(tagged(await revealTag('project-notes-input'), 'project-notes-input'), names.killNotes);
+    await waitFor('the notes typed', (current) => tagged(current, 'project-notes-input')?.text === names.killNotes, 10_000);
     stopped = await stopAt('before', 'projectEdit', async () => tap(button(await screen(), 'Back') ?? fail('no Back in the project header')));
     check(stored().supportNotes !== names.killNotes, '(l) the notes were not stored before the process died');
     relaunched = await relaunch(stopped);
