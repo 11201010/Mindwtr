@@ -28,4 +28,16 @@ class ProjectDetailsTest {
         finish.removeAt(0)()
         assertFalse(queue.waiting)
     }
+
+    /** Leaving a project (Back, another project) stores its typed title and notes, as RN's end of editing and blur on close do. */
+    @Test fun leavingStoresTheTypedTitleAndNotes() {
+        assertEquals(listOf("projectRename" to "New", "projectNotes" to "Typed notes"),
+            editsOnLeave(title = "  New  ", storedTitle = "Old", notes = "Typed notes", storedNotes = "Old notes"))
+        // RN stores no blank title, and nothing unchanged.
+        assertEquals(emptyList<Pair<String, String>>(), editsOnLeave(title = "   ", storedTitle = "Old", notes = "Old notes", storedNotes = "Old notes"))
+        assertEquals(emptyList<Pair<String, String>>(), editsOnLeave(title = "Old ", storedTitle = "Old", notes = null, storedNotes = "Old notes"))
+        assertEquals(emptyList<Pair<String, String>>(), editsOnLeave(title = null, storedTitle = "Old", notes = null, storedNotes = null))
+        // Notes keep their exact text, blank included.
+        assertEquals(listOf("projectNotes" to ""), editsOnLeave(title = null, storedTitle = "Old", notes = "", storedNotes = "Old notes"))
+    }
 }

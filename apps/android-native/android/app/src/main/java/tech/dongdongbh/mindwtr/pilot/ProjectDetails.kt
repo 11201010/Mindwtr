@@ -112,6 +112,8 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     var notesFullscreen by mutableStateOf(false)
     /** Typed notes not yet stored; null when the field shows core's text. */
     var notesDraft by mutableStateOf<String?>(null)
+    /** The header's typed title not yet stored; null when it shows core's title. */
+    var titleDraft by mutableStateOf<String?>(null)
     /** Core's resolved notes blocks (getProjectNotes) for the preview. */
     var notesView by mutableStateOf<JSONObject?>(null); private set
     var areaPicker by mutableStateOf<JSONObject?>(null); private set
@@ -129,6 +131,13 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     /** The project on screen is [id]: another one resets the details, as RN's does on open, close, or a swap. */
     fun follow(id: String?) {
         if (id == projectId) return
+        // Leaving a project stores its typed title and notes, as RN's end of editing and blur do on close (review PD 1).
+        projectId?.let { old ->
+            for ((kind, text) in editsOnLeave(titleDraft, shell.projects?.title(old), notesDraft, raw?.let { storedNotes() })) {
+                if (kind == "projectRename") rename(text, old) else writeNotes(text, old)
+            }
+        }
+        titleDraft = null
         projectId = id
         open = false; statusMenu = false; raw = null; notesExpanded = false; notesPreview = false; notesFullscreen = false
         notesDraft = null; notesView = null; areaPicker = null; tagPicker = null; tagDraft = ""; datePicker = null
@@ -196,10 +205,10 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
 
     // ---- Writes: core's options (the token the request carries), its preparation, then the journaled commit ----
 
-    fun rename(title: String) {
+    fun rename(title: String, projectId: String? = this.projectId) {
         val text = title.trim()
         if (text.isEmpty()) return
-        write("projectRename") { options -> JSONObject().put("title", text).put("expected", expected(options)).takeIf { options.getBoolean("canRename") } }
+        write("projectRename", projectId = projectId) { options -> JSONObject().put("title", text).put("expected", expected(options)).takeIf { options.getBoolean("canRename") } }
     }
 
     fun setStatus(status: String) {
@@ -239,8 +248,11 @@ class ProjectDetailsModel(private val shell: InboxViewModel) {
     fun commitNotes() {
         val text = notesDraft ?: return
         if (text == storedNotes()) { notesDraft = null; return }
-        write("projectNotes") { options -> JSONObject().put("text", text).put("expected", expected(options)) }
+        writeNotes(text, projectId)
     }
+
+    private fun writeNotes(text: String, projectId: String?) =
+        write("projectNotes", projectId = projectId) { options -> JSONObject().put("text", text).put("expected", expected(options)) }
 
     /**
      * A date field's new value: the picked `yyyy-MM-dd`, or null to clear it. A review date is an instant: the picked day at the
@@ -868,12 +880,17 @@ private fun SectionManager(model: InboxViewModel, options: JSONObject) = with(mo
  * focus; a blank title stores nothing. Read-only for an archived project.
  */
 @Composable
-fun ProjectTitleField(model: InboxViewModel, stored: String, archived: Boolean, modifier: Modifier) {
+fun ProjectTitleField(model: InboxViewModel, stored: String, archived: Boolean, modifier: Modifier) = with(model.projectDetails) {
     val c = LocalTheme.current.colors
-    var text by remember(model.openProjectId, stored) { mutableStateOf(stored) }
+    // The typed title is the model's (a close stores it); once core's title equals it, the field shows core's again.
+    LaunchedEffect(stored, titleDraft) { if (titleDraft == stored) titleDraft = null }
+    val text = titleDraft ?: stored
     var focused by remember { mutableStateOf(false) }
-    val commit = { if (text.trim() != stored) model.projectDetails.rename(text) }
-    BasicTextField(text, { text = it }, singleLine = true, enabled = !archived && !model.busy && model.failedAction == null,
+    val commit = {
+        val trimmed = text.trim()
+        if (trimmed.isNotEmpty() && trimmed != stored) { titleDraft = trimmed; rename(trimmed) }
+    }
+    BasicTextField(text, { titleDraft = it }, singleLine = true, enabled = !archived && !model.busy && model.failedAction == null,
         textStyle = rnText(18, 700).copy(color = c.text), cursorBrush = SolidColor(c.tint),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { commit() }),
         modifier = modifier.semantics { heading() }.testTag("project-title-input").onFocusChanged { state ->
@@ -907,4 +924,14 @@ internal class WriteQueue<T>(private val start: (T, () -> Unit) -> Boolean) {
             items.addFirst(next)
         }
     }
+}
+
+/**
+ * The edits leaving a project stores (RN's title end of editing and notes blur on close): a typed title, trimmed, when not
+ * blank and not core's; typed notes, exactly, when not core's. In order: the title, then the notes.
+ */
+internal fun editsOnLeave(title: String?, storedTitle: String?, notes: String?, storedNotes: String?): List<Pair<String, String>> = buildList {
+    val trimmed = title?.trim().orEmpty()
+    if (trimmed.isNotEmpty() && trimmed != storedTitle?.trim()) add("projectRename" to trimmed)
+    if (notes != null && storedNotes != null && notes != storedNotes) add("projectNotes" to notes)
 }

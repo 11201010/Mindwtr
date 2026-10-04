@@ -1765,6 +1765,10 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
         assert.doesNotMatch(details, /shell\.ui \{ shell\.ui \{/, 'no write waits on a posted callback');
         assert.match(model, /val action = action \?: late\?\.get\(\)/, 'a failure after the commit is made owes that commit');
     }
+    // Back (closeProject) and opening another project store the open project's typed title and notes first (review PD 1;
+    // ProjectDetailsTest's editsOnLeave), as RN's end of editing and blur do on close.
+    assert.match(model, /fun closeProject\(\) \{[\s\S]{0,300}?projectDetails\.follow\(null\)/, 'Back stores the typed edits');
+    assert.match(code(source('ProjectDetails.kt')), /fun follow\(id: String\?\) \{\s*if \(id == projectId\) return\s*projectId\?\.let \{ old ->\s*for \(\(kind, text\) in editsOnLeave\(/, 'leaving a project stores its edits before anything resets');
     // RN's tag picker field (ProjectTagPickerModal): the keyboard's Done only ends editing; only + changes the tags (review PD 5).
     const tagField = code(source('ProjectDetails.kt')).split('BasicTextField(tagDraft')[1].split('testTag("project-tag-input")')[0];
     assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');
