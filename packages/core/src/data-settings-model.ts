@@ -21,6 +21,7 @@ export type DataSettingsModel = {
         csvImportLabel: string; csvImportDescription: string;
         restoreFileLabel: string; restoreFileDescription: string;
         todoistImportLabel: string; todoistImportDescription: string;
+        ticktickImportLabel: string; ticktickImportDescription: string;
         tasknotesLabel: string; tasknotesDescription: string; tasknotesFailed: string;
         mergeLabel: string; mergeDescription: string; mergeFailed: string; snapshotsLabel: string; restoreLabel: string;
     };
@@ -56,6 +57,8 @@ export function buildDataSettingsModel(settings: AppSettings, t: Translate): Dat
             restoreFileDescription: t('settings.restoreBackupDesc'),
             todoistImportLabel: t('settings.importTodoist'),
             todoistImportDescription: t('settings.importTodoistDesc'),
+            ticktickImportLabel: t('settings.importTickTick'),
+            ticktickImportDescription: t('settings.importTickTickDesc'),
             tasknotesLabel: t('settings.exportTaskNotes'),
             tasknotesDescription: t('settings.exportTaskNotesDesc'),
             tasknotesFailed: t('settings.exportTaskNotesFailed'),

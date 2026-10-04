@@ -16,7 +16,7 @@ import type { AppData } from './types';
 const AT = '2026-10-04T12:00:00.000Z';
 const ID = '11111111-1111-4111-8111-111111111111';
 const STAGED = '22222222-2222-4222-8222-222222222222';
-const payload = (operation: 'merge' | 'restore' | 'replace' | 'csv' | 'todoist' = 'merge') => JSON.stringify(['backupDocument', operation, STAGED, 'a'.repeat(64)]);
+const payload = (operation: 'merge' | 'restore' | 'replace' | 'csv' | 'todoist' | 'ticktick' = 'merge') => JSON.stringify(['backupDocument', operation, STAGED, 'a'.repeat(64)]);
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const original: AppData = {
     tasks: [
@@ -216,7 +216,7 @@ describe('atomic native complete-document receipts over real SQLite', () => {
         expect(env.events).toContain('ROLLBACK');
     });
 
-    it.each(['merge', 'csv', 'replace', 'todoist'] as const)('recovers a %s COMMIT that landed before its driver acknowledgment threw, without rewriting later edits', async (operation) => {
+    it.each(['merge', 'csv', 'replace', 'todoist', 'ticktick'] as const)('recovers a %s COMMIT that landed before its driver acknowledgment threw, without rewriting later edits', async (operation) => {
         const env = await open(); env.input.payload = payload(operation);
         let fail = true;
         const uncertain = new NativeReceiptSqliteAdapter({ ...env.sql.client,
@@ -383,7 +383,7 @@ describe('atomic native complete-document receipts over real SQLite', () => {
         expect(await env.adapter.saveDocumentWithReceipt({ ...env.input, reply: atLimit })).toEqual({ reply: atLimit, replayed: false });
     });
 
-    it.each(['merge', 'csv', 'replace', 'todoist'] as const)('logs bounded %s proof after direct COMMIT only, without making logger failure an import failure', async (operation) => {
+    it.each(['merge', 'csv', 'replace', 'todoist', 'ticktick'] as const)('logs bounded %s proof after direct COMMIT only, without making logger failure an import failure', async (operation) => {
         const env = await open(); env.input.payload = payload(operation);
         let commits = 0;
         env.hooks.beforeRun = async (statement) => { if (statement === 'COMMIT') commits += 1; };

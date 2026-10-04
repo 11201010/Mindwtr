@@ -2112,6 +2112,16 @@ struct DiagnosticsCard: View {
         }
         .disabled(!model.backupImportEnabled)
         .accessibilityIdentifier("data-transfer-import-todoist")
+        Button { model.openBackupImportPicker(action: .ticktick) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("ticktickImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("ticktickImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-ticktick")
         if model.backupImportBusy {
             ProgressView().accessibilityIdentifier("backup-import-progress")
         }

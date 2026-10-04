@@ -569,3 +569,112 @@ describe('native Todoist CSV and ZIP prepared import', () => {
         await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
     });
 });
+
+
+const ticktickHeaders = ['Folder Name','List Name','Title','Kind','Tags','Content','Is Check list','Start Date','Due Date','Repeat','Priority','Status','Created Time','Completed Time','Timezone','Is All Day','taskId','parentId'];
+const ticktickRows = [
+    ['Work','Launch','Book venue','TEXT','#ops','Confirm capacity','N','','','','1','1','2026-06-12T12:00:00+0000','2026-06-13T12:00:00+0000','America/New_York','false','101','100'],
+    ['Work','Launch','Plan release 日本語 🦉','TEXT','#work, focus','Write launch brief','N','2026-06-17T04:00:00+0000','2026-06-18T04:00:00+0000','FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;WKST=MO','5','0','2026-06-11T12:00:00+0000','','America/New_York','true','100',''],
+    ['Work','Launch','Packing list','CHECKLIST','travel','▫Passport\n▪Tickets','Y','','','','3','2','2026-06-10T12:00:00+0000','2026-06-15T12:00:00+0000','America/New_York','false','102',''],
+];
+const ticktickCsv = csvFile(ticktickHeaders, ticktickRows);
+const ticktickInput = (text = ticktickCsv): NativeBackupDocumentPrepareInput => ({ ...input(), mode: 'ticktick', text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'TickTick.csv' } });
+
+describe('native TickTick CSV and ZIP prepared import', () => {
+    it.each(['csv','zip'] as const)('inspects %s with RN areas/projects/checklists/recurrence/project lines/warnings and cancellation writes nothing', async (kind) => {
+        const env = await open(); const before = await env.state(); const source = ticktickInput();
+        if (kind === 'zip') { source.text = bytesToBase64(zipSync({ 'backup.csv': strToU8(ticktickCsv), 'notes.txt': strToU8('ignored') })); source.metadata.fileName = 'TickTick.zip'; }
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'ticktick'); expect(preview.valid).toBe(true); expect(Object.keys(preview)).toHaveLength(7);
+        expect(preview.title).toBe(t('settings.backupMobile.importTicktickData')); expect(preview.confirmLabel).toBe(t('settings.backupMobile.import'));
+        expect(preview.summary).toContain(t('settings.backupMobile.ticktickAreasWillBeCreated', { areaCount: 1 })); expect(preview.summary).toContain(t('settings.backupMobile.ticktickProjectsWillBeCreated', { projectCount: 1 }));
+        expect(preview.summary).toContain(t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: 3 })); expect(preview.summary).toContain(t('settings.backupMobile.recurringTasksWillKeepSupportedRepeatRules', { taskCount: 1 }));
+        expect(preview.summary).toContain('• Work / Launch: 2'); expect(preview.summary).not.toContain(t('settings.backupMobile.importedTasksStayInInboxSoYouCanProcessThem'));
+        const parsed = parseImportSource('ticktick', { bytes: kind === 'csv' ? strToU8(ticktickCsv) : zipSync({ 'backup.csv': strToU8(ticktickCsv), 'notes.txt': strToU8('ignored') }), fileName: source.metadata.fileName });
+        for (const diagnostic of createImportDiagnostics(parsed.preview!.warnings, 'warning')) expect(preview.summary).toContain(formatImportDiagnostic(diagnostic, t));
+        expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+    it('preview limits project examples to first four and retains remaining count and optional areas', () => {
+        const rows = ['One','Two','Three','Four','Five'].map((name, index) => ['Work', name, `Task${index}`, ...new Array(13).fill(''), String(index), '']);
+        const source = ticktickInput(csvFile(ticktickHeaders, rows)); const parsed = parseImportSource('ticktick', { bytes: strToU8(csvFile(ticktickHeaders, rows)), fileName: source.metadata.fileName });
+        const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'ticktick'); expect(preview.valid).toBe(true);
+        for (const project of parsed.preview!.projects.slice(0,4)) expect(preview.summary).toContain(`• ${project.areaName ? `${project.areaName} / ` : ''}${project.name}: ${project.taskCount}`);
+        const fifth = parsed.preview!.projects[4]; expect(preview.summary).not.toContain(`• ${fifth.areaName} / ${fifth.name}:`); expect(preview.summary).toContain(t('settings.backupMobile.moreProjects', { projectCount: 1 }));
+    });
+    it.each(['csv','zip'] as const)('freezes actual %s TickTick rich policy/checklist IDs from fresh durable data; cold receipt replay preserves later edits', async (kind) => {
+        const base = clone(original); base.people = [{ id: 'preserved-person', name: 'Taylor', createdAt: AT, updatedAt: AT, rev: 1 }];
+        const env = await open(base); const source = ticktickInput(); if (kind === 'zip') { source.text = bytesToBase64(zipSync({ 'backup.csv': strToU8(ticktickCsv) })); source.metadata.fileName = 'TickTick.zip'; }
+        inspectNativeBackupDocument(source.text, source.metadata, t, 'ticktick'); const latest = await env.adapter.getData(); latest.tasks.push(task('latest-ticktick')); await env.adapter.saveData(latest); env.writes.length = 0; const before = await env.state();
+        const prepared = await prepareNativeBackupDocument(env.adapter, source); const plan = JSON.parse(prepared.planJSON); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+        expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-ticktick')).toBe(true); expect(validateBackupJson(prepared.recoveryJSON!).valid).toBe(true);
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: 1, importedChecklistItemCount: 3, importedProjectCount: 1, importedSectionCount: 0, importedTaskCount: 2, warnings: expect.any(Array) });
+        expect(Object.keys(plan.reply)).toHaveLength(4); expect(Object.keys(plan.reply.result)).toHaveLength(6); expect(plan.reply.result).not.toHaveProperty('data'); expect(plan.reply.result).not.toHaveProperty('importedStandaloneTaskCount');
+        const imported = plan.data.tasks.find((item: Task) => item.title === 'Plan release 日本語 🦉'); expect(imported).toMatchObject({ status: 'next', dueDate: '2026-06-18', startTime: '2026-06-17', priority: 'high', tags: ['#work','#focus','#ops'], recurrence: { rule: 'weekly', byDay: ['MO','WE'], weekStart: 'MO' }, checklist: [{ id: expect.any(String), title: 'Book venue', isCompleted: true }] });
+        expect(imported.description).toContain('Write launch brief'); expect(imported.description).toContain('Subtask "Book venue": Confirm capacity'); expect(imported.projectId).toBeTruthy();
+        const packing = plan.data.tasks.find((item: Task) => item.title === 'Packing list'); expect(packing).toMatchObject({ status: 'archived', completedAt: '2026-06-15T12:00:00.000Z', checklist: [{ title: 'Passport', isCompleted: false }, { title: 'Tickets', isCompleted: true }] });
+        expect(plan.data.people).toEqual(plan.expectedCurrent.people);
+        const first = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME); expect((await env.adapter.getData()).tasks.find((item) => item.id === imported.id)?.checklist).toEqual(imported.checklist);
+        const later = await env.adapter.getData(); const changed = later.tasks.find((item) => item.id === imported.id)!; changed.title = 'Later TickTick edit'; changed.rev! += 1; await env.adapter.saveData(later); const committed = await env.state();
+        resetNativeRequestReceipts(); await loadNativeRequestReceipts(env.sql.client, { durableCommands: ['backupDocument'] }); const cold = new NativeReceiptSqliteAdapter(env.client, { rejectConcurrentWrites: true }); await cold.ensureSchema(); setStorageAdapter(cold); env.writes.length = 0;
+        expect(await readNativeBackupDocumentOutcome(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(await commitNativeBackupDocument(cold, reference, prepared.planJSON, NAME)).toEqual(first); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(committed);
+        expect(useTaskStore.getState()._allTasks.find((item) => item.id === imported.id)?.title).toBe('Later TickTick edit');
+    });
+    it.each(['edited','deleted'] as const)('uses shared TickTick %s reimport identity/history rules', async (condition) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const firstPlan = JSON.parse(prepared.planJSON); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const latest = await env.adapter.getData(); const importedIds = new Set(firstPlan.data.tasks.filter((item: Task) => !firstPlan.expectedCurrent.tasks.some((existing: Task) => existing.id === item.id)).map((item: Task) => item.id));
+        for (const item of latest.tasks) if (importedIds.has(item.id)) { item.title = `Edited ${item.title}`; item.rev! += 1; if (condition === 'deleted') item.deletedAt = AT; }
+        if (condition === 'deleted') { for (const item of latest.projects) item.deletedAt = AT; for (const item of latest.areas) item.deletedAt = AT; }
+        await env.adapter.saveData(latest); env.writes.length = 0; const again = await prepareNativeBackupDocument(env.adapter, { ...ticktickInput(), requestId: '22222222-2222-4222-8222-222222222222' }); const plan = JSON.parse(again.planJSON);
+        expect(plan.reply.result).toMatchObject({ importedAreaCount: 0, importedChecklistItemCount: 0, importedProjectCount: 0, importedSectionCount: 0, importedTaskCount: 0 });
+        expect(plan.data.tasks.map((item: Task) => item.id)).toEqual(plan.expectedCurrent.tasks.map((item: Task) => item.id));
+        for (const item of plan.data.tasks) if (importedIds.has(item.id)) { expect(item.title.startsWith('Edited ')).toBe(true); if (condition === 'deleted') expect(item.deletedAt).toBe(AT); }
+        expect(env.writes).toEqual([]);
+    });
+    it('keeps standalone TickTick Inbox status when shared policy cannot attach to a tombstoned project, excluding runtime standalone count', async () => {
+        const first = await open(); const seed = JSON.parse((await prepareNativeBackupDocument(first.adapter, ticktickInput())).planJSON).data as AppData;
+        const base = clone(original); base.areas = seed.areas; base.projects = seed.projects.map((item) => ({ ...item, deletedAt: AT }));
+        const env = await open(base); const plan = JSON.parse((await prepareNativeBackupDocument(env.adapter, ticktickInput())).planJSON);
+        const imported = plan.data.tasks.find((item: Task) => item.title === 'Plan release 日本語 🦉'); expect(imported.projectId).toBeUndefined(); expect(imported.status).toBe('inbox');
+        expect(plan.reply.result.importedProjectCount).toBe(0); expect(plan.reply.result.importedTaskCount).toBe(2); expect(plan.reply.result).not.toHaveProperty('importedStandaloneTaskCount');
+    });
+    it('uses shared execution warnings and RN task/project/area/checklist/snapshot/Undo result', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const reply = JSON.parse(prepared.planJSON).reply;
+        const parsed = parseImportSource('ticktick', { bytes: strToU8(ticktickCsv), fileName: ticktickInput().metadata.fileName }); expect(reply.result.warnings).toEqual(parsed.parsedData!.warnings);
+        const model = buildNativeBackupDocumentResult(reply, t); expect(model.title).toBe(t('settings.backupMobile.importComplete')); expect(model.undoLabel).toBe(t('settings.undoImport'));
+        expect(model.message).toContain(t('settings.backupMobile.importedTaskProjectAreaCounts', { taskCount: 2, projectCount: 1, areaCount: 1 })); expect(model.message).toContain(t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: 3 })); expect(model.message).toContain(NAME);
+        for (const diagnostic of createImportDiagnostics(reply.result.warnings, 'warning')) expect(model.message).toContain(formatImportDiagnostic(diagnostic, t));
+    });
+    it('TickTick Undo restores exact pre-import snapshot and tombstones later edits with no second recovery', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        const later = await env.adapter.getData(); later.tasks.push(task('after-ticktick')); later.tasks.find((item) => item.id === 'visible')!.title = 'Later'; await env.adapter.saveData(later);
+        const id = '22222222-2222-4222-8222-222222222222'; const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: id }); expect(undo.recoveryJSON).toBeNull(); await commitNativeBackupDocument(env.adapter, { ...reference, id, sha256: 'b'.repeat(64) }, undo.planJSON, NAME);
+        const restored = await env.adapter.getData(); expect(restored.tasks.find((item) => item.id === 'visible')?.title).toBe('visible'); expect(restored.tasks.find((item) => item.id === 'after-ticktick')?.deletedAt).toBeTruthy(); expect(restored.projects.filter((item) => !item.deletedAt)).toEqual([]);
+    });
+    it.each(['Title,List Name\n', 'TYPE,CONTENT\ntask,Private', 'Private corrupt archive'])('invalid TickTick source returns fixed localized refusal without adapter operations', async (text) => {
+        const env = await open(); const source = ticktickInput(text); const read = vi.spyOn(env.adapter, 'getData'); const preview = inspectNativeBackupDocument(source.text, source.metadata, t, 'ticktick'); expect(preview.valid).toBe(false); expect(preview.errorMessage).not.toContain('Private');
+        await expect(prepareNativeBackupDocument(env.adapter, source)).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it.each(['TR==','TWF=','TQ=','====','VGl0bGUs\n','VGl0bGUs_'])('TickTick rejects noncanonical binary transport %s before adapter operations', async (text) => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...ticktickInput(), text })).rejects.toThrow('INVALID_INPUT:'); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('TickTick enforces16MiB before allocation while preserving shared8MiB text/ZIP limits', async () => {
+        const env = await open(); const read = vi.spyOn(env.adapter, 'getData'); await expect(prepareNativeBackupDocument(env.adapter, { ...ticktickInput(), text: 'A'.repeat(4 * Math.ceil((16 * 1024 * 1024 + 1) / 3)) })).rejects.toThrow('TickTick source exceeds 16 MiB');
+        const exact = 'A'.repeat(4 * Math.ceil(16 * 1024 * 1024 / 3) - 2) + '=='; await expect(prepareNativeBackupDocument(env.adapter, { ...ticktickInput(), text: exact })).rejects.toThrow('INVALID_INPUT: Invalid backup document input'); expect(inspectNativeBackupDocument(exact, ticktickInput().metadata, t, 'ticktick').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded'));
+        const zip = bytesToBase64(zipSync({ 'too-large.csv': new Uint8Array(8 * 1024 * 1024 + 1) })); expect(inspectNativeBackupDocument(zip, ticktickInput().metadata, t, 'ticktick').errorMessage).toBe(t('settings.importDiagnostics.limitExceeded')); expect(read).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    }, 15_000);
+    it('refuses complete over64KiB TickTick execution warnings before returning a plan', async () => {
+        const base = clone(original); const rows: string[][] = [];
+        for (let index = 0; index < 40; index += 1) { const name = `Project${index}-${'A'.repeat(1000)}`; base.projects.push({ ...createMockProject(`existing-${index}`, AT), title: name }); rows.push(['',name,'Imported',...new Array(13).fill(''),String(index),'']); }
+        const env = await open(base); await expect(prepareNativeBackupDocument(env.adapter, ticktickInput(csvFile(ticktickHeaders, rows)))).rejects.toThrow('TickTick import result exceeds 64 KiB'); expect(env.writes).toEqual([]);
+    });
+    it.each(['extra','data','standalone','missing-area','negative','fraction','unsafe','warning','overflow'] as const)('refuses malformed TickTick result %s at every boundary before writes', async (fault) => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const plan = JSON.parse(prepared.planJSON);
+        if (fault === 'extra') plan.reply.added = 1; if (fault === 'data') plan.reply.result.data = plan.data; if (fault === 'standalone') plan.reply.result.importedStandaloneTaskCount = 0; if (fault === 'missing-area') delete plan.reply.result.importedAreaCount;
+        if (fault === 'negative') plan.reply.result.importedTaskCount = -1; if (fault === 'fraction') plan.reply.result.importedSectionCount = 0.5; if (fault === 'unsafe') plan.reply.result.importedTaskCount = Number.MAX_SAFE_INTEGER + 1;
+        if (fault === 'warning') plan.reply.result.warnings = [1]; if (fault === 'overflow') plan.reply.result.warnings = ['私'.repeat(23_000)]; const save = vi.spyOn(env.adapter, 'saveDocumentWithReceipt');
+        expect(() => buildNativeBackupDocumentResult(plan.reply, t)).toThrow('INVALID_INPUT:'); await expect(commitNativeBackupDocument(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); await expect(readNativeBackupDocumentOutcome(env.adapter, reference, JSON.stringify(plan), NAME)).rejects.toThrow('INVALID_INPUT:'); expect(save).not.toHaveBeenCalled(); expect(env.writes).toEqual([]);
+    });
+    it('refuses stale TickTick frozen document after intervening durable change without writes', async () => {
+        const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, ticktickInput()); const later = await env.adapter.getData(); later.tasks[0].title = 'Changed after TickTick'; later.tasks[0].rev! += 1; await env.adapter.saveData(later); const before = await env.state(); env.writes.length = 0;
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:'); expect(env.writes).toEqual([]); expect(await env.state()).toEqual(before);
+    });
+});

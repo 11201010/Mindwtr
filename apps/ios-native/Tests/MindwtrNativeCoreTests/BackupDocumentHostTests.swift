@@ -555,4 +555,124 @@ final class BackupDocumentHostTests: XCTestCase {
         XCTAssertEqual(try rows("SELECT title FROM tasks WHERE title = ?", ["Todoist ZIP 日本語"]).count, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
+    func testTickTickUsesSharedPolicyOwnedCSVAndColdSnapshotUndo() async throws {
+        let core = host(); _ = try await core.start()
+        let local = try await capture(core, "Existing before TickTick")
+        let url = root.appendingPathComponent("TickTick.csv")
+        let csv = "Folder Name,List Name,Title,Content,Due Date,Is All Day,Repeat,Tags,Status,taskId,parentId\nWork,Launch,Task207 plan release,Write launch brief,2035-04-02,true,FREQ=WEEKLY;BYDAY=MO,#work,0,100,\nWork,Launch,Task207 follow up,Check dependencies,,,,#ops,1,101,100\nWork,Launch,Task207 review,,,,,,0,102,\n"
+        try csv.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .ticktick)
+        XCTAssertEqual(preview.action, .ticktick)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        let during = try await capture(core, "After TickTick preview")
+        try "Changed provider bytes".write(to: url, atomically: true, encoding: .utf8)
+        let reply = try object(await core.mergeBackupImport(preview.id))
+        XCTAssertEqual(reply["operation"] as? String, "ticktick")
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(Set(result.keys), ["importedAreaCount", "importedTaskCount", "importedProjectCount", "importedSectionCount", "importedChecklistItemCount", "warnings"])
+        XCTAssertEqual(result["importedTaskCount"] as? Int, 2)
+        XCTAssertEqual(result["importedProjectCount"] as? Int, 1)
+        XCTAssertEqual(result["importedAreaCount"] as? Int, 1)
+        XCTAssertEqual(result["importedSectionCount"] as? Int, 0)
+        XCTAssertEqual(result["importedChecklistItemCount"] as? Int, 1)
+        XCTAssertFalse((result["warnings"] as? [String] ?? []).isEmpty)
+        let task = try XCTUnwrap(rows("SELECT * FROM tasks WHERE title = ?", ["Task207 plan release"]).first)
+        XCTAssertEqual(task["status"] as? String, "next")
+        XCTAssertEqual(task["dueDate"] as? String, "2035-04-02")
+        XCTAssertTrue((task["description"] as? String ?? "").contains("Check dependencies"))
+        let recurrence = try XCTUnwrap(NativeJSON.jsonObject(with: Data((task["recurrence"] as? String ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(recurrence["rule"] as? String, "weekly")
+        let checklist = try XCTUnwrap(NativeJSON.jsonObject(with: Data((task["checklist"] as? String ?? "").utf8)) as? [[String: Any]])
+        XCTAssertEqual(checklist.count, 1)
+        XCTAssertEqual(checklist.first?["isCompleted"] as? Bool, true)
+        let model = try object(await core.backupDocumentResultModel(json(reply)))
+        XCTAssertFalse((model["undoLabel"] as? String ?? "").isEmpty)
+        try csv.write(to: url, atomically: true, encoding: .utf8)
+        let repeatedPreview = try await core.prepareBackupImport(url, action: .ticktick)
+        let repeated = try object(await core.mergeBackupImport(repeatedPreview.id))
+        XCTAssertEqual((repeated["result"] as? [String: Any])?["importedTaskCount"] as? Int, 0)
+        XCTAssertEqual(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").count, 4)
+        let roster = try await snapshots(core)
+        let original = try XCTUnwrap(roster.first { $0["name"] as? String == reply["snapshotName"] as? String })
+        await core.close()
+        let reopened = host(); _ = try await reopened.start()
+        _ = try await reopened.restoreBackupSnapshot(json(original))
+        await reopened.close()
+        let cold = host(); _ = try await cold.start()
+        XCTAssertEqual(Set(try rows("SELECT id FROM tasks WHERE deletedAt IS NULL").compactMap { $0["id"] as? String }), [local, during])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTickTickLostAcknowledgmentColdReplayKeepsLaterEdits() async throws {
+        let faults = HostIOFaults(); let core = host(faults); _ = try await core.start()
+        let url = root.appendingPathComponent("Tasks.csv")
+        try "List Name,Title\nLaunch,TickTick once\n".write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .ticktick)
+        var writes = 0
+        faults.journalWrite = { writes += 1; if writes == 2 { throw HostFailure("Injected TickTick lost reply") } }
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        await core.close()
+        let id = try XCTUnwrap(rows("SELECT id FROM tasks WHERE deletedAt IS NULL").first?["id"] as? String)
+        _ = try rows("UPDATE tasks SET title = ?, rev = rev + 1, updatedAt = ? WHERE id = ?", ["Later TickTick edit", "2037-01-01T00:00:00.000Z", id])
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let reopened = host(); _ = try await reopened.start()
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTickTickZIPPreviewCancelAndImport() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "TickTick ZIP baseline")
+        let url = root.appendingPathComponent("ticktick.zip")
+        try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAIAOGNRF2TwL8wLgAAAC8AAAALAAAAV2Vla2VuZC5jc3bzySwuUfBLzE3VCcksyUnlCk9NzU7NSwHykrNBWCHKM0Dh2fSlz+asebFqHhcAUEsBAhQDFAAAAAgA4Y1EXZPAvzAuAAAALwAAAAsAAAAAAAAAAAAAAIABAAAAAFdlZWtlbmQuY3N2UEsFBgAAAAABAAEAOQAAAFcAAAAAAA==")).write(to: url)
+        let before = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let preview = try await core.prepareBackupImport(url, action: .ticktick)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        await core.discardBackupImport(preview.id)
+        await failure { _ = try await core.mergeBackupImport(preview.id) }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), before)
+        let initial = try await snapshots(core); XCTAssertTrue(initial.isEmpty)
+        let accepted = try await core.prepareBackupImport(url, action: .ticktick)
+        let reply = try object(await core.mergeBackupImport(accepted.id))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["importedTaskCount"] as? Int, 1)
+        XCTAssertEqual(try rows("SELECT title FROM tasks WHERE title = ?", ["TickTick ZIP 日本語"]).count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
+    func testTickTickOversizedWarningsKeepLocalizedReasonBeforeJournalOrSnapshot() async throws {
+        let core = host(); _ = try await core.start()
+        _ = try await capture(core, "TickTick capacity baseline")
+        let exported = try await core.prepareDataBackup()
+        var document = try object(String(contentsOf: exported.url, encoding: .utf8))
+        await core.discardDataBackup(exported.id)
+        let names = (0..<40).map { "Project\($0)-" + String(repeating: "A", count: 1000) }
+        document["projects"] = names.map { ["id": UUID().uuidString.lowercased(), "title": $0,
+            "status": "active", "color": "#94a3b8", "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z", "rev": 1] as [String: Any] }
+        let baselineURL = root.appendingPathComponent("baseline.json")
+        try json(document).write(to: baselineURL, atomically: true, encoding: .utf8)
+        let baseline = try await core.prepareBackupImport(baselineURL)
+        _ = try await core.mergeBackupImport(baseline.id)
+        let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
+        let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
+        let beforeSnapshots = try await core.listBackupSnapshots()
+        let url = root.appendingPathComponent("ticktick-large-result.csv")
+        let csv = "List Name,Title,taskId\n" + names.enumerated().map { "\($0.element),Imported,\($0.offset)" }.joined(separator: "\n")
+        try csv.write(to: url, atomically: true, encoding: .utf8)
+        let preview = try await core.prepareBackupImport(url, action: .ticktick)
+        XCTAssertEqual(try object(preview.json)["valid"] as? Bool, true)
+        do {
+            _ = try await core.mergeBackupImport(preview.id)
+            XCTFail("Expected bounded TickTick result refusal")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "INVALID_INPUT: TickTick import result exceeds 64 KiB")
+        }
+        XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
+        XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
+        let afterSnapshots = try await core.listBackupSnapshots()
+        XCTAssertEqual(afterSnapshots, beforeSnapshots)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+    }
+
 }

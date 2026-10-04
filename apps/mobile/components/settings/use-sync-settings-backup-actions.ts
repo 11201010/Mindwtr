@@ -194,7 +194,6 @@ export function useSyncSettingsBackupActions({
             preview.recurringCount > 0
                 ? tr('settings.backupMobile.recurringTasksWillKeepSupportedRepeatRules', { taskCount: preview.recurringCount })
                 : null,
-            tr('settings.backupMobile.importedTasksStayInInboxSoYouCanProcessThem'),
             ...(projectLines.length > 0 ? ['', ...projectLines] : []),
             ...(preview.warnings.length > 0 ? ['', ...formatImportMessages(preview.warnings)] : []),
         ].filter(Boolean);
