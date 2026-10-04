@@ -51,6 +51,8 @@ export type SyncEncryptionCardHost = {
     decline(): Promise<void>;
     /** "Abandon setup": this device drops an unfinished change, locally (sync-encryption-service.ts). */
     abandon(): Promise<unknown>;
+    /** "Check this location again" for a partly encrypted location (sync-encryption-service.ts recheckPartlyEncryptedLocation). */
+    recheck(): Promise<unknown>;
     isCleanupDeferredError(error: unknown): error is Error & { cleanupKind?: string; outcome?: unknown };
     randomBytes(length: number): Uint8Array;
     /** Supplies the attachment worklist; phase 2 leaves attachments plaintext without it. */
@@ -63,6 +65,9 @@ export type SyncEncryptionCardState = {
     stateUnavailable: boolean;
     /** A change (enable, change, disable) is unfinished on this device: "Abandon setup" is offered. */
     incompleteTransition: boolean;
+    /** This device holds the location as partly encrypted (an encryption change cut off there): it syncs nothing there
+     *  until "Check this location again" finds it whole. */
+    partlyEncrypted: boolean;
     flow: SyncEncryptionCardFlow;
     busy: boolean;
     progress: SyncEncryptionTransitionProgress | null;
@@ -82,6 +87,7 @@ const INITIAL_STATE: SyncEncryptionCardState = {
     state: null,
     stateUnavailable: false,
     incompleteTransition: false,
+    partlyEncrypted: false,
     flow: 'none',
     busy: false,
     progress: null,
@@ -150,6 +156,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         state: SyncEncryptionState | null;
         unavailable: boolean;
         incomplete: boolean;
+        partly: boolean;
     }> => {
         try {
             const status = await host.getStatus();
@@ -157,10 +164,11 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
                 state: status.state,
                 unavailable: false,
                 incomplete: Boolean(status.incompleteTransition),
+                partly: Boolean(status.partlyEncrypted),
             };
         } catch (failure) {
             host.logSettingsError(failure);
-            return { state: null, unavailable: true, incomplete: false };
+            return { state: null, unavailable: true, incomplete: false, partly: false };
         }
     };
 
@@ -176,7 +184,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         let cancelled = false;
         const read = readState().then((next) => {
             if (!cancelled) {
-                set({ state: next.state, stateUnavailable: next.unavailable, incompleteTransition: next.incomplete });
+                set({ state: next.state, stateUnavailable: next.unavailable, incompleteTransition: next.incomplete, partlyEncrypted: next.partly });
                 if (next.incomplete) set({ error: 'transition-incomplete' });
             }
         });
@@ -248,7 +256,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         }
         // Transitions are resumable, so a half-finished run still moved the state.
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly });
         if (nextState.incomplete) set({ error: 'transition-incomplete' });
         set({ pendingFirstSync: await host.isBackendPending().catch(() => false) });
         set({ progress: null, busy: false });
@@ -320,7 +328,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             }
         }
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly, busy: false });
         if (accepted) {
             closeFlow();
             if (cleanupDeferred) set({ warning: cleanupDeferred });
@@ -330,6 +338,9 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
     /** "Abandon setup": the unfinished change is dropped on this device only; the card reads off again. */
     const submitAbandon = () => run(async () => { await host.abandon(); }, 'generic');
 
+    /** "Check this location again": a whole location clears the mark (the card reads it again either way). */
+    const recheckLocation = () => run(async () => { await host.recheck(); }, 'generic');
+
     /** "Not now": keeps the persisted no-key state; sync stays paused. */
     const decline = () => {
         closeFlow();
@@ -337,14 +348,14 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             .catch((error) => host.logSettingsError(error))
             .then(async () => {
                 const nextState = await readState();
-                set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete });
+                set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly });
             });
     };
 
     const retryState = async () => {
         set({ busy: true });
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly, busy: false });
     };
 
     return {
@@ -366,6 +377,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         submitDisable,
         submitUnlock,
         submitAbandon,
+        recheckLocation,
         decline,
         retryState,
     };

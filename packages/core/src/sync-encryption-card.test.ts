@@ -7,8 +7,11 @@ function setup(overrides: Partial<SyncEncryptionCardHost> = {}) {
     const calls: unknown[][] = [];
     let state: 'off' | 'enabled' | 'remote-encrypted-no-key' = 'off';
     let incomplete: 'enable' | undefined;
+    let partly = false;
+    let found: 'plaintext' | 'encrypted' | 'mixed' = 'mixed';
     const host: SyncEncryptionCardHost = {
-        getStatus: async () => ({ state, ...(incomplete ? { incompleteTransition: incomplete } : {}) }),
+        getStatus: async () => ({ state, ...(incomplete ? { incompleteTransition: incomplete } : {}), ...(partly ? { partlyEncrypted: true } : {}) }),
+        recheck: async () => { calls.push(['recheck']); if (found !== 'mixed') partly = false; return found; },
         isBackendPending: async () => false,
         enable: async (passphrase) => { calls.push(['enable', passphrase]); state = 'enabled'; },
         change: async () => undefined,
@@ -26,6 +29,7 @@ function setup(overrides: Partial<SyncEncryptionCardHost> = {}) {
         card: createSyncEncryptionCard(host), calls,
         setState: (next: typeof state) => { state = next; },
         setIncomplete: (next: typeof incomplete) => { incomplete = next; },
+        setPartly: (next: boolean, nextFound: typeof found = 'mixed') => { partly = next; found = nextFound; },
     };
 }
 
@@ -96,6 +100,19 @@ describe('sync encryption card', () => {
         await card.submitAbandon();
         expect(calls).toEqual([['abandon']]);
         expect(card.getState()).toMatchObject({ state: 'off', flow: 'none', incompleteTransition: false, error: null, busy: false });
+    });
+
+    it('holds a partly encrypted location until "Check this location again" finds it whole', async () => {
+        const { card, calls, setPartly } = setup();
+        setPartly(true, 'mixed');
+        await card.refresh().done;
+        expect(card.getState().partlyEncrypted).toBe(true);
+        await card.recheckLocation();
+        expect(calls).toEqual([['recheck']]);
+        expect(card.getState()).toMatchObject({ partlyEncrypted: true, busy: false });
+        setPartly(true, 'plaintext');
+        await card.recheckLocation();
+        expect(card.getState()).toMatchObject({ partlyEncrypted: false, busy: false, state: 'off' });
     });
 
     it('names a server without strong ETags as incompatible when it is refused before anything changed', async () => {

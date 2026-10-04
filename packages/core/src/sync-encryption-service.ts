@@ -56,7 +56,7 @@ import {
     type SyncEncryptionTransitionLogKind,
     type SyncEncryptionTransitionOutcome,
 } from './sync-encryption-diagnostics';
-import type { SyncEncryptionStateStore } from './sync-encryption-local-state';
+import { readSyncLocationScope, type SyncEncryptionStateStore } from './sync-encryption-local-state';
 import { sanitizeAttachmentCloudKeyForSyncMerge } from './sync-normalization';
 import {
     SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS,
@@ -270,6 +270,9 @@ export type SyncEncryptionServiceDeps<Lease> = {
     /** Absent on a host without File Sync; the backend then reports unsupported. */
     fileSync?: SyncEncryptionFileSyncPort<Lease>;
 };
+
+/** What a location holds: no ciphertext, only ciphertext, or both (an encryption change cut off there). */
+export type SyncLocationCiphertext = 'plaintext' | 'encrypted' | 'mixed';
 
 type BackendTarget<Lease> =
     | { kind: 'remote'; port: SyncEncryptionRemotePort; fileSyncLease?: Lease }
@@ -789,6 +792,15 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
         const urlFor = (name: string): string => `${baseSyncUrl}/${assertManagedRemoteArtifactName(name)}`;
         const read = (name: string): Promise<SyncEncryptionRemoteRead> =>
             webdavGetFileVersioned(urlFor(name), requestOptions);
+        // The first bytes only (a ranged GET); a server that ignores the range sends the whole file, read whole within the
+        // download limit.
+        const readHead = async (name: string): Promise<Uint8Array | null> => {
+            const head = await webdavGetFileVersioned(urlFor(name), {
+                ...requestOptions, headers: { Range: 'bytes=0-63' }, maxBytes: 1024 * 1024, treatOversizeAsAbsent: true,
+            });
+            if (head.bytes) return head.bytes;
+            return (await read(name)).bytes;
+        };
         const listAttachmentKeys = () => listWebdavAttachmentKeys(baseSyncUrl, requestOptions);
         let referencedAttachmentKeys: string[] = [];
         return {
@@ -813,6 +825,7 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
                 return inventory;
             },
             read,
+            readHead,
             write: async (name, bytes, expectedVersion) => {
                 await webdavPutFileVersioned(
                     urlFor(name), bytes, 'application/octet-stream', expectedVersion, requestOptions,
@@ -857,6 +870,38 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
                 ));
             },
         };
+    };
+
+    /**
+     * Whether the location holds ciphertext beside plaintext: 'mixed' when an encryption change was cut off there. Not
+     * serialized and takes no fence, so a cycle may ask it (WebDAV and Dropbox; File Sync takes the folder's lock, which a
+     * running cycle already holds). `sample` (the default) reads the first and the last attachment in name order: a
+     * transition seals or opens attachments one at a time in that order, so one it cut off leaves the first sealed and the
+     * last not (enable) or the other way round (disable). `full` reads every artifact.
+     */
+    const probeSyncLocationCiphertext = async (options: { full?: boolean } = {}): Promise<SyncLocationCiphertext> => {
+        const target = await resolveTransitionTarget(null);
+        if (target.kind !== 'remote') return 'plaintext';
+        return runWithFileTransitionLease(target, async (port) => {
+            const entries = await port.list();
+            const attachments = entries.filter((entry) => entry.kind === 'attachment').map((entry) => entry.name).sort();
+            let encrypted = false;
+            let plaintext = false;
+            const note = (bytes: Uint8Array | null) => {
+                if (!bytes) return;
+                if (inspectSyncArtifact(bytes).kind === 'plaintext') plaintext = true;
+                else encrypted = true;
+            };
+            if (options.full) {
+                for (const entry of entries) if (entry.kind === 'document') note((await port.read(entry.name)).bytes);
+            }
+            const picked = options.full ? attachments : Array.from(new Set([attachments[0], attachments[attachments.length - 1]]))
+                .filter((name): name is string => Boolean(name));
+            for (const name of picked) note(port.readHead ? await port.readHead(name) : (await port.read(name)).bytes);
+            // A sample reads attachments only; the cycle asking already read the document as plaintext.
+            if (!options.full) return encrypted ? 'mixed' : 'plaintext';
+            return encrypted && plaintext ? 'mixed' : encrypted ? 'encrypted' : 'plaintext';
+        });
     };
 
     const resolveTransitionTarget = async (appData: AppData | null): Promise<BackendTarget<Lease>> => {
@@ -1132,7 +1177,9 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
         /** "Abandon setup" (sync-encryption.ts runAbandonSyncEncryptionTransition): on the sync queue, local only. */
         abandonSyncEncryptionTransition: (): Promise<SyncEncryptionTransitionKind | null> => runSerializedSyncDocumentOperation(async () => {
             await state.loadSyncEncryptionLocalState();
-            const abandoned = await runAbandonSyncEncryptionTransition(state.syncEncryptionKeyCache, state.syncEncryptionLocalState);
+            const abandoned = await runAbandonSyncEncryptionTransition(
+                state.syncEncryptionKeyCache, state.syncEncryptionLocalState, await readSyncLocationScope(storage),
+            );
             await state.flushSyncEncryptionLocalState();
             if (abandoned) {
                 const backend = (await storage.getItem(SYNC_BACKEND_KEY).catch(() => null))?.trim() || 'off';
@@ -1143,6 +1190,27 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
                 }, { level: 'warn', force: true });
             }
             return abandoned;
+        }),
+        probeSyncLocationCiphertext,
+        /**
+         * "Check this location again" for a location this device holds as partly encrypted: every artifact, whole
+         * (documents) or by its first bytes (attachments). Whole again (all plaintext, or all encrypted) clears the mark and
+         * sync resumes (an encrypted location is then found and locked as ever); still mixed keeps it. On the sync queue.
+         */
+        recheckPartlyEncryptedLocation: (): Promise<SyncLocationCiphertext> => runSerializedSyncDocumentOperation(async () => {
+            const current = await state.loadSyncEncryptionLocalState();
+            const found = await probeSyncLocationCiphertext({ full: true });
+            if (found !== 'mixed' && current?.partlyEncryptedScope) {
+                await state.syncEncryptionLocalState.write(null);
+                await state.flushSyncEncryptionLocalState();
+            }
+            const backend = (await storage.getItem(SYNC_BACKEND_KEY).catch(() => null))?.trim() || 'off';
+            state.logSyncEncryptionEvent(SYNC_ENCRYPTION_LOG_EVENTS.transition, {
+                ...buildSyncEncryptionTransitionExtra({ kind: 'recheck', backend, phase: 'end', outcome: 'ok' }),
+                found,
+                releaseCheck: 'v1.3.4/encryption-abandon-setup',
+            }, { level: found === 'mixed' ? 'warn' : 'info', force: true });
+            return found;
         }),
         __testUtils: {
             buildTransitionEntries,

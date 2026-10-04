@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMobileSyncService, type MobileSyncServiceHost } from './mobile-sync-service';
 import { classifySyncFailure } from './mobile-sync-utils';
 import { performSyncCycle } from './sync';
-import { createSyncEncryptionStateStore } from './sync-encryption-local-state';
+import { createSyncEncryptionStateStore, readSyncLocationScope } from './sync-encryption-local-state';
 import { createWebdavCapabilityProofStore } from './webdav-capability-proof';
-import { SYNC_BACKEND_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY } from './sync-storage-keys';
+import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY } from './sync-storage-keys';
 import type { AppData } from './types';
 
 const emptyData = (): AppData => ({
@@ -368,6 +368,46 @@ describe('mobile sync service behind fake ports', () => {
     expect(fake.logs.some((line) => line.message === 'Sync aborted by app lifecycle transition')).toBe(true);
     await service.waitForMobileSyncIdle();
     expect(performSyncCycle).toHaveBeenCalledTimes(2);
+  });
+
+  it('never syncs a location this device holds as partly encrypted, manual or automatic', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: 'secret' } });
+    const scope = await readSyncLocationScope({ getItem: async (key: string) => fake.values.get(key) ?? null });
+    fake.values.set(SYNC_ENCRYPTION_STATE_KEY, JSON.stringify({ state: 'off', partlyEncryptedScope: scope }));
+    const service = createMobileSyncService(fake.host);
+
+    const manual = await service.performMobileSync(undefined, { manual: true });
+    expect(manual.success).toBe(false);
+    expect(String(manual.error)).toContain('partly encrypted');
+    expect(classifySyncFailure(manual.error)).toBe('encryption');
+    expect(fake.remote.data).toBeNull();
+    expect(vi.mocked(fake.host.core!.webdavPutSyncDocument!)).not.toHaveBeenCalled();
+
+    // Another location syncs as ever.
+    fake.values.set(WEBDAV_URL_KEY, 'https://elsewhere.example.com/Mindwtr');
+    service.clearMobileSyncConfigCache();
+    const elsewhere = await service.performMobileSync(undefined, { manual: true });
+    expect(elsewhere, String(elsewhere.error)).toMatchObject({ success: true });
+  });
+
+  it('refuses a plaintext attachment pass into a location whose attachments hold ciphertext, and remembers the location', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES, secrets: { [WEBDAV_PASSWORD_KEY]: 'secret' } });
+    const attachmentPasses = vi.fn(async () => false as const);
+    fake.host.attachments.hasPendingWork = async () => true;
+    fake.host.attachments.hasCompletedPresenceReconciliation = async () => true;
+    fake.host.attachments.syncWebdav = attachmentPasses;
+    const probe = vi.fn(async () => 'mixed' as const);
+    fake.host.encryption = { ...fake.host.encryption, probeLocationCiphertext: probe };
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, { manual: true });
+
+    expect(probe).toHaveBeenCalled();
+    expect(attachmentPasses).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('partly encrypted');
+    const scope = await readSyncLocationScope({ getItem: async (key: string) => fake.values.get(key) ?? null });
+    expect(JSON.parse(fake.values.get(SYNC_ENCRYPTION_STATE_KEY)!)).toEqual({ state: 'off', partlyEncryptedScope: scope });
   });
 
   it('does nothing in sandbox mode', async () => {

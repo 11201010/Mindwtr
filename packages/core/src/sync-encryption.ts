@@ -44,6 +44,9 @@ export type SyncEncryptionStatus = {
     state: SyncEncryptionState;
     kdfParams?: SyncCryptoKdfParams;
     incompleteTransition?: SyncEncryptionTransitionKind;
+    /** This device left a change unfinished at a location ("Abandon setup") or met ciphertext there with no key: sync stays
+     *  paused at that location until it is shown whole again. */
+    partlyEncrypted?: boolean;
 };
 
 /** Device-local, never-synced persisted shape. Salt/params are not secret (they live in
@@ -62,6 +65,10 @@ export type SyncEncryptionLocalState = {
      * `isSyncEncryptionStateBlocked` for why absent means "re-check", not "blocked". */
     discoveredScope?: string;
     incompleteTransition?: SyncEncryptionTransitionKind;
+    /** A location holding MWENC1 artifacts beside plaintext ones (an encryption change cut off), with `state: 'off'`: this
+     *  device must not sync there, or its plaintext attachments land beside ciphertext. Bound to the location like
+     *  `discoveredScope`; cleared once a check finds the location whole (all plaintext or all encrypted). */
+    partlyEncryptedScope?: string;
 };
 
 /** Identity of the sync location a cycle runs against (#1138): the backend plus whatever
@@ -134,6 +141,7 @@ export const isSyncEncryptionStateBlocked = (
 ): boolean => {
     if (!state) return false;
     if (state.incompleteTransition) return true;
+    if (state.partlyEncryptedScope && (activeScope === null || state.partlyEncryptedScope === activeScope)) return true;
     if (state.state !== 'remote-encrypted-no-key' && state.state !== 'remote-plaintext') return false;
     if (!state.discoveredScope) return false;
     if (activeScope === null) return true;
@@ -145,6 +153,22 @@ export type SyncEncryptionLocalStatePort = {
     /** `null` clears back to the implicit 'off' default. */
     write(state: SyncEncryptionLocalState | null): void | Promise<void>;
 };
+
+export const SYNC_ENCRYPTION_PARTLY_ENCRYPTED = 'SYNC_ENCRYPTION_PARTLY_ENCRYPTED';
+
+/** The sync location holds encrypted files beside plaintext ones (an encryption change was cut off) while this device has
+ *  no key: it never writes there, so plaintext never lands beside ciphertext. */
+export class SyncEncryptionPartlyEncryptedError extends Error {
+    constructor() {
+        super(`${SYNC_ENCRYPTION_PARTLY_ENCRYPTED}: This sync location is partly encrypted. Sync stays paused here so plain files never land beside encrypted ones. Finish or undo the encryption change from a device that can reach it.`);
+        this.name = 'SyncEncryptionPartlyEncryptedError';
+    }
+}
+
+export const isSyncEncryptionPartlyEncryptedError = (error: unknown): boolean => (
+    error instanceof SyncEncryptionPartlyEncryptedError
+    || (error instanceof Error ? error.message : String(error ?? '')).includes(SYNC_ENCRYPTION_PARTLY_ENCRYPTED)
+);
 
 export const SYNC_ENCRYPTION_TRANSITION_INCOMPLETE = 'SYNC_ENCRYPTION_TRANSITION_INCOMPLETE';
 
@@ -272,6 +296,9 @@ export type SyncEncryptionRemotePort = {
     /** Only ever called on a plaintext original after its `.enc` counterpart has been
      *  written AND read back and verified — never on speculation. */
     remove(name: string, expectedVersion: string): Promise<void>;
+    /** The artifact's first bytes (at least the MWENC1 magic), or null when absent: enough to tell ciphertext from
+     *  plaintext without downloading a large attachment. A port without it is read whole. */
+    readHead?(name: string): Promise<Uint8Array | null>;
 };
 
 export type SyncEncryptionTransitionProgress = { phase: 'attachments' | 'documents'; completed: number; total: number };
@@ -700,16 +727,18 @@ export async function runDisableSyncEncryptionLocalOnly(
 /**
  * "Abandon setup": this device drops an unfinished change (its server is gone, or the user gave up on it). It goes back to
  * off and forgets the key, without contacting the sync location, which may stay partly encrypted: a device that can reach it
- * has to finish or undo the change there. A device that later syncs an encrypted location here finds it encrypted and asks
- * for the passphrase, so it never writes plaintext beside ciphertext. Returns the change it abandoned, or null for none.
+ * has to finish or undo the change there. The location ([activeScope]) is remembered as partly encrypted, so this device
+ * never syncs there (its plaintext would land beside ciphertext) until a check finds it whole again. Returns the change it
+ * abandoned, or null for none.
  */
 export async function runAbandonSyncEncryptionTransition(
     keyCache: SyncEncryptionKeyCachePort,
     localState: SyncEncryptionLocalStatePort,
+    activeScope: string | null,
 ): Promise<SyncEncryptionTransitionKind | null> {
     const abandoned = localState.read()?.incompleteTransition ?? null;
     if (!abandoned) return null;
-    await localState.write(null);
+    await localState.write(activeScope ? { state: 'off', partlyEncryptedScope: activeScope } : null);
     await keyCache.clearKey();
     return abandoned;
 }

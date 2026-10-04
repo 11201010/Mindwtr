@@ -111,7 +111,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Tiếng Việt',
         nonLatin: false,
-        translatedKeyFloor: 2294,
+        translatedKeyFloor: 2299,
     },
     zh: {
         loadSync: () => require('./locales/zh-Hans') as typeof import('./locales/zh-Hans'),
@@ -175,7 +175,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'हिन्दी',
         nonLatin: true,
-        translatedKeyFloor: 1436,
+        translatedKeyFloor: 1441,
     },
     ar: {
         loadSync: () => require('./locales/ar') as typeof import('./locales/ar'),
@@ -185,7 +185,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'العربية',
         nonLatin: true,
-        translatedKeyFloor: 1463,
+        translatedKeyFloor: 1468,
     },
     de: {
         loadSync: () => require('./locales/de') as typeof import('./locales/de'),
@@ -205,7 +205,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Русский',
         nonLatin: true,
-        translatedKeyFloor: 1436,
+        translatedKeyFloor: 1441,
     },
     ja: {
         loadSync: () => require('./locales/ja') as typeof import('./locales/ja'),
@@ -227,7 +227,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Français',
         nonLatin: false,
-        translatedKeyFloor: 1967,
+        translatedKeyFloor: 1972,
     },
     pt: {
         loadSync: () => require('./locales/pt') as typeof import('./locales/pt'),
@@ -240,7 +240,7 @@ export const LOCALES = {
         // which variant they are choosing. Same reason zh/zh-Hant carry a script tag.
         native: 'Português (Brasil)',
         nonLatin: false,
-        translatedKeyFloor: 1480,
+        translatedKeyFloor: 1485,
     },
     pl: {
         loadSync: () => require('./locales/pl') as typeof import('./locales/pl'),
@@ -250,7 +250,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Polski',
         nonLatin: false,
-        translatedKeyFloor: 1459,
+        translatedKeyFloor: 1464,
     },
     cs: {
         loadSync: () => require('./locales/cs') as typeof import('./locales/cs'),
@@ -260,7 +260,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Čeština',
         nonLatin: false,
-        translatedKeyFloor: 2239,
+        translatedKeyFloor: 2244,
     },
     ko: {
         loadSync: () => require('./locales/ko') as typeof import('./locales/ko'),
@@ -282,7 +282,7 @@ export const LOCALES = {
         // Re-pin to the 2482 keys currently present after English grew to 2735 keys;
         // the old 2444 floor fell below the 90% brand-name check ceiling.
         // Three translated UpNote link recovery strings raise the commitment with English.
-        translatedKeyFloor: 2488,
+        translatedKeyFloor: 2490,
     },
     it: {
         loadSync: () => require('./locales/it') as typeof import('./locales/it'),
@@ -292,7 +292,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Italiano',
         nonLatin: false,
-        translatedKeyFloor: 1576,
+        translatedKeyFloor: 1581,
     },
     tr: {
         loadSync: () => require('./locales/tr') as typeof import('./locales/tr'),
@@ -302,7 +302,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Türkçe',
         nonLatin: false,
-        translatedKeyFloor: 1482,
+        translatedKeyFloor: 1487,
     },
     nl: {
         loadSync: () => require('./locales/nl') as typeof import('./locales/nl'),
@@ -312,7 +312,7 @@ export const LOCALES = {
         mode: 'overrides',
         native: 'Nederlands',
         nonLatin: false,
-        translatedKeyFloor: 575,
+        translatedKeyFloor: 580,
     },
     fa: {
         loadSync: () => require('./locales/fa') as typeof import('./locales/fa'),

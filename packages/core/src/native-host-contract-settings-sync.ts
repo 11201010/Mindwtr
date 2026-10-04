@@ -161,7 +161,7 @@ export type NativeSyncSettingsHost = {
         /** True while no durable sync backend exists (transitions then run local-only). */
         isBackendPending(): Promise<boolean>;
         /** The transitions (core's sync encryption service on the host's crypto); absent until the host has them. */
-        transitions?: Pick<SyncEncryptionCardHost, 'enable' | 'change' | 'disable' | 'provide' | 'decline' | 'abandon' | 'randomBytes'>;
+        transitions?: Pick<SyncEncryptionCardHost, 'enable' | 'change' | 'disable' | 'provide' | 'decline' | 'abandon' | 'recheck' | 'randomBytes'>;
     };
     /** The app log: an info line (no secrets are ever passed) and an error. */
     log: { info(message: string, context: { scope: string; extra: Record<string, string> }): unknown; error(error: unknown): void };
@@ -284,7 +284,8 @@ export type NativeSyncEncryptionAction =
     | { type: 'generate' }
     | { type: 'reveal' }
     | { type: 'decline' }
-    | { type: 'retry' };
+    | { type: 'retry' }
+    | { type: 'recheck' };
 
 /** The encryption card's rows in screen order; a text's tone is its color. */
 export type NativeSyncEncryptionRow =
@@ -524,6 +525,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             provide: transitions ? (passphrase) => transitions.provide(passphrase) : missing,
             decline: transitions ? () => transitions.decline() : missing,
             abandon: transitions ? () => transitions.abandon() : missing,
+            recheck: transitions ? () => transitions.recheck() : missing,
             isCleanupDeferredError: (error): error is Error & { cleanupKind?: string; outcome?: unknown } => isSyncEncryptionCleanupDeferredError(error),
             randomBytes: (length) => {
                 if (!transitions) throw new Error('Sync encryption is not available on this host yet');
@@ -856,7 +858,12 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             act(t('settings.syncEncryptionRetry'), { type: 'retry' });
             return { title: t('settings.syncEncryption'), guide: null, rows };
         }
-        if (card.state === 'off') {
+        if (card.state === 'off' && card.partlyEncrypted) {
+            // Partly encrypted here: nothing syncs or turns on until the location is whole again.
+            text(t('settings.syncEncryptionDesc'));
+            text(t('settings.syncEncryptionPartlyEncrypted'), 'danger');
+            act(t('settings.syncEncryptionRecheck'), { type: 'recheck' });
+        } else if (card.state === 'off') {
             text(t('settings.syncEncryptionDesc'));
             if (card.flow === 'none') {
                 act(t('settings.syncEncryptionEnable'), { type: 'open', flow: 'enable' });
@@ -1334,7 +1341,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             const valid = target && (
                 (type === 'open' || type === 'submit') ? Object.keys(target).length === 2 && FLOWS.has(target.flow as string)
                     : type === 'typed' ? Object.keys(target).length === 3 && PASSPHRASE_FIELDS.has(target.field as string) && isText(target.value, 1000)
-                        : ['cancel', 'generate', 'reveal', 'decline', 'retry'].includes(type as string) && Object.keys(target).length === 1
+                        : ['cancel', 'generate', 'reveal', 'decline', 'retry', 'recheck'].includes(type as string) && Object.keys(target).length === 1
             );
             if (type === 'typed' && typeof target!.value === 'string' && target!.value.length > SYNC_ENCRYPTION_PASSPHRASE_MAX_LENGTH) {
                 return fail('INVALID_INPUT', deps.t()('settings.syncEncryptionPassphraseTooLong'));
@@ -1350,7 +1357,7 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
             if (type === 'typed' && !(buildEncryption(current)?.rows ?? []).some((row) => row.kind === 'field' && row.field === target!.field)) {
                 return fail('ACTION_FAILED', 'That field is not showing; read the screen again');
             }
-            if ((type === 'generate' || type === 'submit' || type === 'decline') && !current.host.encryption.transitions) {
+            if ((type === 'generate' || type === 'submit' || type === 'decline' || type === 'recheck') && !current.host.encryption.transitions) {
                 return fail('ACTION_FAILED', 'Sync encryption is not available on this host yet');
             }
             const answer = (passphrase: string | null = null) => ({ ok: true as const, value: { toasts: takeToasts(), passphrase } });
@@ -1372,6 +1379,9 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                     return answer(card.getState().nextPassphrase);
                 case 'retry':
                     await card.retryState();
+                    return answer();
+                case 'recheck':
+                    await card.recheckLocation();
                     return answer();
                 default: {
                     const run = type === 'decline'

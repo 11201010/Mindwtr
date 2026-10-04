@@ -45,7 +45,7 @@ const device = vi.hoisted(() => ({
     calls: [] as unknown[][],
     /** What the host's error log received. */
     logged: [] as string[],
-    encryption: { state: 'off' as string, unavailable: false, pending: false, incomplete: null as string | null },
+    encryption: { state: 'off' as string, unavailable: false, pending: false, incomplete: null as string | null, partly: false },
 }));
 
 /** The next answer for `name`, or `fallback` when the scenario queued none. */
@@ -99,7 +99,7 @@ type Device = {
     storage?: Record<string, string>;
     secrets?: Record<string, string>;
     dropboxConnected?: boolean;
-    encryption?: { state?: SyncEncryptionState; unavailable?: boolean; pending?: boolean; incomplete?: string | null };
+    encryption?: { state?: SyncEncryptionState; unavailable?: boolean; pending?: boolean; incomplete?: string | null; partly?: boolean };
     queues?: Record<string, unknown[]>;
 };
 type Scenario = { name: string; settings: string; data?: 'none' | 'titles'; device: Device; actions: [string, ...unknown[]][] };
@@ -186,7 +186,7 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
         log: [],
         failKeys: new Set(),
     };
-    device.encryption = { state: 'off', unavailable: false, pending: false, incomplete: null };
+    device.encryption = { state: 'off', unavailable: false, pending: false, incomplete: null, partly: false };
     const apply = (patch: Device) => {
         if (patch.os !== undefined) state.os = patch.os;
         if (patch.foss !== undefined) state.foss = patch.foss;
@@ -263,7 +263,10 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
         encryption: {
             getStatus: async () => {
                 if (device.encryption.unavailable) throw new Error('Sync encryption state is unavailable');
-                return { state: device.encryption.state as SyncEncryptionState, incompleteTransition: device.encryption.incomplete as never };
+                return {
+                    state: device.encryption.state as SyncEncryptionState, incompleteTransition: device.encryption.incomplete as never,
+                    ...(device.encryption.partly ? { partlyEncrypted: true } : {}),
+                };
             },
             getIncompleteTransition: async () => device.encryption.incomplete as never,
             isBackendPending: async () => device.encryption.pending,
@@ -288,6 +291,12 @@ function createDevice(input: Device): { state: DeviceState; host: NativeSyncSett
                     return outcome;
                 },
                 decline: async () => { calls.push(['declineSyncEncryptionPassphrase']); },
+                recheck: async () => {
+                    calls.push(['recheckPartlyEncryptedLocation']);
+                    const found = await answer('recheck', 'mixed');
+                    if (found !== 'mixed') device.encryption.partly = false;
+                    return found;
+                },
                 abandon: async () => {
                     calls.push(['abandonSyncEncryptionTransition']);
                     const abandoned = device.encryption.incomplete;
@@ -943,6 +952,22 @@ describe('native host contract: Settings › Sync commands replayed after a rest
         expect(after.some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionAbandon'))).toBe(false);
         expect(after.some((row) => row.kind === 'text' && row.tone === 'danger')).toBe(false);
         expect(after.some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionEnable'))).toBe(true);
+    });
+
+    it('runSyncEncryptionAction: a partly encrypted location offers only "Check this location again", which clears it once whole', async () => {
+        const { contract } = await start({ ...WEBDAV_STORED, encryption: { state: 'off', partly: true }, queues: { recheck: ['mixed', 'plaintext'] } });
+        const t = (key: string) => en[key as keyof typeof en];
+        const rows = () => value(contract.getSyncSettings({ draft: {} } as never)).encryption!.rows;
+        expect(rows().some((row) => row.kind === 'text' && row.tone === 'danger' && row.text === t('settings.syncEncryptionPartlyEncrypted'))).toBe(true);
+        expect(rows().some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionEnable'))).toBe(false);
+        const recheck = rows().find((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionRecheck'));
+        expect(recheck).toMatchObject({ action: { type: 'recheck' }, enabled: true });
+        value(await contract.runSyncEncryptionAction({ action: { type: 'recheck' } }));
+        expect(rows().some((row) => row.kind === 'text' && row.text === t('settings.syncEncryptionPartlyEncrypted'))).toBe(true);
+        value(await contract.runSyncEncryptionAction({ action: { type: 'recheck' } }));
+        expect(rows().some((row) => row.kind === 'text' && row.text === t('settings.syncEncryptionPartlyEncrypted'))).toBe(false);
+        expect(rows().some((row) => row.kind === 'action' && row.label === t('settings.syncEncryptionEnable'))).toBe(true);
+        expect(device.calls.filter((call) => call[0] === 'recheckPartlyEncryptedLocation')).toHaveLength(2);
     });
 
     it('runSyncEncryptionAction: a passphrase field states core\'s limit, and a longer text is refused in words', async () => {

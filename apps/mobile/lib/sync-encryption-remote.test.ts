@@ -29,6 +29,7 @@ import {
   deriveSyncKeyMaterial,
   encryptSyncArtifact,
   inspectSyncArtifact,
+  SyncEncryptionPartlyEncryptedError,
   SyncEncryptionRemoteVersionUnavailableError,
   SyncEncryptionTerminalError,
   runChangeSyncEncryptionPassphraseOverRemote,
@@ -127,6 +128,16 @@ describe('attachment byte seam', () => {
     const plaintext = new Uint8Array([1, 2, 3]);
     expect(await sealAttachmentBytesForUpload(plaintext, null)).toBe(plaintext);
     expect(await openAttachmentBytesFromDownload(plaintext, null)).toBe(plaintext);
+  });
+
+  it('refuses ciphertext when encryption is off here: the location is partly encrypted, never mixed', async () => {
+    const material = await deriveSyncKeyMaterial(
+      PASSPHRASE, new Uint8Array(16).fill(3), FAST_PARAMS, mobileSyncCryptoPrimitives,
+    );
+    const sealed = await sealAttachmentBytesForUpload(new Uint8Array([4, 5, 6]), material);
+    const refused = await openAttachmentBytesFromDownload(sealed, null).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(SyncEncryptionPartlyEncryptedError);
+    expect(classifySyncFailure(refused)).toBe('encryption');
   });
 
   it('passes an unmigrated plaintext attachment through (interrupted enable)', async () => {

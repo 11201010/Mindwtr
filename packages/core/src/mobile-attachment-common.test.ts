@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Attachment } from './types';
 import { computeSha256Hex } from './attachment-hash';
 import { createMobileAttachmentFiles } from './mobile-attachment-files';
+import { SyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { createMobileAttachmentCommon, type MobileAttachmentUploadTask } from './mobile-attachment-common';
 import { AttachmentFileInstallerUnavailableError, type AttachmentFileInstallResult } from './mobile-attachment-installer';
 import { defaultSyncCryptoPrimitives, SYNC_CRYPTO_DEFAULT_KDF_PARAMS, type SyncKeyMaterial } from './sync-crypto';
@@ -149,6 +150,15 @@ describe('mobile attachment common: encryption seam (#1056)', () => {
     await expect(common.openAttachmentBytesFromDownload(plaintext, material)).resolves.toBe(plaintext);
     await expect(common.sealAttachmentBytesForUpload(plaintext, null)).resolves.toBe(plaintext);
     expect(logSyncEncryptionEvent).toHaveBeenCalledWith('remote-read', expect.objectContaining({ decision: 'seal' }));
+  });
+});
+
+describe('mobile attachment common: a partly encrypted location', () => {
+  it('never takes ciphertext as an attachment\'s bytes when this device has no key', async () => {
+    const { common } = setup();
+    const sealed = await common.sealAttachmentBytesForUpload(bytes(1, 2, 3, 4), material, 'attachments/att-1.txt');
+    await expect(common.openAttachmentBytesFromDownload(sealed, null, 'attachments/att-1.txt'))
+      .rejects.toBeInstanceOf(SyncEncryptionPartlyEncryptedError);
   });
 });
 

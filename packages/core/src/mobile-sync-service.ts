@@ -10,7 +10,7 @@
 // never saved — the settings transaction saves it after the proof succeeds.
 import type { AppData, Attachment } from './types';
 import { SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSyncEncryptionErrorExtra, buildSyncEncryptionRemoteReadExtra, buildSyncEncryptionStateExtra, type SyncEncryptionStateDecision } from './sync-encryption-diagnostics';
-import { buildSyncLocationScope, markRemoteEncryptionDiscovered, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
+import { buildSyncLocationScope, isSyncEncryptionPartlyEncryptedError, markRemoteEncryptionDiscovered, SyncEncryptionPartlyEncryptedError, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError, type SyncEncryptionStateStore } from './sync-encryption-local-state';
 import type { SyncCryptoPrimitives, SyncKeyMaterial } from './sync-crypto';
 import { acquireSyncRemoteMutationFence, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS } from './sync-remote-fence';
@@ -75,7 +75,8 @@ const isSyncEncryptionError = (error: unknown): boolean =>
   || error instanceof SyncEncryptionStateUnavailableError
   || error instanceof SyncEncryptionRemotePlaintextError
   || error instanceof SyncEncryptionTerminalError
-  || error instanceof SyncEncryptionTransitionIncompleteError;
+  || error instanceof SyncEncryptionTransitionIncompleteError
+  || error instanceof SyncEncryptionPartlyEncryptedError;
 
 const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
 const WEBDAV_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 30_000 };
@@ -368,7 +369,11 @@ export type MobileSyncEncryptionPort = Pick<
   | 'loadSyncEncryptionLocalState'
   | 'logSyncEncryptionEvent'
   | 'syncEncryptionLocalState'
->;
+> & {
+  /** Whether the location holds ciphertext beside plaintext (core's encryption service probeSyncLocationCiphertext,
+   *  sampled). Asked before a WebDAV or Dropbox attachment pass with no key; absent on a host without the service. */
+  probeLocationCiphertext?: () => Promise<'plaintext' | 'encrypted' | 'mixed'>;
+};
 
 /** Core functions and the store, called through here so a host's tests can replace them the
  *  way they replace `@mindwtr/core`. A host that passes nothing gets core's own. */
@@ -896,6 +901,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
      *  attachment prepare phase until the document read has established what is actually at this
      *  location. See `isSyncEncryptionPostureUnestablished`. */
     private deferUploadsUntilDiscovery = false;
+    /** What the location held when this cycle asked (assertLocationNotPartlyEncrypted); asked once. */
+    private locationCiphertext: 'plaintext' | 'encrypted' | 'mixed' | null = null;
     /** Encryption state as the gate saw it, kept for the `activation` diagnostic line so a
      *  probe reports what the cycle changed rather than only where it ended. */
     private encryptionStateAtSetup: SyncEncryptionState | 'unknown' = 'unknown';
@@ -1465,7 +1472,35 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     /** The line that ties a user's toast to the trail: emitted where the cycle's failure is
      *  logged, with the classification the settings/toast layer will render. Forced, so it is
      *  present even when the user only turned Debug logging on after the failure. */
+    /**
+     * With no key, a WebDAV or Dropbox attachment pass first asks whether the location holds ciphertext (an encryption
+     * change cut off there): its plaintext must never land beside it. Once per cycle. File Sync's own lock is held by the
+     * cycle, so it relies on the download refusal and on the location a change was abandoned at.
+     */
+    private async assertLocationNotPartlyEncrypted(): Promise<void> {
+      if (this.encryptionMaterial) return;
+      const probe = host.encryption.probeLocationCiphertext;
+      if (!probe || (this.backend !== 'webdav' && !(this.backend === 'cloud' && this.cloudProvider === 'dropbox'))) return;
+      this.locationCiphertext ??= await probe();
+      if (this.locationCiphertext !== 'plaintext') throw new SyncEncryptionPartlyEncryptedError();
+    }
+
+    /** A cycle that met ciphertext with no key remembers its location as partly encrypted (only while encryption is off
+     *  here and no change is unfinished: those states say more). */
+    private async rememberPartlyEncrypted(): Promise<void> {
+      try {
+        const current = await host.encryption.loadSyncEncryptionLocalState();
+        if (current && (current.state !== 'off' || current.incompleteTransition)) return;
+        if (!this.locationScope) return;
+        await host.encryption.syncEncryptionLocalState.write({ state: 'off', partlyEncryptedScope: this.locationScope });
+        await host.encryption.flushSyncEncryptionLocalState();
+      } catch {
+        // The cycle already failed closed; a mark that did not store only means the next cycle checks again.
+      }
+    }
+
     private logEncryptionFailure(error: unknown, step: string): void {
+      if (isSyncEncryptionPartlyEncryptedError(error)) void this.rememberPartlyEncrypted();
       if (!isSyncEncryptionError(error)) return;
       const message = error instanceof Error ? error.message : String(error);
       host.encryption.logSyncEncryptionEvent(
@@ -1549,6 +1584,14 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
               && encryptionStatus.state === 'off'
               && !incompleteTransition;
             this.allowLegacyWebdavPlaintext = false;
+            // Partly encrypted here (a change cut off, abandoned on this device, or met as ciphertext with no key): this
+            // device writes nothing at this location until a check finds it whole (the card's "Check this location again").
+            if (!probingCandidate && localState?.partlyEncryptedScope
+              && (this.locationScope === null || localState.partlyEncryptedScope === this.locationScope)) {
+              logState('blocked-partly-encrypted', null);
+              if (!this.manual) return { kind: 'disabled' };
+              throw new SyncEncryptionPartlyEncryptedError();
+            }
             if (incompleteTransition) {
               logState('blocked-transition', null);
               if (!this.manual && !probingCandidate) return { kind: 'disabled' };
@@ -2215,7 +2258,10 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           {},
           { signal: this.requestAbortController.signal },
         )),
+        // Every attachment pass (prepare, post-merge, final, activation) goes through these two, so the
+        // partly-encrypted check sits here once.
         syncWebdavAttachments: async (data, helpers) => {
+          await this.assertLocationNotPartlyEncrypted();
           const webdavConfig = this.webdavConfig!;
           return host.attachments.syncWebdav(data, webdavConfig, this.requestAbortController.signal, {
             activationProbe: helpers.activationProbe,
@@ -2241,14 +2287,17 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
             signal: this.requestAbortController.signal,
           });
         },
-        syncDropboxAttachments: async (data, helpers) => host.attachments.syncDropbox(data, this.dropboxClientId, this.fetchWithAbort, {
-          activationProbe: helpers.activationProbe,
-          phase: helpers.phase,
-          resolveAccessToken: (forceRefresh) => this.resolveDropboxAccessToken(forceRefresh),
-          signal: this.requestAbortController.signal,
-          assertRemoteMutationFenceHeld: helpers.assertRemoteMutationFenceHeld,
-          ...(this.encryptionMaterial ? { material: this.encryptionMaterial } : {}),
-        }),
+        syncDropboxAttachments: async (data, helpers) => {
+          await this.assertLocationNotPartlyEncrypted();
+          return host.attachments.syncDropbox(data, this.dropboxClientId, this.fetchWithAbort, {
+            activationProbe: helpers.activationProbe,
+            phase: helpers.phase,
+            resolveAccessToken: (forceRefresh) => this.resolveDropboxAccessToken(forceRefresh),
+            signal: this.requestAbortController.signal,
+            assertRemoteMutationFenceHeld: helpers.assertRemoteMutationFenceHeld,
+            ...(this.encryptionMaterial ? { material: this.encryptionMaterial } : {}),
+          });
+        },
         syncFileAttachments: async (data, helpers) => {
           await this.assertFileSyncLeaseHeld();
           const result = await host.attachments.syncFile(

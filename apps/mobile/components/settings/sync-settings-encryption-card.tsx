@@ -25,6 +25,7 @@ import {
     isSyncEncryptionBackendPending,
     isSyncEncryptionCleanupDeferredError,
     provideSyncEncryptionPassphrase,
+    recheckPartlyEncryptedLocation,
 } from '@/lib/sync-encryption-service';
 
 import { SettingsGuideLink } from './settings.shell';
@@ -61,6 +62,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         provide: (passphrase) => provideSyncEncryptionPassphrase(passphrase),
         decline: () => declineSyncEncryptionPassphrase(),
         abandon: () => abandonSyncEncryptionTransition(),
+        recheck: () => recheckPartlyEncryptedLocation(),
         isCleanupDeferredError: (error): error is Error & { cleanupKind?: string; outcome?: unknown } => isSyncEncryptionCleanupDeferredError(error),
         randomBytes: (length) => mobileSyncCryptoPrimitives.randomBytes(length),
         appData: () => appDataRef.current,
@@ -71,6 +73,7 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
         state,
         stateUnavailable,
         incompleteTransition,
+        partlyEncrypted,
         flow,
         busy,
         currentPassphrase,
@@ -106,6 +109,9 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
     };
     const submitAbandon = () => {
         void card.submitAbandon();
+    };
+    const recheckLocation = () => {
+        void card.recheckLocation();
     };
     const submitUnlock = () => {
         void card.submitUnlock();
@@ -227,7 +233,24 @@ export function SyncEncryptionCard({ appData, t, tc, language, transportBusy = f
                 testID="sync-encryption-guide-link"
             />
             <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                {state === 'off' && (
+                {/* Partly encrypted here: nothing syncs or turns on until the location is whole again. */}
+                {state === 'off' && partlyEncrypted && (
+                    <>
+                        <View style={styles.settingRowColumn}>
+                            <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>
+                                {t('settings.syncEncryptionDesc')}
+                            </Text>
+                        </View>
+                        <View style={[styles.settingRowColumn, { borderTopWidth: 1, borderTopColor: tc.border }]}>
+                            <Text accessibilityRole="alert" style={[styles.settingDescription, { color: tc.danger }]}>
+                                {t('settings.syncEncryptionPartlyEncrypted')}
+                            </Text>
+                        </View>
+                        {renderAction(t('settings.syncEncryptionRecheck'), recheckLocation)}
+                    </>
+                )}
+
+                {state === 'off' && !partlyEncrypted && (
                     <>
                         <View style={styles.settingRowColumn}>
                             <Text style={[styles.settingDescription, { color: tc.secondaryText }]}>

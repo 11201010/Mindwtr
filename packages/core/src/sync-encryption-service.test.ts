@@ -218,7 +218,7 @@ describe('sync encryption service', () => {
     });
 
     it('"Abandon setup" turns this device off, forgets the key and the unfinished change, and contacts no location', async () => {
-        const { plain, secrets, service, logs, fileSync } = createHarness({
+        const { plain, secrets, service, logs, fileSync, state } = createHarness({
             [SYNC_BACKEND_KEY]: 'file',
             [SYNC_PATH_KEY]: '/sync',
             [SYNC_ENCRYPTION_STATE_KEY]: JSON.stringify({ state: 'off', incompleteTransition: 'enable' }),
@@ -228,7 +228,11 @@ describe('sync encryption service', () => {
 
         await expect(service.abandonSyncEncryptionTransition()).resolves.toBe('enable');
 
-        expect(plain.has(SYNC_ENCRYPTION_STATE_KEY)).toBe(false);
+        // Off here, and this location remembered as partly encrypted: sync stays paused at it until it is repaired.
+        const scope = await readSyncLocationScope({ getItem: async (key: string) => plain.get(key) ?? null });
+        expect(JSON.parse(plain.get(SYNC_ENCRYPTION_STATE_KEY)!)).toEqual({ state: 'off', partlyEncryptedScope: scope });
+        await expect(state.isSyncEncryptionBlocked(scope)).resolves.toBe(true);
+        await expect(state.isSyncEncryptionBlocked('["webdav","https://elsewhere.example/dav"]')).resolves.toBe(false);
         expect(secrets.has(SYNC_ENCRYPTION_KEY_KEY)).toBe(false);
         const status = await service.getSyncEncryptionStatus();
         expect(status.state).toBe('off');
@@ -239,6 +243,31 @@ describe('sync encryption service', () => {
 
         // Nothing unfinished: nothing to abandon, nothing changes.
         await expect(service.abandonSyncEncryptionTransition()).resolves.toBeNull();
+    });
+
+    it('reads a location an interrupted enable left half encrypted as mixed, and a whole one as plaintext or encrypted', async () => {
+        const attachment = (name: string, at: number) => ({ id: name, kind: 'file', title: name, cloudKey: `attachments/${name}`, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', uri: '', at });
+        const data = { tasks: [{ id: 't', title: 'x', attachments: ['a.bin', 'b.bin', 'c.bin'].map(attachment) }], projects: [] };
+        const folder = createMemoryFolder({
+            'data.json': encode(data),
+            'attachments/a.bin': encode('a'), 'attachments/b.bin': encode('b'), 'attachments/c.bin': encode('c'),
+        });
+        const { service } = createHarness({ [SYNC_BACKEND_KEY]: 'file', [SYNC_PATH_KEY]: '/sync' }, folder.port);
+        await expect(service.probeSyncLocationCiphertext()).resolves.toBe('plaintext');
+
+        // The enable seals attachments one at a time, in order, and the folder stops answering after the first.
+        const write = folder.port.write;
+        let writes = 0;
+        folder.port.write = async (name, bytes, version) => {
+            if (name.startsWith('attachments/') && ++writes > 1) throw new Error('the server went away');
+            return write(name, bytes, version);
+        };
+        await expect(service.enableSyncEncryption('correct horse', { appData: data as never })).rejects.toThrow('the server went away');
+        folder.port.write = write;
+        expect(isPlaintextSyncArtifact(folder.files.get('attachments/a.bin')!.bytes)).toBe(false);
+        expect(isPlaintextSyncArtifact(folder.files.get('data.json')!.bytes)).toBe(true);
+        await expect(service.probeSyncLocationCiphertext()).resolves.toBe('mixed');
+        await expect(service.probeSyncLocationCiphertext({ full: true })).resolves.toBe('mixed');
     });
 
     it('"Not now" keeps the no-key state', async () => {

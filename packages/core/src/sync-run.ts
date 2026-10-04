@@ -26,6 +26,7 @@ import { SyncRemoteWriteConflict } from './sync-run-ports';
 import { LocalSyncAbort, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
 import { hasFreshAttachmentCleanupWork } from './attachment-cleanup';
 import { isAttachmentUploadTooLargeError } from './attachment-transfer';
+import { isSyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { flushPendingSave, useTaskStore } from './store';
 import {
     assertNoPendingAttachmentContentReplacements,
@@ -1498,6 +1499,8 @@ class SharedSyncRunMachine {
         } catch (error) {
             if (error instanceof LocalSyncAbort) throw error;
             if (isSyncRemoteMutationFenceError(error)) throw error;
+            // A refusal to mix plaintext into a partly encrypted location ends the cycle; it is never a warning.
+            if (isSyncEncryptionPartlyEncryptedError(error)) throw error;
             if (this.hooks.isCycleAborted?.()) throw error;
             if (isAttachmentUploadTooLargeError(error)) {
                 this.state.fileAttachmentUploadBlocked = 'too-large';
@@ -1734,6 +1737,8 @@ class SharedSyncRunMachine {
         } catch (error) {
             if (error instanceof LocalSyncAbort) throw error;
             if (isSyncRemoteMutationFenceError(error)) throw error;
+            // A refusal to mix plaintext into a partly encrypted location ends the cycle; it is never a warning.
+            if (isSyncEncryptionPartlyEncryptedError(error)) throw error;
             if (isAttachmentUploadTooLargeError(error)) {
                 this.state.fileAttachmentUploadBlocked = 'too-large';
                 return currentData;
