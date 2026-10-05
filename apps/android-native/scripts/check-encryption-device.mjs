@@ -433,11 +433,11 @@ try {
     await tapThenFind(action(en['settings.syncEncryptionAbandon']), (current) => withText(current, en['settings.syncEncryptionAbandonWarning']), 'the Abandon flow');
     check(true, '(7b) "Abandon setup" warns first that the location may stay partly encrypted');
     const lostRequests = lost.state.requests.length;
-    await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), flowClosed, 'Abandon', 60_000);
+    // The card names the folder partly encrypted once Abandon ends (core's rule; the flow's submit is gone).
+    await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), (current) => withText(current, en['settings.syncEncryptionPartlyEncrypted']), 'Abandon', 90_000);
     check(lost.state.requests.length === lostRequests, '(7b) Abandon contacted no server');
     check(/"releaseCheck":"v1\.3\.4\/encryption-abandon-setup"/.test(logs().replace(/\\/g, '')) || logs().includes('v1.3.4/encryption-abandon-setup'),
         '(7b) the log shows v1.3.4/encryption-abandon-setup');
-    await cardShows(en['settings.syncEncryptionPartlyEncrypted']);
     await reveal(action(en['settings.syncEncryptionRecheck']), 'Check this location again');
     check(!withDescription(await screen(), en['settings.syncEncryptionEnable']),
         '(7b) the card names the folder partly encrypted and offers "Check this location again", not Enable');
