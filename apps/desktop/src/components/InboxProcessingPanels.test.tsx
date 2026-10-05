@@ -368,6 +368,26 @@ describe('InboxProcessingWizard draft editing', () => {
         cleanup();
     });
 
+    it.each([{ suggestedContexts: [] }, { suggestedContexts: ['@home'] }])('keeps the Contexts heading above its input with suggestions $suggestedContexts', ({ suggestedContexts }) => {
+        const view = render(<WizardHarness processingStep="context" options={{ ...options, suggestedContexts }} />);
+        expect(view.getByText('filters.contexts')).toBeInTheDocument();
+        const heading = view.getByText('taskEdit.contextsLabel');
+        const input = view.getByRole('combobox', { name: 'taskEdit.contextsLabel' });
+        expect(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it.each([
+        [true, false, 'taskEdit.contextsLabel'],
+        [false, true, 'taskEdit.tagsLabel'],
+        [false, false, 'taskEdit.details'],
+    ] as const)('labels organization accurately for contexts=%s tags=%s', (showContextsField, showTagsField, label) => {
+        const view = render(<WizardHarness processingStep="context" visibility={{ ...visibility, showContextsField, showTagsField }} />);
+        expect(view.queryByText('filters.contexts')).not.toBeInTheDocument();
+        expect(view.getAllByText(label).length).toBeGreaterThan(0);
+        expect(view.queryByPlaceholderText('@home') !== null).toBe(showContextsField);
+        expect(view.queryByPlaceholderText('#deep-work') !== null).toBe(showTagsField);
+    });
+
     it('writes refine-step title edits through the draft', () => {
         const { getByDisplayValue } = render(<WizardHarness />);
 
