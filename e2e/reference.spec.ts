@@ -182,7 +182,7 @@ test('bulk selection leaves archived-project references unchanged', async ({ pag
     await expect(row(page, 'archived-reference')).toBeVisible();
     await page.getByRole('button', { name: 'Select', exact: true }).click();
     await page.getByRole('button', { name: 'Select All', exact: true }).click();
-    await page.getByRole('combobox', { name: 'Move to', exact: true }).selectOption('next');
+    await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('next');
     await expect.poll(async () => (await readTask(page, 'active-reference')).status).toBe('next');
     expect(await readTask(page, 'archived-reference')).toMatchObject({
         status: 'reference', projectId: 'Archived project',
