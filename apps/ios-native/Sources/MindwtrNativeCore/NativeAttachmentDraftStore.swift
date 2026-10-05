@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 /// Fixed, private structural evidence only. Shared metadata and descriptor
 /// ownership must be revalidated by the future host before any attachment IO.
@@ -13,8 +14,8 @@ enum NativeAttachmentDraftStoreError: LocalizedError, Equatable {
     }
 }
 
-/// Called only under the existing serialized library lock. No release, salvage
-/// or removal API: retained attachment evidence cannot be silently discarded.
+/// Called only under the existing serialized library lock. Retained evidence
+/// cannot be reset or salvaged; exact saved-Add release needs terminal authority.
 struct NativeAttachmentDraftStore {
     static let maximumBytes = 8 * 1024 * 1024
     let url: URL
@@ -591,6 +592,35 @@ struct NativeAttachmentDraftStore {
     func write(_ record: Record) throws {
         let data = try encodedForWrite(record)
         do { try DurableFile.write(data, to: url, privateDraft: true) }
+        catch { throw NativeAttachmentDraftStoreError.io }
+    }
+
+    /// Full private snapshot binding, not filesystem ownership or Save success.
+    /// All exact opaque strings and native proofs participate in the digest.
+    static func ownedSaveFingerprint(_ record: Record) throws -> String {
+        try validate(record)
+        try require(record.version == 2 && record.session.state == .active && !record.operations.isEmpty
+                    && record.discard == nil && record.checkpointAdvance == nil
+                    && record.operations.allSatisfy { $0.phase == .checkpointed && $0.reason == nil })
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data: Data
+        do { data = try encoder.encode(record) }
+        catch { throw NativeAttachmentDraftStoreError.corrupt }
+        try require(data.count <= maximumBytes)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Caller owns the Engine/library lock and a validated durable success
+    /// terminal. This structural match alone grants no cleanup authority.
+    func releaseSavedAddsMatching(fingerprint: String) throws {
+        try Self.require(Self.digest(fingerprint))
+        if let record = try read() {
+            try Self.require(Self.equal(try Self.ownedSaveFingerprint(record), fingerprint))
+        }
+        // Missing is a durable retry only under the caller's retained terminal.
+        // DurableFile.remove syncs the parent even after ENOENT.
+        do { try DurableFile.remove(url) }
         catch { throw NativeAttachmentDraftStoreError.io }
     }
 }

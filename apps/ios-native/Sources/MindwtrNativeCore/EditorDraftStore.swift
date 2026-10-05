@@ -67,11 +67,17 @@ struct EditorDraftStore {
         if let attempt = value.attempt {
             guard validUUID(attempt.id), attempt.sessionID == snapshot.sessionID,
                   attempt.taskID == snapshot.taskID, attempt.generation == snapshot.generation,
-                  ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote"].contains(attempt.method),
+                  ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote", "attachmentDraftSave"].contains(attempt.method),
                   attempt.argumentsJSON.utf8.count <= 2_000_000,
                   let arguments = try? JSONSerialization.jsonObject(with: Data(attempt.argumentsJSON.utf8)) as? [String],
                   arguments.count == 1, validObject(arguments[0], limit: 2_000_000) else {
                 throw EditorDraftStoreError.corrupt
+            }
+            if attempt.method == "attachmentDraftSave" {
+                guard snapshot.generation <= 9_007_199_254_740_991,
+                      exact(attempt.sessionID, snapshot.sessionID), exact(attempt.taskID, snapshot.taskID) else {
+                    throw EditorDraftStoreError.corrupt
+                }
             }
         }
     }
@@ -228,6 +234,57 @@ struct EditorDraftStore {
     func removeMatching(_ attempt: EditorDraftAttempt) throws {
         guard let current = try read() else { return }
         guard current.attempt == attempt else { throw HostFailure("Editor draft Save attempt changed") }
+        try DurableFile.remove(url)
+    }
+
+    private func exact(_ a: String, _ b: String) -> Bool { a.utf8.elementsEqual(b.utf8) }
+    private func ownedMatches(_ a: EditorDraftSnapshot, _ b: EditorDraftSnapshot) -> Bool {
+        a.version == b.version && exact(a.sessionID, b.sessionID) && exact(a.taskID, b.taskID)
+            && a.generation == b.generation && exact(a.payloadJSON, b.payloadJSON)
+    }
+    private func ownedMatches(_ a: EditorDraftAttempt, _ b: EditorDraftAttempt) -> Bool {
+        exact(a.id, b.id) && exact(a.sessionID, b.sessionID) && exact(a.taskID, b.taskID)
+            && a.generation == b.generation && exact(a.method, b.method) && exact(a.argumentsJSON, b.argumentsJSON)
+    }
+
+    /// Structural capacity admission only; the caller separately proves shared
+    /// correspondence and retained native ownership under the library lock.
+    func preflightOwnedSave(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        guard attempt.method == "attachmentDraftSave" else { throw EditorDraftStoreError.corrupt }
+        _ = try encodedBytes(expected, attempt: attempt)
+    }
+
+    /// Exact replay rewrites the same frozen record to repair a lost sync ack.
+    func freezeOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        guard let current = try read(), ownedMatches(current.snapshot, expected),
+              current.attempt.map({ ownedMatches($0, attempt) }) ?? true else {
+            throw HostFailure("Owned editor Save checkpoint or attempt changed")
+        }
+        try write(expected, attempt: attempt)
+    }
+
+    /// The caller proves nonapplication/no invocation; this does not grant it.
+    /// Even an already-thawed exact snapshot is rewritten for durable retry.
+    func thawOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        guard let current = try read(), ownedMatches(current.snapshot, expected),
+              current.attempt.map({ ownedMatches($0, attempt) }) ?? true else {
+            throw HostFailure("Owned editor Save checkpoint or attempt changed")
+        }
+        try write(expected)
+    }
+
+    /// Caller retains validated durable success. Missing still syncs the parent;
+    /// a present editor requires the entire exact snapshot and frozen attempt.
+    func removeOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        if let current = try read() {
+            guard ownedMatches(current.snapshot, expected),
+                  current.attempt.map({ ownedMatches($0, attempt) }) == true else {
+                throw HostFailure("Owned editor Save checkpoint or attempt changed")
+            }
+        }
         try DurableFile.remove(url)
     }
 

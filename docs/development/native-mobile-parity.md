@@ -1778,3 +1778,9 @@ Validation: 464 shared tests passed (71 new and 393 existing), including actual 
 The native host now offers a distinct version2 Begin and routes ordinary checkpoints through retained before/after intent, exact editor-file comparison and durable completion. Frozen Add history survives intervening ordinary edits; retrying an older Add returns its retained reply without rolling back the latest checkpoint. Cold recovery accepts only the recorded before/after state. Existing version1 behavior and mutation gates remain intact.
 
 Validation: 25 new JavaScriptCore cases passed across the full run and one focused fixture correction, plus 65 existing attachment/editor recovery cases. The correction recreated the host after external SQL fixture changes so shared read-only state was actually loaded; no product policy changed. All six checkpoint interruption boundaries, encoded capacity refusal and retained Discard after ordinary edits were exercised. The signed development build passed without installation. Save, ownership release and picker/editor UI remain separate work.
+
+### iOS exact owned Save storage primitives (2026-10-05)
+
+Separate native primitives now freeze, thaw and detach an owned Save only when the complete checkpoint and attempt match byte for byte. A canonical hash binds every field of the retained file evidence; release removes only that exact record and confirms directory durability on absent retries. Existing record schemas and legacy editor operations remain unchanged.
+
+Validation: 113 store tests passed with zero skips (30 new, 83 existing), independent review passed, and the signed development build passed without installation. These are structural primitives: the caller must still prove the Save result or nonapplication and complete file cleanup before releasing ownership. Native Save integration is separate work.
