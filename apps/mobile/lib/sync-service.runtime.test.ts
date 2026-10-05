@@ -129,6 +129,11 @@ const logMocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
 }));
 
+// What the location holds when a keyless attachment pass asks (core's partly-encrypted rule).
+const locationProbeMocks = vi.hoisted(() => ({
+  probeSyncLocationCiphertext: vi.fn(async (): Promise<'plaintext' | 'encrypted' | 'mixed'> => 'plaintext'),
+}));
+
 const fileSyncLockMocks = vi.hoisted(() => ({
   acquireMobileFileSyncLease: vi.fn(),
   revalidateMobileFileSyncLease: vi.fn(),
@@ -268,6 +273,11 @@ vi.mock('./app-log', () => ({
   sanitizeLogMessage: (value: string) => value,
 }));
 
+vi.mock('./sync-encryption-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sync-encryption-service')>()),
+  probeSyncLocationCiphertext: locationProbeMocks.probeSyncLocationCiphertext,
+}));
+
 vi.mock('./sync-file-lock', () => ({
   acquireMobileFileSyncLease: fileSyncLockMocks.acquireMobileFileSyncLease,
   revalidateMobileFileSyncLease: fileSyncLockMocks.revalidateMobileFileSyncLease,
@@ -315,6 +325,7 @@ describe('mobile sync-service runtime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    locationProbeMocks.probeSyncLocationCiphertext.mockResolvedValue('plaintext');
     coreMocks.isSandboxMode.mockReturnValue(false);
     coreMocks.isWorkspaceTransitionActive.mockReturnValue(false);
     (Platform as { OS: string }).OS = 'web';
@@ -2193,6 +2204,64 @@ describe('mobile sync-service runtime', () => {
         password: 'pass',
       }),
     );
+  });
+
+  it('refuses a plaintext attachment upload into a location that holds ciphertext, and writes nothing there', async () => {
+    const establishedScope = computeStableValueFingerprint({
+      backend: 'webdav',
+      url: 'https://sync.example.com/data.json',
+      username: 'user',
+    });
+    asyncStorageMocks.getItem.mockImplementation(async (key: string) => {
+      const values: Record<string, string | null> = {
+        '@mindwtr_sync_backend': 'webdav',
+        '@mindwtr_webdav_url': 'https://sync.example.com/data.json',
+        '@mindwtr_webdav_username': 'user',
+        '@mindwtr_webdav_password': 'pass',
+        '@mindwtr_fast_sync_state_v1': JSON.stringify({
+          scope: establishedScope,
+          localFingerprint: 'established',
+          remoteFingerprint: 'established',
+          checkedAt: '2026-05-07T00:00:00.000Z',
+        }),
+      };
+      return values[key] ?? null;
+    });
+    storageMocks.getData.mockResolvedValue({
+      tasks: [{
+        id: 'task-1',
+        title: 'Task',
+        status: 'inbox',
+        tags: [],
+        contexts: [],
+        attachments: [{
+          id: 'att-1',
+          kind: 'file',
+          title: 'att-1.txt',
+          uri: 'file:///tmp/att-1.txt',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+      projects: [],
+      sections: [],
+      areas: [],
+      settings: {},
+    });
+    coreMocks.webdavGetJson.mockResolvedValue(null);
+    attachmentSyncMocks.hasPendingAttachmentSyncWork.mockResolvedValue(true);
+    // An enable cut off mid-way left encrypted attachments beside a plaintext data.json.
+    locationProbeMocks.probeSyncLocationCiphertext.mockResolvedValue('mixed');
+
+    const result = await syncServiceModule.performMobileSync();
+
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('partly encrypted');
+    expect(locationProbeMocks.probeSyncLocationCiphertext).toHaveBeenCalled();
+    expect(attachmentSyncMocks.syncWebdavAttachments).not.toHaveBeenCalled();
+    expect(coreMocks.webdavPutJson).not.toHaveBeenCalled();
   });
 
   it('clears stale sync stats when a sync error occurs after prior conflicts', async () => {

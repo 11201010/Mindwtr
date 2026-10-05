@@ -206,6 +206,12 @@ vi.mock('./sync-path-bookmarks', () => ({
   isSyncPathBookmarksAvailable: syncPathBookmarkMocks.isSyncPathBookmarksAvailable,
 }));
 
+// What the location holds when a keyless attachment pass asks (core's partly-encrypted rule): plain here.
+vi.mock('./sync-encryption-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sync-encryption-service')>()),
+  probeSyncLocationCiphertext: vi.fn(async () => 'plaintext'),
+}));
+
 vi.mock('./app-log', () => ({
   logInfo: logMocks.logInfo,
   logSyncError: logMocks.logSyncError,

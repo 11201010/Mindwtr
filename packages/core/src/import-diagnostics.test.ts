@@ -27,4 +27,14 @@ describe('import diagnostics', () => {
         const diagnostic = createImportDiagnostic(message, 'warning');
         expect(formatImportDiagnostic(diagnostic, (key) => key)).toBe(expectedKey);
     });
+
+    it.each([
+        [1, '1 task was skipped because it was imported earlier and then deleted here; deletions are kept on re-import.'],
+        [2, '2 tasks were skipped because they were imported earlier and then deleted here; deletions are kept on re-import.'],
+    ] as const)('localizes actual deleted-import warning with count %s as skipped existing records', (count, message) => {
+        const diagnostic = createImportDiagnostic(message, 'warning');
+        expect(diagnostic).toEqual({ code: 'skipped-existing-records', params: { count }, severity: 'warning' });
+        expect(formatImportDiagnostic(diagnostic, (key, values) => `${key}:${values?.count}`))
+            .toBe(`settings.importDiagnostics.skippedExistingRecords:${count}`);
+    });
 });

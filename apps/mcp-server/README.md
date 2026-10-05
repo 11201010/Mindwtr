@@ -1,6 +1,6 @@
 # Mindwtr MCP Server
 
-MCP server for Mindwtr. Connect MCP clients (Claude Desktop, etc.) to either your local Mindwtr SQLite database or a self-hosted Mindwtr Cloud endpoint.
+MCP server for Mindwtr. Connect MCP clients (Claude Desktop, etc.) to your local SQLite database, the desktop Local API, or a self-hosted Mindwtr Cloud endpoint.
 
 By default this is a **stdio** server: MCP clients launch it as a subprocess and talk over JSON-RPC on stdin/stdout. It also has an opt-in **HTTP transport** (see [Remote access (HTTP)](#remote-access-http)) for self-hosters who want to expose it at a URL instead.
 
@@ -8,9 +8,9 @@ By default this is a **stdio** server: MCP clients launch it as a subprocess and
 
 ## App Binaries vs. MCP Helper
 
-The desktop and mobile app binaries include the Mindwtr app, but they do **not** currently include a desktop start/stop toggle or a standalone `mindwtr-mcp` command on your `PATH`.
+The next desktop release bundles an app-managed MCP server in **Settings → Integrations → MCP**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
 
-You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`.
+You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`, or use the Local API backend below.
 
 On desktop, the app shows the exact local data path in **Settings -> Sync -> Local Data**. Mobile binaries do not expose a local MCP server surface.
 
@@ -18,12 +18,14 @@ On desktop, the app shows the exact local data path in **Settings -> Sync -> Loc
 
 ## Requirements
 
-- Node.js 20+ to run the helper. Prefer Node.js 22+ for prebuilt SQLite binaries on supported platforms; Node 20 requires a native build toolchain.
-- npm package installs use better-sqlite3, a native SQLite addon. If no prebuilt binary is available for your platform, npm needs a working C/C++ build toolchain and Python for node-gyp.
-- Bun (recommended for development in this repo)
-- A local Mindwtr database (`mindwtr.db`) for local mode, or a self-hosted Mindwtr Cloud URL and bearer token for Cloud mode
+These requirements apply to the standalone helper, not the bundled desktop server.
 
-With **npm 12**, approve the SQLite dependency's install script; otherwise a successful install can still fail at startup with a missing native binding. For `npx` or global installs, allow only `better-sqlite3`:
+- Node.js 20+ to run the helper. Prefer Node.js 22+ for prebuilt SQLite binaries on supported platforms; Node 20 requires a native build toolchain.
+- Node-based SQLite mode uses the optional better-sqlite3 native addon. API-only installs can omit it with `--omit=optional`. If no prebuilt binary is available for your platform, npm needs a working C/C++ build toolchain and Python for node-gyp.
+- Bun (recommended for development in this repo)
+- A local database (`mindwtr.db`) for SQLite mode, a running desktop Local API and bearer token for API mode, or a self-hosted Mindwtr Cloud URL and bearer token for Cloud mode
+
+For **SQLite mode with npm 12**, approve the SQLite dependency's install script; otherwise a successful install can still fail at startup with a missing native binding. For `npx` or global installs, allow only `better-sqlite3`:
 
 ```bash
 npx --allow-scripts=better-sqlite3 -y mindwtr-mcp --db "/path/to/mindwtr.db"
@@ -91,6 +93,49 @@ Or let an MCP client launch it through npx:
 
 The npm package is read-only by default. Add `--write` only when you explicitly want add/update/complete/delete tools enabled.
 
+### Desktop Local API mode
+
+> This backend is included in the next MCP helper release. Until that package is published, build the helper from the repository and run `node apps/mcp-server/dist/cli.js` with the options below.
+
+Enable the desktop app's **Local API** in Settings and copy its bearer token. Keep the app and API running. This backend uses the app's REST endpoints and never opens a database or falls back to SQLite.
+
+For an API-only installation, omit the optional native SQLite addon:
+
+```bash
+npm install -g --omit=optional mindwtr-mcp
+```
+
+Configure your MCP client to pass the token through its environment, rather than putting it in command-line arguments:
+
+```json
+{
+  "command": "mindwtr-mcp",
+  "args": ["--api-url", "http://127.0.0.1:3456"],
+  "env": {
+    "MINDWTR_MCP_API_TOKEN": "<token from desktop settings>"
+  }
+}
+```
+
+Use the port shown in Settings. `MINDWTR_MCP_API_URL` can replace `--api-url`. URLs must use literal `127.0.0.1` or `[::1]`, with no credentials, path, query or fragment; redirects are refused. Do not combine API and Cloud/`--db` options. Existing database-path environment variables are ignored in API mode.
+
+Writes remain disabled unless explicitly enabled with `--write`. If the app is closed or the token is invalid, the helper returns an error. A timed-out write may have reached the app: inspect the task before retrying, as the helper does not retry writes automatically.
+
+| MCP capability | Desktop Local API support |
+| --- | --- |
+| List/get tasks | Supported, including rich search operators, date filters, sorting and pagination |
+| Create tasks | Explicit title and fields; `quickAdd` is unavailable |
+| Update/complete/delete/restore tasks | Supported through the API's corresponding endpoints; terminal status changes cannot be submitted as ordinary edits |
+| List/get/create/update/delete projects | Supported for the API's basic project fields: title, color, status, Area and sequential behavior |
+| List areas | Supported |
+| Sections, managed people, Area writes | Unavailable; these tools are hidden in API mode |
+| GTD availability `view` | Unavailable because the API does not expose the required section snapshot |
+| Replacing attachment links | Unavailable because the API does not provide conditional attachment updates |
+
+Other unsupported fields are rejected before a write. The desktop API's recurrence limitations also apply; some recurring completions must be performed in the app. This backend does not promise full SQLite/Cloud tool parity.
+
+`--api-url` selects the helper's **data source**. `--http` instead selects how an MCP client connects **to the helper**; it can be used with any backend and has a separate authentication token.
+
 ### Self-hosted Cloud mode
 
 Use Cloud mode when you run your own Mindwtr Cloud server and want MCP tools without pointing the helper at a local SQLite database:
@@ -117,7 +162,7 @@ For private HTTP test deployments, local/private HTTP URLs are allowed by the sh
 
 ### Remote access (HTTP)
 
-By default `mindwtr-mcp` only speaks stdio. Pass `--http` to also (instead of stdio) serve a stateless streamable-HTTP MCP endpoint, so you can point a remote MCP client at a URL — the motivating case is [Gemini Spark](https://gemini.google.com) "custom apps", which take an MCP server URL. HTTP mode works with either backend (local SQLite or self-hosted Cloud).
+By default `mindwtr-mcp` only speaks stdio. Pass `--http` to also (instead of stdio) serve a stateless streamable-HTTP MCP endpoint, so you can point a remote MCP client at a URL — the motivating case is [Gemini Spark](https://gemini.google.com) "custom apps", which take an MCP server URL. HTTP mode works with all three backends.
 
 ```bash
 mindwtr-mcp --http --http-token "$(openssl rand -hex 32)" --db "/path/to/mindwtr.db"
@@ -222,7 +267,15 @@ mindwtr-mcp --db "/path/to/mindwtr.db"
 
 ### Desktop app toggle?
 
-Not yet. Start/stop is still manual.
+The next desktop release has **Settings → Integrations → MCP**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
+
+Enable **Allow changes** only to permit creating, editing, and deleting tasks and projects, including completing tasks. Connected AI clients can read exposed Mindwtr data and may send it to their provider. Keep the copied bearer token private; regenerating it disconnects old clients.
+
+On Mac, built-in MCP requires **macOS 13 or later**; the app’s existing minimum OS version is unchanged.
+
+The app owns the helper lifetime and a private Local API bridge, leaving public Local API settings unchanged. Closing to the tray keeps it running; disabling MCP or quitting stops it. A helper crash or occupied port is shown in Settings with Retry. The app must stay available. This mode does not provide remote ChatGPT access, a tunnel, or hosting, and has the same supported operations as the Local API backend above.
+
+For source builds, `bun scripts/build-mcp-sidecar.mjs` compiles the managed entry point as a standalone executable; desktop build/dev hooks invoke it automatically. The private `managed.ts` entry takes only the app-owned environment contract, never SQLite or Cloud settings.
 
 ---
 
@@ -536,6 +589,8 @@ claude mcp add mindwtr -- \
 ---
 
 ## Safety & Concurrency
+
+The SQLite details below apply to direct database mode. Local API mode uses the desktop app's native handlers, and Cloud mode uses the self-hosted server.
 
 - The server uses **SQLite WAL mode**. Read-only tools can run while the desktop app is open.
 - Write tools fail fast on SQLite writer locks, then retry the whole Mindwtr write operation. Each retry reloads current data before applying the requested change, so a delayed MCP write does not keep working from a stale pre-lock snapshot.

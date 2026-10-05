@@ -89,6 +89,18 @@ describe('sync encryption local state', () => {
         await expect(store.getIncompleteSyncEncryptionTransition()).resolves.toBe('enable');
     });
 
+    it('shows a location as partly encrypted only while it is the active one', async () => {
+        const { plain, store } = createHarness();
+        plain.set(SYNC_ENCRYPTION_STATE_KEY, JSON.stringify({ state: 'off', partlyEncryptedScope: WEBDAV_SCOPE }));
+        plain.set(SYNC_BACKEND_KEY, 'webdav');
+        plain.set(WEBDAV_URL_KEY, 'https://dav.example.com/sync');
+        plain.set(WEBDAV_USERNAME_KEY, 'alice');
+        await expect(store.getSyncEncryptionStatus()).resolves.toEqual({ state: 'off', incompleteTransition: undefined, partlyEncrypted: true });
+        // Another folder is whole: the card offers Enable there, and its sync runs.
+        plain.set(WEBDAV_URL_KEY, 'https://dav.example.com/other');
+        await expect(store.getSyncEncryptionStatus()).resolves.toEqual({ state: 'off', incompleteTransition: undefined });
+    });
+
     it('resolves material only for keyed states and never reads a missing key as "off"', async () => {
         const { plain, secrets, store } = createHarness();
         await expect(store.getSyncEncryptionMaterial()).resolves.toBeNull();

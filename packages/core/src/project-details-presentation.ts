@@ -79,3 +79,38 @@ export function getProjectDetailsPresentation(
         reviewDateLabel: formatProjectDate(project.reviewAt, t('common.notSet')),
     };
 }
+
+/**
+ * A review date picked on Android, as RN's date picker answers it (@react-native-community/datetimepicker
+ * DatePickerModule.onDateSet): the picked `yyyy-MM-dd` [day] at the hour and minute of the value the picker [opened] on, in
+ * [timeZone] (the device's), seconds and milliseconds 0, as an ISO instant. The zone's rules come from Intl (ICU on Android, as
+ * Java's Calendar), never the engine's local Date conversion. As Java's lenient Calendar: a repeated hour (clocks set back)
+ * resolves to its later instant, and a skipped hour (clocks set forward) moves forward. Null for a malformed day, instant or zone.
+ */
+export function projectReviewPickerValue(day: string, opened: string,
+    timeZone: string = new Intl.DateTimeFormat().resolvedOptions().timeZone): string | null {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+    const at = Date.parse(opened);
+    if (!match || !Number.isFinite(at)) return null;
+    let format: Intl.DateTimeFormat;
+    try {
+        format = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit',
+            day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch { return null; }
+    // The wall clock at an instant, as minutes counted like UTC's (so wall minus instant is the zone's offset there).
+    const wall = (instant: number): number => {
+        const parts = Object.fromEntries(format.formatToParts(new Date(instant)).map((part) => [part.type, Number(part.value)]));
+        return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour % 24, parts.minute);
+    };
+    const minute = 60_000;
+    const openedWall = wall(Math.floor(at / minute) * minute);
+    const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) + (openedWall % 86_400_000);
+    if (!Number.isFinite(target) || new Date(target).getUTCDate() !== Number(match[3])) return null;
+    // The offsets in force a half day before and after: every transition near the target lies between them.
+    const before = wall(target - 12 * 3_600_000) - (target - 12 * 3_600_000);
+    const after = wall(target + 12 * 3_600_000) - (target + 12 * 3_600_000);
+    const fits = [target - before, target - after].filter((instant) => wall(instant) === target);
+    // Two fits: the repeated hour, its later instant. None: the skipped hour, read with the offset before it (moves forward).
+    const instant = fits.length > 0 ? Math.max(...fits) : target - before;
+    return new Date(instant).toISOString();
+}

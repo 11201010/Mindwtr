@@ -8,7 +8,8 @@ class StartOrderTest {
     private val events = mutableListOf<String>()
 
     private fun run(drain: StartOrder.Drain) = StartOrder.afterReplay({ events += "drain"; drain },
-        owe = { events += "owe ${it.substringBefore(':')}" }, retryLater = { events += "retry" }, startSync = { events += "sync" })
+        owe = { events += "owe ${it.substringBefore(':')}" }, retryLater = { events += "retry" }, startSync = { events += "sync" },
+        refreshWidgets = { events += "widgets" })
 
     @Test fun aFinishedDrainStartsSync() {
         assertEquals(true, run(StartOrder.Drain.Done))
@@ -34,5 +35,19 @@ class StartOrderTest {
     @Test fun aDrainWaitingBehindAnotherOwedCommandRetriesWithoutReplacingIt() {
         assertEquals(false, run(StartOrder.Drain.Waiting))
         assertEquals(listOf("drain", "retry"), events)
+    }
+
+    @Test fun aDrainWhoseCheckOffSweepFailedStartsSyncKeepsTheScreensPublishesTheWidgetsAndRetries() {
+        // Its job retries, so no job end publishes the widgets: the drain does, whatever it stored.
+        assertEquals(false, run(StartOrder.Drain.Unswept))
+        assertEquals(listOf("drain", "sync", "widgets", "retry"), events)
+    }
+
+    @Test fun aMissingQueueFolderIsEmptyButAnUnreadableOneIsNot() {
+        assertEquals(true, StartOrder.queueEmpty(null, exists = false))
+        assertEquals(true, StartOrder.queueEmpty(emptyArray(), exists = true))
+        assertEquals(false, StartOrder.queueEmpty(arrayOf("a.json"), exists = true))
+        // A folder that cannot be listed (unreadable, or a file at its path): not "nothing queued".
+        assertEquals(null, StartOrder.queueEmpty(null, exists = true))
     }
 }

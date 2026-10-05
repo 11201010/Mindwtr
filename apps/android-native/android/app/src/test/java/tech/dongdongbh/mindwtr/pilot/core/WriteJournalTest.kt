@@ -248,4 +248,26 @@ class WriteJournalTest {
         assertEquals("syncPreference", reopened.pending().single().args[0])
         assertTrue(File(dir, "${WriteJournal.ASIDE}/0000000000000099.json").exists())
     }
+
+    /**
+     * A Project details edit is the user's intent (`projectEdit`: request UUID, project, field, value), journaled ahead of its
+     * send: a kill at any later step finds it on disk, in order, and the send itself finds the same entry, never a second one.
+     */
+    @Test fun aProjectEditJournaledAheadSurvivesAKillAndIsSentOnce() {
+        val dir = File(folder.root, "journal")
+        val title = """{"requestId":"r-1","projectId":"p","kind":"title","title":"New"}"""
+        val notes = """{"requestId":"r-2","projectId":"p","kind":"notes","text":"Typed"}"""
+        val journal = open(dir)
+        val first = journal.append("menuCommand", listOf("projectEdit", title))!!
+        journal.append("menuCommand", listOf("projectEdit", notes))
+        // Killed before anything was sent: both edits wait for the boot's replay, in the order they were made.
+        assertEquals(listOf(title, notes), open(dir).pending().map { it.args[1] })
+        // The send appends the same request and finds its entry; once core answered, a kill leaves only the notes.
+        assertSame(first, journal.append("menuCommand", listOf("projectEdit", title)))
+        assertTrue(journal.settle(first, null))
+        assertEquals(listOf(notes), open(dir).pending().map { it.args[1] })
+        // An edit without its project or field never replays.
+        File(dir, "0000000000000099.json").writeText("""{"method":"menuCommand","args":["projectEdit",${org.json.JSONObject.quote("""{"requestId":"r-3","projectId":"p"}""")}]}""")
+        assertEquals(listOf(notes), open(dir).pending().map { it.args[1] })
+    }
 }

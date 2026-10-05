@@ -141,12 +141,12 @@
       "bin": {
         "mindwtr-mcp": "dist/cli.js",
       },
-      "dependencies": {
-        "better-sqlite3": "^12.0.0",
-      },
       "devDependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
         "zod": "^3.24.1",
+      },
+      "optionalDependencies": {
+        "better-sqlite3": "^12.0.0",
       },
     },
     "apps/mobile": {
@@ -284,7 +284,7 @@
     "expo-linking": "8.0.12",
     "fast-uri": "3.1.8",
     "flatted": "3.4.2",
-    "hono": "4.13.5",
+    "hono": "4.13.7",
     "ip-address": "10.7.1",
     "js-yaml": "4.3.2",
     "launch-editor": "2.14.1",
@@ -1722,7 +1722,7 @@
 
     "hoist-non-react-statics": ["hoist-non-react-statics@3.3.2", "", { "dependencies": { "react-is": "^16.7.0" } }, "sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw=="],
 
-    "hono": ["hono@4.13.5", "", {}, "sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw=="],
+    "hono": ["hono@4.13.7", "", {}, "sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ=="],
 
     "hosted-git-info": ["hosted-git-info@7.0.2", "", { "dependencies": { "lru-cache": "^10.0.1" } }, "sha512-puUZAUKT5m8Zzvs72XWy3HtvVbTWljRE66cP60bxJzAqf2DgICo7lYTY2IHUmLnNpjYvw5bvmoHvPc0QO2a62w=="],
 

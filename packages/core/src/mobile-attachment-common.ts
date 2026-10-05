@@ -28,7 +28,7 @@ import { bytesToBase64 } from './base64-bytes';
 import { MAX_DOWNLOAD_BYTES, ResponseTooLargeError } from './http-utils';
 import { encryptSyncArtifact, inspectSyncArtifact, SyncCryptoUnsupportedError, type SyncCryptoPrimitives, type SyncKeyMaterial } from './sync-crypto';
 import { buildSyncEncryptionRemoteReadExtra, SYNC_ENCRYPTION_LOG_EVENTS, type SyncEncryptionRemoteReadLogInput } from './sync-encryption-diagnostics';
-import { decryptRemoteArtifactOrThrow, SyncEncryptionTerminalError } from './sync-encryption';
+import { decryptRemoteArtifactOrThrow, SyncEncryptionPartlyEncryptedError, SyncEncryptionTerminalError } from './sync-encryption';
 import { WebDavRemoteWriteConflictError } from './webdav';
 import { assertMobileWebdavConnection } from './mobile-sync-utils';
 import { DEFAULT_ATTACHMENT_CONTENT_TYPE, isHttpAttachmentUri, type MobileAttachmentFiles, type MobileAttachmentFileSystemPort } from './mobile-attachment-files';
@@ -268,7 +268,15 @@ export const createMobileAttachmentCommon = (host: MobileAttachmentCommonHost) =
     material: SyncKeyMaterial | null | undefined,
     artifact?: string | null,
   ): Promise<Uint8Array> => {
-    if (!material) return bytes;
+    if (!material) {
+      // No key here, yet the location holds ciphertext: an encryption change was cut off there. Its bytes are never this
+      // attachment's content, and this device must not write beside them (the cycle pauses the location).
+      if (inspectSyncArtifact(bytes).kind !== 'plaintext') {
+        logAttachmentByteRemoteRead({ artifact: artifact ?? '', exists: true, kind: 'encrypted', decision: 'no-key' });
+        throw new SyncEncryptionPartlyEncryptedError();
+      }
+      return bytes;
+    }
     const inspected = inspectSyncArtifact(bytes);
     if (inspected.kind === 'plaintext') {
       logAttachmentByteRemoteRead({ artifact: artifact ?? '', exists: true, kind: 'plaintext', decision: 'plaintext' });

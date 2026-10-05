@@ -43,6 +43,7 @@ const applyAlarmCompleteReceiverPatchToSource = transformFor('alarm-complete-act
 const applyAlarmDeadRowUtilPatchToSource = transformFor('alarm-dead-row-util');
 const applyAlarmActionDeadRowPatchToSource = transformFor('alarm-dead-row-actions');
 const applyAlarmExactPermissionModulePatchToSource = transformFor('alarm-exact-permission-module');
+const applyAlarmDeliveredNotificationModulePatchToSource = transformFor('alarm-delivered-notification-module');
 const applyAlarmIosCompleteActionPatchToSource = transformFor('alarm-ios-complete-action');
 const applyAlarmIosColdStartHeaderPatchToSource = transformFor('alarm-ios-cold-start-header');
 const applyAlarmIosUniqueIdentifierPatchToSource = transformFor('alarm-ios-unique-identifier');
@@ -1116,6 +1117,9 @@ describe('PATCHES registry completeness', () => {
     // reminders" is denied, so the settings screens silently stop offering the
     // fix and every reminder stays inexact.
     ['ANModule.java', 'applyAlarmExactPermissionModulePatchToSource'],
+    // Added for the expired-then-withdrawn reminder: dropping it leaves a
+    // delivered reminder in the tray after its task is completed.
+    ['ANModule.java', 'applyAlarmDeliveredNotificationModulePatchToSource'],
   ];
 
   it('has exactly one registry entry per original call site — none dropped in the collapse', () => {
@@ -1129,7 +1133,7 @@ describe('PATCHES registry completeness', () => {
   });
 
   it('every entry declares required/firstMatchOnly explicitly', () => {
-    expect(PATCHES).toHaveLength(25);
+    expect(PATCHES).toHaveLength(26);
     for (const patch of PATCHES) {
       expect(typeof patch.id).toBe('string');
       expect(typeof patch.required).toBe('boolean');
@@ -1424,5 +1428,50 @@ public class ANModule extends ReactContextBaseJavaModule {
   it('leaves an unrecognised source untouched so the registry marker check reports it', () => {
     const unexpected = 'public class ANModule extends ReactContextBaseJavaModule {}';
     expect(applyAlarmExactPermissionModulePatchToSource(unexpected)).toBe(unexpected);
+  });
+});
+
+describe('applyAlarmDeliveredNotificationModulePatchToSource', () => {
+  const PRISTINE_AN_MODULE_JAVA = `package com.emekalites.react.alarm.notification;
+
+public class ANModule extends ReactContextBaseJavaModule {
+    @ReactMethod
+    public void removeFiredNotification(int id) {
+        alarmUtil.removeFiredNotification(id);
+    }
+
+    @ReactMethod
+    public void removeAllFiredNotifications() {
+        alarmUtil.removeAllFiredNotifications();
+    }
+}`;
+
+  it('exposes the post id of a row and a clear by post id to JS', () => {
+    const output = applyAlarmDeliveredNotificationModulePatchToSource(PRISTINE_AN_MODULE_JAVA);
+
+    expect(output).toContain('public void getNotificationId(int id, Promise promise)');
+    expect(output).toContain('promise.resolve(alarm.getAlarmId());');
+    expect(output).toContain('promise.resolve(null);');
+    expect(output).toContain('public void clearNotification(int notificationId)');
+    expect(output).toContain('alarmUtil.clearNotification(notificationId);');
+    expect(output).toContain('public void removeAllFiredNotifications()');
+  });
+
+  it('composes with the exact-permission patch on the same anchor', () => {
+    const output = applyAlarmDeliveredNotificationModulePatchToSource(
+      applyAlarmExactPermissionModulePatchToSource(PRISTINE_AN_MODULE_JAVA),
+    );
+    expect(output).toContain('public void canScheduleExactAlarms(Promise promise)');
+    expect(output).toContain('public void clearNotification(int notificationId)');
+  });
+
+  it('is idempotent', () => {
+    const once = applyAlarmDeliveredNotificationModulePatchToSource(PRISTINE_AN_MODULE_JAVA);
+    expect(applyAlarmDeliveredNotificationModulePatchToSource(once)).toBe(once);
+  });
+
+  it('leaves an unrecognised source untouched so the registry marker check reports it', () => {
+    const unexpected = 'public class ANModule extends ReactContextBaseJavaModule {}';
+    expect(applyAlarmDeliveredNotificationModulePatchToSource(unexpected)).toBe(unexpected);
   });
 });

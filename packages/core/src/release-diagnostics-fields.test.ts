@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // ios-local-attachment-host and ios-attachment-draft-owned reuse releaseCheck, operation, and outcome below.
     // automation concurrent-write replay; capture routing reuses outcome below.
     'retryCount',
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.
@@ -35,6 +36,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'retainedSectionCount',
     // archive-retention: counts from a durably saved expiration batch.
     'taskCount', 'projectCount', 'sectionCount',
+    // ios-readonly-task-preview: saved viewer cache counts, never task content.
+    'checklistCount', 'attachmentCount',
     // Apple development evaluations (#915, #1194, #1214, #1195).
     // apple-pcc-evaluation: fixed synthetic fixture identifier and elapsed request time.
     'fixtureId', 'durationMs',
@@ -73,6 +76,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // pomodoro-alert-delivery reuses releaseCheck, reason, outcome, and count below.
     // reminder-withdrawn-clears-tray reuses releaseCheck, reason, and count below.
     // stale-reminder-guard reuses releaseCheck, reason, and count below.
+    // delivered-reminder-withdrawn reuses releaseCheck and count below.
     // denied-resume-cleanup reuses releaseCheck below.
     // daily-digest-independent proves the explicit daily switches reconcile with task reminders off.
     'taskRemindersEnabled', 'morningDigestEnabled', 'eveningDigestEnabled',
@@ -80,8 +84,12 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'page', 'integrationsLoadEnabled', 'syncLoadEnabled', 'advancedLoadEnabled',
     // startup-readiness (mobile and desktop)
     'route', 'elapsedMs', 'moduleElapsedMs',
+    // Global shortcut startup: bounded configured and applied shortcut names.
+    'requestedShortcut', 'appliedShortcut',
     'releaseCheck', 'backend', 'statusPublished', 'lastSyncAt', 'lastSyncStatus',
     'artifact', 'cloudProvider', 'scheme', 'host', 'delivery', 'deduped',
+    // UpNote handoff diagnostics contain only the surface, scheme and outcome.
+    'surface',
     'platform', 'total', 'multiDay', 'allDay', 'spanning',
     'presenceDue', 'hasScope', 'check', 'skipped', 'publication',
     // webdav-presence-proof (desktop/mobile WebDAV attachment adapters)

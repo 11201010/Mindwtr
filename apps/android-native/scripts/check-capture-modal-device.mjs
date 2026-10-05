@@ -23,7 +23,7 @@ import { createHash, randomInt } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, connect, evidenced, fail, hasText, inEditor, owedRetry, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { button, check, connect, evidenced, fail, hasText, inEditor, owedRetry, projectTitled, Stopped, tab, tabSelected, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -191,7 +191,7 @@ try {
     // RN's openTaskScreen: the task's project, with its editor over it; Back leaves the project for the tabs.
     nodes = await screen();
     nodes = await tapExpecting(withDescription(nodes, en['common.close']) ?? fail('no Close in the editor'),
-        (current) => !inEditor(current) && hasText(current, PROJECT) && Boolean(button(current, 'Back')), 'the task\'s project under the editor');
+        (current) => !inEditor(current) && projectTitled(current, PROJECT) && Boolean(button(current, 'Back')), 'the task\'s project under the editor');
     check(true, '(a) Save & edit opened the editor over the task\'s project');
     requireAppFront();
     sh('input keyevent KEYCODE_BACK');

@@ -107,6 +107,9 @@ jobs:
           VITE_ANALYTICS_HEARTBEAT_URL: ${{ secrets.ANALYTICS_HEARTBEAT_URL }}
           VITE_ANALYTICS_RELEASE_VERSION: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
 
+      - name: Smoke test standalone MCP helper without a JS runtime on PATH
+        run: node scripts/build-mcp-sidecar-smoke.mjs apps/desktop/src-tauri/binaries/mindwtr-mcp-x86_64-unknown-linux-gnu
+
       - name: Repair AppImage metadata
         run: |
           set -euo pipefail

@@ -24,6 +24,7 @@ type QuickDateChipsProps = {
     onSelect: (date: Date | null, preset: QuickDatePreset) => void;
     className?: string;
     wrap?: boolean;
+    allowClear?: boolean;
 };
 
 export function QuickDateChips({
@@ -32,6 +33,7 @@ export function QuickDateChips({
     onSelect,
     className,
     wrap = false,
+    allowClear = true,
 }: QuickDateChipsProps) {
     const now = new Date();
 
@@ -41,7 +43,7 @@ export function QuickDateChips({
             wrap ? 'flex-wrap overflow-visible' : 'overflow-x-auto',
             className,
         )}>
-            {QUICK_DATE_PRESETS.map((preset) => {
+            {QUICK_DATE_PRESETS.filter((preset) => allowClear || preset !== 'no_date').map((preset) => {
                 const labelConfig = QUICK_DATE_LABELS[preset];
                 const label = tFallback(t, labelConfig.key, labelConfig.fallback);
                 const active = isQuickDatePresetSelected(preset, selectedDate, now);

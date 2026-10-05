@@ -362,7 +362,11 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
         projectcheck: t('process.moreThanOneStep'),
         twomin: t('process.twoMin'),
         decide: t('process.nextStep'),
-        context: t('taskEdit.contextsLabel'),
+        context: showContextsField && showTagsField
+            ? t('filters.contexts')
+            : showContextsField
+                ? t('taskEdit.contextsLabel')
+                : showTagsField ? t('taskEdit.tagsLabel') : t('taskEdit.details'),
         reference: t('process.reference'),
         someday: t('process.someday'),
         project: t('process.project'),
@@ -708,6 +712,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 t={t}
                                 fields={scheduleFields}
                                 visibleFieldKeys={['review']}
+                                requiredFieldKeys={['review']}
                                 variant="guided"
                             />
                             <button
@@ -893,9 +898,13 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                     )}
 
                     {showContextsField ? (
-                        <>
+                        <div className="space-y-2">
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+                                {t('taskEdit.contextsLabel')}
+                            </div>
                             <div className="flex gap-2">
                                 <TokenAutocompleteInput
+                                    ariaLabel={t('taskEdit.contextsLabel')}
                                     placeholder="@home"
                                     value={customContext}
                                     onChange={setCustomContext}
@@ -920,9 +929,6 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
 
                             {suggestedContexts.length > 0 && (
                                 <div className="space-y-2">
-                                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-                                        {t('taskEdit.contextsLabel')}
-                                    </div>
                                     <div className="flex flex-wrap gap-2 justify-center">
                                         {suggestedContexts.map(ctx => (
                                             <button
@@ -941,7 +947,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                     </div>
                                 </div>
                             )}
-                        </>
+                        </div>
                     ) : null}
 
                     {showTagsField ? (

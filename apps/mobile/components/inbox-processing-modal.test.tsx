@@ -1025,6 +1025,9 @@ describe('InboxProcessingModal', () => {
       root.findByType('DateTimePicker' as any).props.onChange({ type: 'set' }, new Date(2026, 8, 10, 12, 0, 0));
     });
 
+    expect(root.findAllByProps({ accessibilityLabel: 'taskEdit.reviewDateLabel: common.clear' })).toHaveLength(0);
+    expect(root.findAllByProps({ accessibilityLabel: 'taskEdit.reviewDateLabel: No date' })).toHaveLength(0);
+
     pressStep(root, 'File it');
     await flushAsyncActions();
 

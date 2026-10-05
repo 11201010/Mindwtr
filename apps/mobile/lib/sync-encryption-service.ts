@@ -11,6 +11,7 @@ import {
     createSyncEncryptionService,
     type SyncEncryptionService,
     type SyncEncryptionStatus,
+    type SyncEncryptionTransitionKind,
     type SyncEncryptionTransitionOptions,
 } from '@mindwtr/core';
 import { DOMParser } from '@xmldom/xmldom';
@@ -133,6 +134,18 @@ export const provideSyncEncryptionPassphrase = (
     passphrase: string,
 ): Promise<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'> =>
     encryptionService().provideSyncEncryptionPassphrase(passphrase);
+
+/** "Abandon setup": drops an unfinished change on this device only (core's abandonSyncEncryptionTransition). */
+export const abandonSyncEncryptionTransition = (): Promise<SyncEncryptionTransitionKind | null> =>
+    encryptionService().abandonSyncEncryptionTransition();
+
+/** Whether the sync location holds ciphertext beside plaintext (a sample of its attachments; core's probeSyncLocationCiphertext). */
+export const probeSyncLocationCiphertext = (): Promise<'plaintext' | 'encrypted' | 'mixed'> =>
+    encryptionService().probeSyncLocationCiphertext();
+
+/** "Check this location again" for a location held as partly encrypted (core's recheckPartlyEncryptedLocation). */
+export const recheckPartlyEncryptedLocation = (): Promise<'plaintext' | 'encrypted' | 'mixed'> =>
+    encryptionService().recheckPartlyEncryptedLocation();
 
 /** "Not now". Re-affirms the persisted no-key state; automatic and background sync stay
  *  off for this backend until a passphrase actually validates. */

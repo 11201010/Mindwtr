@@ -2,13 +2,14 @@
 // upgradetest build, then by a newer RN recovery build.
 //
 //   node apps/android-native/scripts/build-upgrade-harness.mjs
-//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6] [--keep]
+//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6,7,8] [--keep]
 //
 // Scenarios, each from a fresh RN v1.3.2 install:
 //   1   happy upgrade: the native app shows the RN data, imports the capture RN
 //       left queued once at its first boot, captures once, keeps every
 //       pre-upgrade row and every other non-database file, and leaves a
-//       .prewrite checkpoint that holds the pre-upgrade rows;
+//       .prewrite checkpoint that holds the pre-upgrade rows. In RKStorage only
+//       RN's alarm map may change (the reminder alarms), after a byte checkpoint;
 //   4   recovery (continues 1): the RN 154 build opens the database and keeps
 //       the native edit and the native import. While the recovery source is v1.3.2 a failure is
 //       reported as BLOCKED (RN startup snapshot bug) and does not fail the run;
@@ -28,6 +29,16 @@
 //   6   an RN user's WebDAV sync: RN v1.3.2 configures WebDAV in its own Sync screen against a local
 //       folder (sync-harness.mjs, through adb reverse); the native app finds RN's keys in RKStorage and
 //       the password in RN's secret store, shows them on its Sync screen, and syncs with them.
+//   7   an RN user's reminder alarms (task reminders turned on in RN's database): RN v1.3.2 sets its alarm for a task due in two hours (`dumpsys alarm`: one alarm to its
+//       library's AlarmReceiver); the native app's first start cancels it, deletes RN's alarm database and map, and sets its own
+//       alarm for the same task: RN's gone, the native one present, once each. Then the RN 154 recovery build over the native
+//       app: it reads the native app's map under RN's key, holds none of its alarms, and sets its own alarm for the task, once.
+//   8   an RN user's widget check-off still in its Undo file (files/mindwtr-widget-checkoff-pending.json,
+//       RN's PendingCheckoffStore format) when the native app replaces RN: the native app's first boot
+//       completes that task once, through the queue, and a relaunch writes nothing more.
+// In 1, 2, 2b and 5b the native app also publishes RN's home-screen widget payload (shared_prefs/mindwtr_widget.xml,
+// pass W1): that one other file may change, and only as RN's format with its one `payload` key, the value equal to
+// core's publication on a copy of the database the app left (host-side core with bun, widget-payload.mjs).
 //
 // RN writes every seed row through its own code: queued captures in
 // files/pending-captures, which RN imports at launch (tasks, a +Project task,
@@ -46,8 +57,9 @@ import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { bootFailure, box, button, check, connect, draftText, evidenced, fail, field, hasText, Stopped, inboxCount, tab, tagged, withDescription } from './device.mjs';
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
+import { PUBLISHED, REFRESHED, WIDGET_PREFS, corePublication, count, firstDifference, isRnPayloadPrefsWrite, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
-const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6'];
+const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
 const args = process.argv.slice(2);
 const serials = args.filter((arg) => !arg.startsWith('--'));
@@ -100,6 +112,8 @@ const JSON_BACKUP = 'mindwtr-data';
 const ASYNC_STORAGE = 'databases/RKStorage';
 // The native app's byte copy of RKStorage, taken once before its first RKStorage write.
 const RN_CHECKPOINT = 'files/SQLite/RKStorage.prewrite';
+// RN's reminder alarm map (core's REMINDER_ALARM_MAP_STORAGE_KEY): the native app's reminder alarms clear RN's and keep theirs there.
+const ALARM_MAP = 'mindwtr:local:alarms:v1';
 const AUTO_CLEAN_LABEL = 'Clean up quick add text'; // RN v1.3.2 English label of settings.quickAddAutoClean
 const TMP = '/data/local/tmp/mindwtr-upgradetest';
 const DB = 'files/SQLite/mindwtr.db';
@@ -117,6 +131,7 @@ const titlesFor = (n) => ({
 const device = connect({ serial, pkg: PKG, uiFile: `${TMP}-ui.xml` });
 const { adbRaw, sh, home, front, requireAppFront, pid, screen, waitFor, tap, type, pull } = device;
 const runAs = (command) => sh(`run-as ${PKG} ${command}`);
+const phoneZone = sh('getprop persist.sys.timezone');
 
 // ---- device ----
 const installed = () => sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`);
@@ -180,12 +195,52 @@ const snapshot = () => new Map(runAs(
 // process start: the same library's state, never user data.
 const PLATFORM_STATE = new Set(['files/profileInstalled', 'shared_prefs/android.app.ActivityThread.IDS.xml']);
 const isPlatformState = (path) => PLATFORM_STATE.has(path) || /^no_backup\/androidx\.work\.workdb(-wal|-shm|-journal)?$/.test(path);
+// The native app's reminder ledger (Reminders.kt ReminderLedger): its own new file, written once it holds an alarm; RN never has
+// it. Allowed only as a new file whose every entry is an alarm id armed or fired at a time (checkLedger reads it).
+const LEDGER = 'shared_prefs/mindwtr_reminder_ledger.xml';
+const checkLedger = (label, after) => {
+    if (!after.has(LEDGER)) return;
+    const entries = [...runAs(`cat ${LEDGER}`).matchAll(/<string name="([^"]*)">([^<]*)<\/string>/g)];
+    const other = runAs(`cat ${LEDGER}`).replace(/<\?xml[^>]*>|<\/?map\s*\/?>|<string name="[^"]*">[^<]*<\/string>/g, '').trim();
+    check(entries.length > 0 && entries.every(([, id, value]) => /^\d+$/.test(id) && /^(armed|fired):\d+$/.test(value)) && other === '',
+        `(${label}) the native reminder ledger holds only alarm ids and their times (${entries.length})`);
+};
 const differences = (before, after, { changedOk = () => false, newOk = () => false } = {}) => [
     ...[...before].filter(([path, hash]) => !isPlatformState(path) && !changedOk(path) && after.get(path) !== hash)
         .map(([path]) => `${after.has(path) ? 'changed' : 'removed'} ${path}`),
-    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path)).map((path) => `new ${path}`),
+    ...[...after.keys()].filter((path) => !before.has(path) && !isPlatformState(path) && !newOk(path) && path !== LEDGER).map((path) => `new ${path}`),
 ];
 const isDatabase = (path) => /^files\/SQLite\/mindwtr\.db(-wal|-shm)?$/.test(path);
+
+// The native app writes one other file on purpose (pass W1): RN's home-screen widget payload, RN's WidgetPayloadStore. A check
+// allows that write only with verifyWidgetPayload: RN's format with its one `payload` key, and the value core's own publication
+// for the database the app left, with the inputs the app logged.
+const widgetPrefsNow = () => widgetPrefs(runAs(`cat ${WIDGET_PREFS} 2>/dev/null || true`));
+const isWidgetPayload = (path) => path === WIDGET_PREFS;
+/**
+ * Before the app stops: leaves it (the app publishes what changed as it leaves; while it is in front a change waits up to five
+ * minutes, as RN's), waits until that publication is stored and drawn, and returns its logged inputs.
+ */
+const widgetsPublished = async (label) => {
+    let context = null;
+    if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
+    await sleep(2500);
+    await until(`(${label}) the widget payload to be stored`, () => {
+        const text = device.logs(pid(), TAG);
+        context = publicationContext(text);
+        return context !== null && count(text, REFRESHED) >= count(text, PUBLISHED);
+    }, 30_000);
+    return context;
+};
+const verifyWidgetPayload = (label, before, context) => {
+    const after = widgetPrefsNow();
+    check(isRnPayloadPrefsWrite(before, after),
+        `(${label}) ${WIDGET_PREFS} is RN's widget payload store, its one key \`payload\` (before: ${before.entries.join(', ') || 'no file'}; after: ${after.entries.join(', ')})`);
+    const expected = corePublication({ db: pullDatabase(`${label}-widgets`), language: context.language, context, zone: phoneZone, out: resolve(work, `${label}-widgets.json`) });
+    const difference = firstDifference(JSON.parse(after.payload), JSON.parse(expected));
+    check(difference === null, `(${label}) the payload equals core's publication on a copy of the database the native app left (${context.language}, ${context.locale}, `
+        + `${context.scheme}, ${after.payload.length} characters)${difference ? `: ${difference}` : ''}`);
+};
 const isAsyncStorage = (path) => /^databases\/RKStorage(-wal|-shm|-journal)?$/.test(path);
 const isRnCheckpoint = (path) => path.startsWith(`${RN_CHECKPOINT}/`);
 
@@ -271,8 +326,9 @@ const rewriteAsyncStorage = (name, statements) => {
     pushPrivate(copy, ASYNC_STORAGE);
     runAs(`rm -f ${ASYNC_STORAGE}-wal ${ASYNC_STORAGE}-shm ${ASYNC_STORAGE}-journal`);
 };
-// Names (never values) of the AsyncStorage rows that differ, other than the marker and a newly set reconcile flag.
-const asyncChanges = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter((name) => name !== MARKER
+// Names (never values) of the AsyncStorage rows that differ, other than the marker, a newly set reconcile flag, and RN's alarm map
+// (the reminder alarms clear RN's and keep theirs under RN's key: each scenario that allows it also checks RKStorage's checkpoint).
+const asyncChanges = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter((name) => name !== MARKER && name !== ALARM_MAP
     && before.get(name) !== after.get(name) && !(name === RECONCILED && !before.has(name) && after.get(name) === '1'));
 // The RKStorage checkpoint must hold exactly the pre-import RKStorage files, byte for byte.
 const checkpointMatches = (before, after) => ['', '-wal', '-journal', '-shm'].every((suffix) =>
@@ -421,7 +477,9 @@ const scenarioUpgrade = async () => {
     queue([queued]);
     const queuedPath = `files/pending-captures/${queued.id}.json`;
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('1-pre'));
+    const preAsync = asyncStorage('1-pre-rkstorage');
     const expected = [...pre.tasks.filter((task) => task.status === 'inbox' && !task.deletedAt).map((task) => task.title), t.queued].sort();
     console.log(`pre-upgrade rows: ${JSON.stringify(pre.counts)}; ${before.size} files hashed`);
 
@@ -437,6 +495,7 @@ const scenarioUpgrade = async () => {
     await tap(button(await screen(), 'Save'));
     nodes = await waitFor('the native capture', (current) => header(current) === expected.length + 1 && draftText(current) === '');
     check(hasText(nodes, t.native), '(1) native capture is listed');
+    const published = await widgetsPublished('1');
     await stopApp();
 
     const after = snapshot();
@@ -452,9 +511,59 @@ const scenarioUpgrade = async () => {
     check(checkpointChanges.length === 0, `(1) .prewrite holds every pre-upgrade row exactly${shortList(checkpointChanges)}`);
     const imported = rows(post, TASK_SQL).filter((task) => task.title === t.queued && !task.deletedAt);
     check(imported.length === 1 && imported[0].id === queued.id && !after.has(queuedPath), '(1) the native boot imported the capture RN left queued once, under its id, and removed its file');
-    const changed = differences(before, after, { changedOk: (path) => isDatabase(path) || path === queuedPath, newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` });
-    check(changed.length === 0, `(1) every other non-database file is unchanged (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
+    // The one RKStorage write the native app makes here on purpose: the reminder alarms clear RN's alarm map and keep their own under
+    // RN's key, after the byte checkpoint of RKStorage. No other RKStorage row may change.
+    const rnStateWritten = [ASYNC_STORAGE, `${ASYNC_STORAGE}-wal`, `${ASYNC_STORAGE}-journal`].some((path) => before.get(path) !== after.get(path))
+        || [...after.keys()].some(isRnCheckpoint);
+    const asyncChanged = (() => {
+        const postAsync = asyncStorage('1-post-rkstorage');
+        return [...new Set([...preAsync.keys(), ...postAsync.keys()])].filter((name) => preAsync.get(name) !== postAsync.get(name));
+    })();
+    check(asyncChanged.every((name) => name === ALARM_MAP), `(1) RKStorage: only RN's alarm map ${ALARM_MAP} changed${shortList(asyncChanged)}`);
+    check(!rnStateWritten || checkpointMatches(before, after), `(1) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte, taken before that write`);
+    const changed = differences(before, after, {
+        changedOk: (path) => isDatabase(path) || path === queuedPath || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
+    });
+    checkLedger('1', after);
+    check(changed.length === 0, `(1) every other non-database file is unchanged but RN's widget payload (${[...before.keys()].filter((path) => !isDatabase(path)).length} files)${shortList(changed)}`);
+    verifyWidgetPayload('1', widgetsBefore, published);
     return { t, pre, queued };
+};
+
+const scenarioPendingCheckoff = async () => {
+    console.log('\n# 8 widget check-off pending at the upgrade');
+    fresh();
+    const title = `91${run}`;
+    const capture = { id: randomUUID(), title, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    queue([capture]);
+    device.launch(RN_ACTIVITY);
+    await drained([capture], 'one queued capture');
+    await stopApp();
+    const taskSql = `SELECT status, rev FROM tasks WHERE id = '${capture.id}' AND deletedAt IS NULL`;
+    const [before] = rows(pullDatabase('8-pre'), taskSql);
+    check(before?.status === 'inbox', `(8) RN imported ${title}`);
+    // RN's PendingCheckoffStore file, tapped a minute ago: past its Undo window, never swept because RN stopped.
+    const pendingPath = 'files/mindwtr-widget-checkoff-pending.json';
+    const local = resolve(work, '8-pending.json');
+    writeFileSync(local, JSON.stringify({ version: 1, pending: [{ id: capture.id, at: Date.now() - 60_000 }] }));
+    pushPrivate(local, pendingPath);
+    install(APKS.native153, true);
+    device.launch(NATIVE_ACTIVITY);
+    const nodes = await nativeScreen();
+    check(!unavailable(nodes), `(8) native boot succeeded ${unavailable(nodes) ?? ''}`);
+    await until('the native boot to store the check-off', () => rows(pullDatabase('8-poll'), taskSql)[0]?.status === 'done', 60_000);
+    await sleep(3000);
+    await stopApp();
+    const [after] = rows(pullDatabase('8-post'), taskSql);
+    check(after.status === 'done' && after.rev === before.rev + 1, `(8) the native boot completed the RN check-off once (rev ${before.rev} to ${after.rev})`);
+    check(JSON.parse(runAs(`cat ${pendingPath}`)).pending.length === 0, '(8) RN\'s pending file is empty');
+    check(!runAs('ls files/pending-captures').split(/\s+/).some((name) => name.endsWith('.json')), '(8) nothing is left in the queue');
+    device.launch(NATIVE_ACTIVITY);
+    await nativeScreen();
+    await sleep(3000);
+    await stopApp();
+    check(rows(pullDatabase('8-relaunch'), taskSql)[0].rev === after.rev, '(8) a relaunch writes nothing more');
 };
 
 const scenarioRecovery = async ({ t, pre, queued }) => {
@@ -501,6 +610,7 @@ const scenarioJsonAhead = async () => {
         + `INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${MARKER}', '1');`);
     console.log(`INJECTED (2): one Inbox task (rev 1, fresh timestamps, a non-ASCII description) in AsyncStorage ${JSON_BACKUP} that SQLite never took, and ${MARKER} = '1'`);
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('2-pre'));
     const preAsync = asyncStorage('2-pre-rkstorage');
     check(pre.tasks.every((task) => task.id !== extra.id), '(2) SQLite does not hold the backup-only task before the upgrade');
@@ -514,6 +624,7 @@ const scenarioJsonAhead = async () => {
     check(hasText(nodes, t.backupOnly), '(2) native Inbox shows the task only the JSON backup held');
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(2) guard logged outcome=clear');
     importLine('2', { outcome: 'imported', path: 'json-ahead', rnState: 'updated' });
+    const published = await widgetsPublished('2');
     await stopApp();
 
     const after = snapshot();
@@ -529,10 +640,11 @@ const scenarioJsonAhead = async () => {
     check(asyncChanged.length === 0, `(2) no other AsyncStorage row changed, ${JSON_BACKUP} included${shortList(asyncChanged)}`);
     check(checkpointMatches(before, after), `(2) ${RN_CHECKPOINT} holds the pre-import RKStorage files byte for byte`);
     const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isDatabase(path) || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(2) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(2) every other file is unchanged but RN's widget payload${shortList(changed)}`);
+    verifyWidgetPayload('2', widgetsBefore, published);
     pull(`${DB}.prewrite`, resolve(work, '2-post/mindwtr.db.prewrite'));
     check(rowChanges(pre.rows, resolve(work, '2-post/mindwtr.db.prewrite')).length === 0, '(2) .prewrite holds every pre-import row');
 
@@ -577,6 +689,7 @@ const scenarioCorruptBackup = async () => {
         + `INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${MARKER}', '1');`);
     console.log(`INJECTED (2b): AsyncStorage ${JSON_BACKUP} cut to text that does not parse, and ${MARKER} = '1'`);
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const pre = readState(pullDatabase('2b-pre'));
     const preAsync = asyncStorage('2b-pre-rkstorage');
 
@@ -586,6 +699,7 @@ const scenarioCorruptBackup = async () => {
     check(!unavailable(nodes), `(2b) native boot succeeded ${unavailable(nodes) ?? ''}`);
     check(header(nodes) === liveInbox(pre.tasks).length, '(2b) native Inbox shows the RN Inbox as SQLite held it');
     importLine('2b', { outcome: 'abandoned', path: 'json-ahead', reason: 'backup-corrupt', rnState: 'updated' });
+    const published = await widgetsPublished('2b');
     await stopApp();
 
     const after = snapshot();
@@ -601,10 +715,11 @@ const scenarioCorruptBackup = async () => {
     check(asyncChanged.length === 0, `(2b) no other AsyncStorage row changed; the corrupt backup stays as RN left it${shortList(asyncChanged)}`);
     check(checkpointMatches(before, after), `(2b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte`);
     const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isDatabase(path) || isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(2b) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(2b) every other file is unchanged but RN's widget payload${shortList(changed)}`);
+    verifyWidgetPayload('2b', widgetsBefore, published);
 };
 
 const scenarioUnreadable = async (label, withWal) => {
@@ -669,6 +784,7 @@ const scenarioMissingWithBackup = async () => {
     console.log(`INJECTED (5b): added to AsyncStorage ${JSON_BACKUP} one task with notes, dates, tags, a checklist and an assignee, one area, one person and two synced settings; deleted ${DB} and its -wal and -shm`);
     const preAsync = asyncStorage('5b-pre-rkstorage');
     const before = snapshot();
+    const widgetsBefore = widgetPrefsNow();
     const expected = liveInbox(backup.tasks);
 
     install(APKS.native153, true);
@@ -680,6 +796,7 @@ const scenarioMissingWithBackup = async () => {
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(5b) guard logged outcome=clear');
     const flagWasSet = preAsync.has(RECONCILED);
     importLine('5b', { outcome: 'imported', path: 'migrate', rnState: flagWasSet ? 'unchanged' : 'updated' });
+    const published = await widgetsPublished('5b');
     await stopApp();
 
     const after = snapshot();
@@ -702,13 +819,17 @@ const scenarioMissingWithBackup = async () => {
     check(postAsync.get(RECONCILED) === '1', '(5b) the reconcile flag is set');
     const asyncChanged = asyncChanges(preAsync, postAsync);
     check(asyncChanged.length === 0, `(5b) no other AsyncStorage row changed, ${JSON_BACKUP} included${shortList(asyncChanged)}`);
-    check(flagWasSet ? after.get(ASYNC_STORAGE) === before.get(ASYNC_STORAGE) && ![...after.keys()].some(isRnCheckpoint) : checkpointMatches(before, after),
-        flagWasSet ? '(5b) RN had set the reconcile flag, so RKStorage is untouched and not checkpointed' : `(5b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files`);
+    // With the flag already set only the reminder alarms write RKStorage (RN's alarm map), and only after its checkpoint.
+    const alarmMapChanged = preAsync.get(ALARM_MAP) !== postAsync.get(ALARM_MAP);
+    check(flagWasSet && !alarmMapChanged ? after.get(ASYNC_STORAGE) === before.get(ASYNC_STORAGE) && ![...after.keys()].some(isRnCheckpoint) : checkpointMatches(before, after),
+        flagWasSet && !alarmMapChanged ? '(5b) RN had set the reconcile flag, so RKStorage is untouched and not checkpointed' : `(5b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files`);
     const changed = differences(before, after, {
-        changedOk: (path) => isAsyncStorage(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path),
+        changedOk: (path) => isAsyncStorage(path) || isWidgetPayload(path),
+        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
     });
-    check(changed.length === 0, `(5b) every other file is unchanged${shortList(changed)}`);
+    check(changed.length === 0, `(5b) every other file is unchanged but RN's widget payload${shortList(changed)}`);
+    checkLedger('5b', after);
+    verifyWidgetPayload('5b', widgetsBefore, published);
 };
 
 // ---- 6: an RN user's sync configuration ----
@@ -826,6 +947,98 @@ const scenarioSync = async () => {
     }
 };
 
+// ---- 7: RN's reminder alarms at the upgrade ----
+const RN_RECEIVER = 'com.emekalites.react.alarm.notification.AlarmReceiver';
+const NATIVE_FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
+/** This package's pending alarms (`dumpsys alarm`): RN's (its library's receiver) and the native app's (its FIRE action), with when each fires. */
+const packageAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
+    .filter((block) => block.includes(PKG))
+    .map((block) => ({ rn: block.includes(RN_RECEIVER), native: block.includes(`*walarm*:${NATIVE_FIRE}`), at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN) }))
+    // Reminder alarms are RTC (an epoch time); a block that ends dumpsys's pending list can carry the delivery history's lines.
+    .filter((alarm) => (alarm.rn || alarm.native) && alarm.at > 1e12);
+// RN's library sets the minute and second but keeps the current milliseconds (AlarmUtil's Calendar), so its alarm is in that minute.
+const rnMinute = (alarm) => Math.floor(alarm.at / 60_000) * 60_000;
+/** The process gone without a force-stop (a force-stop would drop the alarms this scenario is about). */
+const killWithoutStop = async () => {
+    if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
+    for (let attempt = 0; attempt < 20 && pid(); attempt += 1) {
+        try { runAs(`kill -9 ${pid()}`); } catch { /* gone meanwhile */ }
+        await sleep(500);
+    }
+    if (pid()) fail('the app process did not end');
+};
+const scenarioAlarms = async () => {
+    console.log('\n# 7 reminder alarms: RN\'s cancelled, the native app\'s set, once each');
+    fresh();
+    const zone = sh('getprop persist.sys.timezone') || 'UTC';
+    const dueAt = Math.ceil((Number(sh('date +%s')) * 1000 + 2 * 3600_000) / 60_000) * 60_000;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+        minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(dueAt)).map((part) => [part.type, part.value]));
+    const title = `77${run}`;
+    const item = { id: randomUUID(), title: `${title} /next /due:${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`, createdAt: new Date().toISOString(), source: 'android-quick-capture' };
+    // RN's first launch makes its database with task reminders off (its default); they are turned on in that database, as RN's
+    // Settings › Notifications would, before RN reads it again.
+    device.launch(RN_ACTIVITY);
+    await until('RN\'s settings row', () => rows(pullDatabase('7-first'), 'SELECT id FROM settings WHERE id = 1').length === 1, 60_000);
+    await stopApp();
+    const db = pullDatabase('7-reminders-on');
+    execFileSync('bun', ['-e', `
+        import { Database } from 'bun:sqlite';
+        const db = new Database(process.env.CHECK_DB);
+        db.query("UPDATE settings SET data = json_set(data, '$.notificationsEnabled', json('true')) WHERE id = 1").run();
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        db.close();
+    `], { env: { ...process.env, CHECK_DB: db } });
+    pushPrivate(db, DB);
+    runAs(`rm -f ${DB}-wal ${DB}-shm`);
+    // RN's start may apply its AsyncStorage JSON backup over SQLite (its startup snapshot): the backup gets the same switch.
+    if (asyncStorage('7-backup').has(JSON_BACKUP)) {
+        rewriteAsyncStorage('7-backup-on', `UPDATE catalystLocalStorage SET value = json_set(value, '$.settings.notificationsEnabled', json('true')) WHERE key = '${JSON_BACKUP}';`);
+    }
+    queue([item]);
+    device.launch(RN_ACTIVITY);
+    await drained([item], 'the timed capture');
+    try {
+        await until('RN\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && rnMinute(alarm) === dueAt), 60_000);
+    } catch (error) {
+        console.log(`evidence - due ${dueAt} (${item.title}); this package's alarm lines:\n${sh('dumpsys alarm').split('\n').filter((line) => line.includes(PKG) || /origWhen/.test(line)).slice(0, 30).join('\n')}`);
+        console.log(`evidence - RN's map: ${asyncStorage('7-evidence').get('mindwtr:local:alarms:v1')}`);
+        console.log(`evidence - RN's task: ${JSON.stringify(rows(pullDatabase('7-evidence'), `SELECT title, dueDate, status FROM tasks WHERE id = '${item.id}'`))}`);
+        console.log(`evidence - RN's reminders switch: ${JSON.stringify(rows(pullDatabase('7-evidence-settings'), "SELECT json_extract(data, '$.notificationsEnabled') AS on_ FROM settings WHERE id = 1"))}`);
+        throw error;
+    }
+    await killWithoutStop();
+    const before = packageAlarms();
+    console.log(`info - this package's alarms before the upgrade: ${JSON.stringify(before.map(({ rn, native, at }) => ({ rn, native, at })))}; due ${dueAt}`);
+    const rnMap = JSON.parse(asyncStorage('7-rn').get('mindwtr:local:alarms:v1') ?? '{}');
+    check(before.filter((alarm) => alarm.rn && rnMinute(alarm) === dueAt).length === 1 && !before.some((alarm) => alarm.native),
+        `(7) before: RN holds one alarm for ${title} at its due time, to its library's AlarmReceiver; the native app none`);
+    check(Number.isInteger(rnMap[`task:${item.id}`]?.id) && runAs('ls databases').split(/\s+/).includes('rnandb'), '(7) RN\'s alarm map and alarm database name it');
+    sh('logcat -c');
+    install(APKS.native153, true);
+    device.launch(NATIVE_ACTIVITY);
+    check(!unavailable(await nativeScreen()), '(7) native boot succeeded');
+    await until('the native alarm', () => packageAlarms().some((alarm) => alarm.native && alarm.at === dueAt), 60_000);
+    await sleep(3000);
+    const after = packageAlarms();
+    check(!after.some((alarm) => alarm.rn), '(7) after: RN\'s alarm is gone');
+    check(after.filter((alarm) => alarm.native && alarm.at === dueAt).length === 1, '(7) after: the native app holds one alarm for the task, at its due time');
+    check(!runAs('ls databases').split(/\s+/).some((name) => name.startsWith('rnandb')), '(7) RN\'s alarm database is deleted');
+    const nativeMap = JSON.parse(asyncStorage('7-native').get('mindwtr:local:alarms:v1') ?? '{}');
+    const entry = nativeMap[`task:${item.id}`];
+    check(Number.isInteger(entry?.id) && !entry.pending && entry.id !== rnMap[`task:${item.id}`].id,
+        `(7) the alarm map is the native plan's: the task under core's id ${entry?.id}, not RN's row ${rnMap[`task:${item.id}`].id}`);
+    check(adbRaw('logcat', '-d', '-s', `${TAG}:*`).toString('utf8').includes('rnCancelled=1'), '(7) the native start logged one RN alarm cancelled');
+    await killWithoutStop();
+    // RN recovery over the native app: the map under RN's key is the native app's, whose alarms RN does not hold.
+    install(APKS.rn154, true);
+    device.launch(RN_ACTIVITY);
+    await until('RN recovery\'s alarm for the task', () => packageAlarms().some((alarm) => alarm.rn && rnMinute(alarm) === dueAt), 90_000);
+    await sleep(3000);
+    check(packageAlarms().filter((alarm) => alarm.rn && rnMinute(alarm) === dueAt).length === 1, '(7) RN recovery over the native app sets its own alarm for the task, once');
+    await killWithoutStop();
+};
+
 let blocked4 = '';
 try {
     rmSync(work, { recursive: true, force: true });
@@ -861,6 +1074,8 @@ try {
     if (want('5')) await scenarioMissing();
     if (want('5b')) await scenarioMissingWithBackup();
     if (want('6')) await scenarioSync();
+    if (want('7')) await scenarioAlarms();
+    if (want('8')) await scenarioPendingCheckoff();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
     evidenced(error);

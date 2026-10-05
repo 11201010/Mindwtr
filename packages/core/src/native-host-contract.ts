@@ -1,3 +1,4 @@
+import { createReferenceProjectNextActionMethods } from './native-host-contract-project-next-action';
 import { MAX_FOCUSED_PROJECTS } from './store-projects/project-actions';
 import { AREA_FILTER_ALL, AREA_FILTER_NONE, areaFilterSelectionToFilters, areaFilterSelectionToValue, cycleAreaFilterSelection, isAreaFilterSelectionActive, isTaskVisibleInArea, isTaskVisibleInInbox, resolveAreaFilterSelection, taskMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { DEFAULT_PROJECT_COLOR } from './color-constants';
@@ -254,6 +255,8 @@ import {
 import { createReviewViewMethods } from './native-host-contract-review-views';
 import { createQuickCaptureMethods } from './native-host-contract-quick-capture';
 import { createMindSweepMethods } from './native-host-contract-mind-sweep';
+import { createOwnedEditorFileAddTaskDraftSaveMethods } from './native-host-contract-owned-editor-save';
+import { createOwnedFileAddTaskDraftSaveMethods } from './native-host-contract-owned-file-save';
 import { createTaskDraftSaveMethods, getNativeTaskScheduleBase, getNativeTaskRecurrenceBase, type NativeTaskScheduleBase, type NativeTaskRecurrenceBase } from './native-host-contract-task-save';
 import { createTaskEditorResumeMethods } from './native-host-contract-task-editor-resume';
 import { canCancelNativeTask, canSkipNativeTaskOccurrence, createTaskChecklistSaveMethods } from './native-host-contract-task-checklist';
@@ -284,9 +287,13 @@ import { createProjectDeleteMethods } from './native-host-contract-project-delet
 import { createProjectDuplicateMethods } from './native-host-contract-project-duplicate';
 import { createProjectLifecycleMethods } from './native-host-contract-project-lifecycle';
 import { createArchivedTaskRestoreMethods } from './native-host-contract-archive-task-restore';
+import { createReferenceTasksMoveMethods } from './native-host-contract-reference-bulk-status';
+import { createReferenceTasksAddTagMethods } from './native-host-contract-reference-bulk-tag';
+import { createReferenceTasksRemoveTagMethods } from './native-host-contract-reference-bulk-remove-tag';
 import { createArchivedTasksRestoreMethods } from './native-host-contract-archive-bulk-restore';
 import { createArchivedTasksDeleteMethods } from './native-host-contract-archive-bulk-delete';
 import { createProjectDateMethods } from './native-host-contract-project-date';
+import { createProjectEditMethods } from './native-host-contract-project-edit';
 import { createProjectAreaMethods } from './native-host-contract-project-area';
 import { createProjectSectionMethods } from './native-host-contract-project-section';
 import { createProjectSectionRenameMethods } from './native-host-contract-project-section-rename';
@@ -340,6 +347,7 @@ import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChec
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 import { createReminderMethods } from './native-host-contract-reminders';
+export { NATIVE_REMINDER_STATE_STORAGE_KEY } from './native-host-contract-reminders';
 import { createAttachmentMethods, readNativeAttachments, type NativeAttachmentsHost } from './native-host-contract-attachments';
 import { mergeTaskDraftAttachments } from './attachment-editor-model';
 import { createCaptureModalMethods } from './native-host-contract-capture-modal';
@@ -1587,13 +1595,20 @@ export function createNativeHostContract(options: {
         revision: (now) => `${revision()}:${displayRevision(now)}`,
     });
 
-    return {
+    const taskChecklistMethods = createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
+        validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject });
+    // The contract itself, for the commands that run its own methods (Project details' journaled edit).
+    let self: Record<string, unknown> | null = null;
+    const contract = {
         version: NATIVE_HOST_CONTRACT_VERSION,
+        ...createProjectEditMethods({ readiness, save, contract: () => self ?? {} }),
         ...createTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
+        ...createOwnedFileAddTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
+        ...createOwnedEditorFileAddTaskDraftSaveMethods({ readiness, save, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value) }),
         ...createTaskEditorResumeMethods({ readiness, validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value),
             isReadOnly: isInArchivedProject }),
-        ...createTaskChecklistSaveMethods({ readiness, save, receipts, language: () => language,
-            validateField: (field, value) => DRAFT_VALUE_CHECKS[field](value), isReadOnly: isInArchivedProject }),
+        ...taskChecklistMethods,
+        ...createReferenceProjectNextActionMethods({ readiness, save, t: () => translate, originMethods: taskChecklistMethods }),
         ...createTaskPromotionMethods({ readiness, save, isReadOnly: isInArchivedProject }),
         ...inboxProcessingMethods,
         // Settings › AI and the AI actions: native-host-contract-ai.ts.
@@ -1662,6 +1677,7 @@ export function createNativeHostContract(options: {
             t: () => translate,
             formatDate: () => createDateFormatter(dateFormatting()),
             views: { ...menuViewMethods, ...inboxViewMethods },
+            pickerRevision: () => `${revision()}:${settingsRevision()}:${language}:${systemLocale ?? ''}`,
         }),
         // The Board: native-host-contract-board.ts.
         ...createBoardViewMethods({
@@ -1828,6 +1844,9 @@ export function createNativeHostContract(options: {
         ...createProjectLifecycleMethods({ readiness, save }),
         ...createArchivedTaskRestoreMethods({ readiness, save }),
         ...createArchivedTasksRestoreMethods({ readiness, save }),
+        ...createReferenceTasksMoveMethods({ readiness, save }),
+        ...createReferenceTasksAddTagMethods({ readiness, save }),
+        ...createReferenceTasksRemoveTagMethods({ readiness, save }),
         ...createArchivedTasksDeleteMethods({ readiness, save, t: () => translate }),
         ...createProjectDateMethods({ readiness, save,
             revision: projectMutationRevision }),
@@ -2547,6 +2566,37 @@ export function createNativeHostContract(options: {
             return { ok: true, value: { kind: run.target.kind, id: run.target.id } };
         },
 
+        /**
+         * RN's Notes Preview of the unsaved draft (MarkdownText of the typed notes): core's resolved blocks for [text], with the
+         * labels and direction getProjectNotes gives. A read: it stores nothing.
+         */
+        getProjectNotesPreview(input: { projectId: string; text: string }): NativeHostResult<Omit<NativeProjectNotes, 'revision' | 'total'>> {
+            const ready = readiness();
+            if (!ready.ok) return ready;
+            if (!isObjectRecord(input) || Object.keys(input).length !== 2 || typeof input.projectId !== 'string'
+                || !input.projectId.trim() || input.projectId.length > 500 || typeof input.text !== 'string'
+                || !isNativeJsonWithinBytes(input)) {
+                return fail('INVALID_INPUT', 'A bounded Project Notes draft is required');
+            }
+            const state = useTaskStore.getState();
+            const project = state._allProjects.find((candidate) => candidate.id === input.projectId);
+            if (!project || project.deletedAt || project.purgedAt) return fail('TASK_NOT_FOUND', 'Project not found');
+            const value: Omit<NativeProjectNotes, 'revision' | 'total'> = {
+                version: NATIVE_HOST_CONTRACT_VERSION,
+                projectId: project.id,
+                readOnly: getProjectDetailTaskListOptions(project).readOnly,
+                direction: resolveAutoTextDirection(`${project.title ?? ''}\n${input.text}`.trim(), language),
+                blocks: input.text.trim() ? resolveMarkdownBlocks(input.text, createMarkdownLinkLookup(state._allTasks, state._allProjects)) : [],
+                markdownLabels: {
+                    deletedTask: tFallback(translate, 'markdown.referenceDeletedTask', 'deleted task'),
+                    deletedProject: tFallback(translate, 'markdown.referenceDeletedProject', 'deleted project'),
+                    copyCode: tFallback(translate, 'markdown.copyCode', 'Copy code'),
+                },
+            };
+            return isNativeJsonWithinBytes(value) ? { ok: true, value }
+                : fail('INVALID_INPUT', 'Project Notes preview exceeds the bounded native read');
+        },
+
         getProjectNotesDraftDirection(input: { projectId: string; text: string }): NativeHostResult<{ direction: 'ltr' | 'rtl' }> {
             const ready = readiness();
             if (!ready.ok) return ready;
@@ -3217,6 +3267,8 @@ export function createNativeHostContract(options: {
             }
         },
     };
+    self = contract as unknown as Record<string, unknown>;
+    return contract;
 }
 
 // ---------------------------------------------------------------------------

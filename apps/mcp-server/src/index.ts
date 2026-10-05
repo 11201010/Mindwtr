@@ -16,6 +16,7 @@ import {
 import * as z from 'zod';
 
 import { createCloudService } from './cloud-service.js';
+import { createLocalApiService, validateLocalApiUrl } from './local-api-service.js';
 import { getMindwtrToolErrorCode, ReadOnlyError, ValidationError } from './errors.js';
 import { parseArgs, parseBooleanFlag, readStringFlag, type FlagEnv, type FlagMap } from './flags.js';
 import {
@@ -56,7 +57,10 @@ import { buildTaskCreateFieldsShape, buildTaskUpdateFieldsShape } from './task-f
 export { parseArgs, parseBooleanFlag } from './flags.js';
 export { isAuthorizedBearerToken, resolveHttpConfig, type HttpServerConfig } from './http-server.js';
 
+declare const __MINDWTR_MCP_VERSION__: string | undefined;
+
 const resolvePackageVersion = (): string => {
+  if (typeof __MINDWTR_MCP_VERSION__ === 'string') return __MINDWTR_MCP_VERSION__;
   try {
     const packageJsonPath = resolve(dirname(fileURLToPath(import.meta.url)), '../package.json');
     const parsed = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version?: unknown };
@@ -208,7 +212,16 @@ type CloudServerConfig = {
   http?: HttpServerConfig;
 };
 
-export type ServerConfig = LocalServerConfig | CloudServerConfig;
+type LocalApiServerConfig = {
+  backend: 'api';
+  apiUrl: string;
+  apiToken: string;
+  readonly: boolean;
+  keepAlive: boolean;
+  http?: HttpServerConfig;
+};
+
+export type ServerConfig = LocalServerConfig | CloudServerConfig | LocalApiServerConfig;
 
 export const resolveServerConfig = (
   flags: FlagMap,
@@ -218,6 +231,25 @@ export const resolveServerConfig = (
   const cloudUrl = readStringFlag(flags, 'cloud-url', 'cloudUrl') ?? env.MINDWTR_MCP_CLOUD_URL;
   const cloudToken = readStringFlag(flags, 'cloud-token', 'cloudToken') ?? env.MINDWTR_MCP_CLOUD_TOKEN;
   const http = resolveHttpConfig(flags, env);
+
+  const apiUrl = readStringFlag(flags, 'api-url') ?? env.MINDWTR_MCP_API_URL;
+  const apiToken = env.MINDWTR_MCP_API_TOKEN?.trim();
+  const hasApiConfig = flags['api-url'] !== undefined || apiUrl !== undefined || apiToken !== undefined;
+  if (hasApiConfig) {
+    if (cloudUrl || cloudToken || flags.db !== undefined) {
+      throw new ValidationError('Choose only one MCP backend: --api-url, --cloud-url, or --db.');
+    }
+    if (!apiUrl?.trim()) throw new ValidationError('Local API URL is required (--api-url or MINDWTR_MCP_API_URL).');
+    if (!apiToken) throw new ValidationError('Local API token is required (MINDWTR_MCP_API_TOKEN).');
+    return {
+      backend: 'api',
+      apiUrl: validateLocalApiUrl(apiUrl),
+      apiToken,
+      readonly,
+      keepAlive,
+      ...(http ? { http } : {}),
+    };
+  }
 
   if (cloudUrl || cloudToken) {
     if (!cloudUrl) throw new ValidationError('Cloud URL is required for Cloud MCP mode');
@@ -245,6 +277,19 @@ export const resolveServerConfig = (
     keepAlive,
     ...(http ? { http } : {}),
   };
+};
+
+/** App-owned helper: only the dedicated environment contract can configure it. */
+export const resolveManagedServerConfig = (env: FlagEnv): ServerConfig => {
+  const allowWrite = parseBooleanFlag(env.MINDWTR_MCP_ALLOW_WRITE, 'managed-allow-write') ?? false;
+  return resolveServerConfig({
+    'api-url': env.MINDWTR_MCP_API_URL ?? '',
+    http: true,
+    'http-host': '127.0.0.1',
+    'http-port': env.MINDWTR_MCP_HTTP_PORT ?? '8722',
+    'http-token': env.MINDWTR_MCP_HTTP_TOKEN ?? '',
+    readonly: !allowWrite,
+  }, { MINDWTR_MCP_API_TOKEN: env.MINDWTR_MCP_API_TOKEN });
 };
 
 // Derived from core's own TASK_STATUS_VALUES (task-status.ts) rather than hand-written, so
@@ -512,7 +557,7 @@ export const registerMindwtrTools = (
   server: McpServer,
   service: MindwtrService,
   readonly: boolean,
-  options: { readonlyMessage?: string } = {},
+  options: { readonlyMessage?: string; localApi?: boolean } = {},
 ) => {
   const withReadonlyMcpErrorHandling = <TInput>(
     scope: string,
@@ -525,8 +570,8 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_list_tasks',
     {
-      description: "List tasks from the configured Mindwtr backend. Filter by status, project, date range, today's focus (isFocusedToday), and GTD availability (view). `search` accepts the documented operator language (status:, context:, tag:, project:, due:<=7d, \"quoted phrases\", -negation) as well as plain text; note that a search always excludes deleted tasks, so includeDeleted has no effect when search is set. Supports sorting by various fields.",
-      inputSchema: listTasksSchema,
+      description: options.localApi ? 'List tasks through the desktop Local API. Supports rich search operators, status, project, date range, focus, sorting and pagination. GTD availability view is unavailable.' : "List tasks from the configured Mindwtr backend. Filter by status, project, date range, today's focus (isFocusedToday), and GTD availability (view). `search` accepts the documented operator language (status:, context:, tag:, project:, due:<=7d, \"quoted phrases\", -negation) as well as plain text; note that a search always excludes deleted tasks, so includeDeleted has no effect when search is set. Supports sorting by various fields.",
+      inputSchema: options.localApi ? listTasksSchema.omit({ view: true }).strict() : listTasksSchema,
     },
     withMcpErrorHandling('mindwtr_list_tasks', async (input) => {
       const tasks = await service.listTasks({
@@ -560,29 +605,33 @@ export const registerMindwtrTools = (
     }),
   );
 
-  server.registerTool(
-    'mindwtr_list_sections',
-    {
-      description: 'List project sections from the configured Mindwtr backend. Optionally filter by projectId.',
-      inputSchema: listSectionsSchema,
-    },
-    withMcpErrorHandling('mindwtr_list_sections', async (input) => {
-      const sections = await service.listSections(input);
-      return createMcpTextResponse({ sections });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_list_sections',
+      {
+        description: 'List project sections from the configured Mindwtr backend. Optionally filter by projectId.',
+        inputSchema: listSectionsSchema,
+      },
+      withMcpErrorHandling('mindwtr_list_sections', async (input) => {
+        const sections = await service.listSections(input);
+        return createMcpTextResponse({ sections });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_get_section',
-    {
-      description: 'Get a single project section by ID from the configured Mindwtr backend.',
-      inputSchema: getSectionSchema,
-    },
-    withMcpErrorHandling('mindwtr_get_section', async (input) => {
-      const section = await service.getSection({ id: input.id, includeDeleted: input.includeDeleted });
-      return createMcpTextResponse({ section });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_get_section',
+      {
+        description: 'Get a single project section by ID from the configured Mindwtr backend.',
+        inputSchema: getSectionSchema,
+      },
+      withMcpErrorHandling('mindwtr_get_section', async (input) => {
+        const section = await service.getSection({ id: input.id, includeDeleted: input.includeDeleted });
+        return createMcpTextResponse({ section });
+      }),
+    );
+  }
 
   server.registerTool(
     'mindwtr_list_areas',
@@ -596,35 +645,39 @@ export const registerMindwtrTools = (
     }),
   );
 
-  server.registerTool(
-    'mindwtr_list_people',
-    {
-      description: 'List managed people from the configured Mindwtr backend.',
-      inputSchema: listPeopleSchema,
-    },
-    withMcpErrorHandling('mindwtr_list_people', async (input) => {
-      const people = await service.listPeople(input);
-      return createMcpTextResponse({ people });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_list_people',
+      {
+        description: 'List managed people from the configured Mindwtr backend.',
+        inputSchema: listPeopleSchema,
+      },
+      withMcpErrorHandling('mindwtr_list_people', async (input) => {
+        const people = await service.listPeople(input);
+        return createMcpTextResponse({ people });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_get_person',
-    {
-      description: 'Get a single managed person by ID from the configured Mindwtr backend.',
-      inputSchema: getPersonSchema,
-    },
-    withMcpErrorHandling('mindwtr_get_person', async (input) => {
-      const person = await service.getPerson({ id: input.id, includeDeleted: input.includeDeleted });
-      return createMcpTextResponse({ person });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_get_person',
+      {
+        description: 'Get a single managed person by ID from the configured Mindwtr backend.',
+        inputSchema: getPersonSchema,
+      },
+      withMcpErrorHandling('mindwtr_get_person', async (input) => {
+        const person = await service.getPerson({ id: input.id, includeDeleted: input.includeDeleted });
+        return createMcpTextResponse({ person });
+      }),
+    );
+  }
 
   server.registerTool(
     'mindwtr_add_task',
     {
-      description: 'Add a task to the configured Mindwtr backend.',
-      inputSchema: addTaskSchema,
+      description: options.localApi ? 'Add a task through the desktop Local API. Provide a title and explicit fields; quickAdd is unavailable.' : 'Add a task to the configured Mindwtr backend.',
+      inputSchema: options.localApi ? addTaskSchema.omit({ quickAdd: true }).extend({ title: z.string().trim().min(1).max(MAX_TASK_TITLE_LENGTH) }).strict() : addTaskSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_add_task', async (input) => {
       const normalizedInput = normalizeAddTaskInput(input);
@@ -642,8 +695,8 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_update_task',
     {
-      description: 'Update a task in the configured Mindwtr backend.',
-      inputSchema: updateTaskSchema,
+      description: options.localApi ? 'Update a task through the desktop Local API. Attachment replacement is unavailable; use the complete tool for completion. Unsupported lifecycle changes are rejected.' : 'Update a task in the configured Mindwtr backend.',
+      inputSchema: options.localApi ? updateTaskSchema.omit({ attachments: true }).strict() : updateTaskSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_update_task', async (input) => {
       // See the matching comment on mindwtr_add_task above.
@@ -705,8 +758,8 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_add_project',
     {
-      description: 'Add a project to the configured Mindwtr backend.',
-      inputSchema: addProjectSchema,
+      description: options.localApi ? 'Add a project through the desktop Local API with title, color, status, areaId and isSequential.' : 'Add a project to the configured Mindwtr backend.',
+      inputSchema: options.localApi ? addProjectSchema.pick({ title: true, color: true, status: true, areaId: true, isSequential: true }).strict() : addProjectSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_add_project', async (input) => {
       const project = await service.addProject(input);
@@ -717,8 +770,8 @@ export const registerMindwtrTools = (
   server.registerTool(
     'mindwtr_update_project',
     {
-      description: 'Update a project in the configured Mindwtr backend.',
-      inputSchema: updateProjectSchema,
+      description: options.localApi ? 'Update a project through the desktop Local API. Attachment replacement is unavailable.' : 'Update a project in the configured Mindwtr backend.',
+      inputSchema: options.localApi ? updateProjectSchema.pick({ id: true, title: true, color: true, status: true, areaId: true, isSequential: true }).extend({ color: z.string().trim().min(1).optional() }).strict() : updateProjectSchema,
     },
     withReadonlyMcpErrorHandling('mindwtr_update_project', async (input) => {
       const project = await service.updateProject(input);
@@ -738,125 +791,145 @@ export const registerMindwtrTools = (
     }),
   );
 
-  server.registerTool(
-    'mindwtr_add_section',
-    {
-      description: 'Add a project-scoped section to the configured Mindwtr backend.',
-      inputSchema: addSectionSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_add_section', async (input) => {
-      const section = await service.addSection(input);
-      return createMcpTextResponse({ section });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_add_section',
+      {
+        description: 'Add a project-scoped section to the configured Mindwtr backend.',
+        inputSchema: addSectionSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_add_section', async (input) => {
+        const section = await service.addSection(input);
+        return createMcpTextResponse({ section });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_update_section',
-    {
-      description: 'Update a project section in the configured Mindwtr backend.',
-      inputSchema: updateSectionSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_update_section', async (input) => {
-      const section = await service.updateSection(input);
-      return createMcpTextResponse({ section });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_update_section',
+      {
+        description: 'Update a project section in the configured Mindwtr backend.',
+        inputSchema: updateSectionSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_update_section', async (input) => {
+        const section = await service.updateSection(input);
+        return createMcpTextResponse({ section });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_delete_section',
-    {
-      description: 'Soft-delete a project section in the configured Mindwtr backend. Tasks in the section are kept and moved to no section by core.',
-      inputSchema: deleteSectionSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_delete_section', async (input) => {
-      const section = await service.deleteSection(input.id);
-      return createMcpTextResponse({ section });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_delete_section',
+      {
+        description: 'Soft-delete a project section in the configured Mindwtr backend. Tasks in the section are kept and moved to no section by core.',
+        inputSchema: deleteSectionSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_delete_section', async (input) => {
+        const section = await service.deleteSection(input.id);
+        return createMcpTextResponse({ section });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_add_area',
-    {
-      description: 'Add an area to the configured Mindwtr backend. On the local backend, a name a live area already has (any case) creates nothing: the result is that area, unchanged, with existing: true.',
-      inputSchema: addAreaSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_add_area', async (input) => {
-      const area = await service.addArea(input);
-      return createMcpTextResponse({ area });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_add_area',
+      {
+        description: 'Add an area to the configured Mindwtr backend. On the local backend, a name a live area already has (any case) creates nothing: the result is that area, unchanged, with existing: true.',
+        inputSchema: addAreaSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_add_area', async (input) => {
+        const area = await service.addArea(input);
+        return createMcpTextResponse({ area });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_update_area',
-    {
-      description: 'Update an area in the configured Mindwtr backend.',
-      inputSchema: updateAreaSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_update_area', async (input) => {
-      const area = await service.updateArea(input);
-      return createMcpTextResponse({ area });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_update_area',
+      {
+        description: 'Update an area in the configured Mindwtr backend.',
+        inputSchema: updateAreaSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_update_area', async (input) => {
+        const area = await service.updateArea(input);
+        return createMcpTextResponse({ area });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_delete_area',
-    {
-      description: 'Soft-delete an area in the configured Mindwtr backend.',
-      inputSchema: deleteAreaSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_delete_area', async (input) => {
-      const area = await service.deleteArea(input.id);
-      return createMcpTextResponse({ area });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_delete_area',
+      {
+        description: 'Soft-delete an area in the configured Mindwtr backend.',
+        inputSchema: deleteAreaSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_delete_area', async (input) => {
+        const area = await service.deleteArea(input.id);
+        return createMcpTextResponse({ area });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_add_person',
-    {
-      description: 'Add a managed person to the configured Mindwtr backend.',
-      inputSchema: addPersonSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_add_person', async (input) => {
-      const person = await service.addPerson(input);
-      return createMcpTextResponse({ person });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_add_person',
+      {
+        description: 'Add a managed person to the configured Mindwtr backend.',
+        inputSchema: addPersonSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_add_person', async (input) => {
+        const person = await service.addPerson(input);
+        return createMcpTextResponse({ person });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_update_person',
-    {
-      description: 'Update managed person metadata in the configured Mindwtr backend.',
-      inputSchema: updatePersonSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_update_person', async (input) => {
-      const person = await service.updatePerson(input);
-      return createMcpTextResponse({ person });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_update_person',
+      {
+        description: 'Update managed person metadata in the configured Mindwtr backend.',
+        inputSchema: updatePersonSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_update_person', async (input) => {
+        const person = await service.updatePerson(input);
+        return createMcpTextResponse({ person });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_rename_person',
-    {
-      description: 'Rename a managed person. By default, matching task assignees are updated too.',
-      inputSchema: renamePersonSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_rename_person', async (input) => {
-      const person = await service.renamePerson(input);
-      return createMcpTextResponse({ person });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_rename_person',
+      {
+        description: 'Rename a managed person. By default, matching task assignees are updated too.',
+        inputSchema: renamePersonSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_rename_person', async (input) => {
+        const person = await service.renamePerson(input);
+        return createMcpTextResponse({ person });
+      }),
+    );
+  }
 
-  server.registerTool(
-    'mindwtr_delete_person',
-    {
-      description: 'Soft-delete a managed person in the configured Mindwtr backend.',
-      inputSchema: deletePersonSchema,
-    },
-    withReadonlyMcpErrorHandling('mindwtr_delete_person', async (input) => {
-      const person = await service.deletePerson(input.id);
-      return createMcpTextResponse({ person });
-    }),
-  );
+  if (!options.localApi) {
+    server.registerTool(
+      'mindwtr_delete_person',
+      {
+        description: 'Soft-delete a managed person in the configured Mindwtr backend.',
+        inputSchema: deletePersonSchema,
+      },
+      withReadonlyMcpErrorHandling('mindwtr_delete_person', async (input) => {
+        const person = await service.deletePerson(input.id);
+        return createMcpTextResponse({ person });
+      }),
+    );
+  }
 };
 
 /**
@@ -871,9 +944,12 @@ export const createMindwtrMcpServer = (service: MindwtrService, config: ServerCo
   });
 
   registerMindwtrTools(server, service, config.readonly, {
+    localApi: config.backend === 'api',
     readonlyMessage: config.backend === 'cloud'
       ? 'Cloud MCP mode is read-only by default. Start the server with --write to enable edits.'
-      : undefined,
+      : config.backend === 'api'
+        ? 'Local API MCP mode is read-only by default. Start the server with --write to enable edits.'
+        : undefined,
   });
 
   return server;
@@ -902,12 +978,13 @@ const attachLifecycleHandlers = (service: MindwtrService, onShutdown?: () => voi
   process.on('SIGTERM', () => {
     void closeService().finally(() => process.exit(0));
   });
+  return closeService;
 };
 
-export async function startMcpServer(argv: string[] = process.argv.slice(2)) {
+export async function startMcpServer(argv: string[] = process.argv.slice(2), options: { managed?: boolean } = {}) {
   const flags = parseArgs(argv);
 
-  const config = resolveServerConfig(flags);
+  const config = options.managed ? resolveManagedServerConfig(process.env) : resolveServerConfig(flags);
 
   // The core logger defaults to console.info (protocol stdout). Install the stderr
   // bridge only when the server starts, before any local data can be loaded.
@@ -920,7 +997,9 @@ export async function startMcpServer(argv: string[] = process.argv.slice(2)) {
       allowInsecureHttp: config.allowInsecureHttp,
       logInfo,
     })
-    : createService({ dbPath: config.dbPath, readonly: config.readonly }, undefined, logInfo);
+    : config.backend === 'api'
+      ? createLocalApiService({ url: config.apiUrl, token: config.apiToken, logInfo })
+      : createService({ dbPath: config.dbPath, readonly: config.readonly }, undefined, logInfo);
 
   const httpConfig = config.http;
   if (httpConfig) {
@@ -930,12 +1009,24 @@ export async function startMcpServer(argv: string[] = process.argv.slice(2)) {
       host: httpConfig.host,
       logError,
     });
-    attachLifecycleHandlers(service, () => {
+    const shutdown = attachLifecycleHandlers(service, () => {
+      httpServer.closeAllConnections();
       httpServer.close();
     });
+    if (options.managed) {
+      // The app keeps this pipe open. EOF also covers a crashed/killed parent,
+      // unlike an exit hook in the parent process alone.
+      const parentGone = () => { void shutdown().finally(() => process.exit(0)); };
+      process.stdin.once('end', parentGone);
+      process.stdin.once('error', parentGone);
+      process.stdin.resume();
+    }
     await startHttpServer(httpServer, httpConfig);
     if (httpConfig.weakTokenWarning) {
       logInfo(`Warning: ${httpConfig.weakTokenWarning}`);
+    }
+    if (options.managed) {
+      process.stderr.write(`${JSON.stringify({ event: 'mindwtr-mcp-ready', port: httpConfig.port })}\n`);
     }
     logInfo('HTTP MCP transport listening', {
       host: httpConfig.host,

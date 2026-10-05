@@ -171,6 +171,16 @@ internal object LegacyRnStoreGuard {
         }
     }
 
+    /**
+     * The same byte copy of `RKStorage` (once per install, the first copy kept), for a native write to RN's `RKStorage` other than
+     * [commitRnState]'s: the reminder alarms clear RN's alarm map and keep theirs under RN's key (Reminders.kt). Nothing when RN
+     * left no `RKStorage`. Engine thread, as every `RKStorage` opener.
+     */
+    fun checkpointRnState(dataDir: File) {
+        val asyncStorage = File(dataDir, ASYNC_STORAGE)
+        if (asyncStorage.exists()) ensureRnStateCheckpoint(asyncStorage, File(dataDir, RN_STATE_CHECKPOINT))
+    }
+
     private fun ensureRnStateCheckpoint(asyncStorage: File, checkpoint: File) {
         if (!checkpoint.exists()) {
             val partial = File(checkpoint.path + ".building")

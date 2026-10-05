@@ -22,6 +22,22 @@ describe('openAttachmentTarget', () => {
         delete (window as any).__TAURI__;
     });
 
+    it('passes an UpNote attachment to the OS without decoding its noteId', async () => {
+        (window as any).__TAURI_INTERNALS__ = {};
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        await openAttachmentTarget(uri, 'note-link');
+        expect(openShellMock).toHaveBeenCalledWith(uri);
+        expect(invokeMock).not.toHaveBeenCalled();
+    });
+
+    it('propagates a missing UpNote handler for the UI to offer recovery', async () => {
+        (window as any).__TAURI_INTERNALS__ = {};
+        openShellMock.mockRejectedValue(new Error('No installed handler'));
+        const openSpy = vi.spyOn(window, 'open');
+        await expect(openAttachmentTarget('upnote://x-callback-url/openNote?noteId=a')).rejects.toThrow('No installed handler');
+        expect(openSpy).not.toHaveBeenCalled();
+    });
+
     it('opens web links through the Tauri shell opener', async () => {
         (window as any).__TAURI_INTERNALS__ = {};
 

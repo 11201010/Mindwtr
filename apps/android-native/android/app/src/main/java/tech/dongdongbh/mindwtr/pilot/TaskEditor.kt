@@ -369,6 +369,10 @@ private fun pickedDay(pickerMillis: Long): String =
 /** The picker's hour and minute as core's pickTime takes them, `HH:mm`. */
 internal fun pickedTime(hour: Int, minute: Int) = "${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}"
 
+/** Project details' date rows: core's field, its label key, and its name in core's details metadata (`has<Name>Date`, `<name>DateLabel`). */
+internal val PROJECT_DATE_FIELDS = listOf(Triple("startDate", "taskEdit.startDateLabel", "Start"), Triple("dueDate", "taskEdit.dueDateLabel", "Due"),
+    Triple("reviewAt", "projects.reviewAt", "Review"))
+
 /** Where core says the date picker starts (`yyyy-MM-dd`), as the picker's UTC midnight: the reverse of [pickedDay]. */
 private fun pickerStart(coreDate: String): Long? =
     runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(coreDate)?.time }.getOrNull()
@@ -418,7 +422,13 @@ fun TaskEditorScreen(model: InboxViewModel, editor: TaskEditor) = with(model) {
         }
     }
     val follow = { target: JSONObject ->
-        if (target.getString("kind") == "external") runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, target.getString("href").toUri())) }
+        if (target.getString("kind") == "external") {
+            val original = target.getString("href")
+            val upnote = openUpNoteLink(context, original, ::t) { outcome ->
+                anyTime({ it.logLinkHandoff(outcome, "markdown") }, {})
+            }
+            if (upnote == null) runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, original.toUri())) }
+        }
         else if (editor.readOnly || (!editor.dirty && !editsPending)) go(target)
         else { linkAfterLeave = target.toString(); confirmLeave = true }
         Unit

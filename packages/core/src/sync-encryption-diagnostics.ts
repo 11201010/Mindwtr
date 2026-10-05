@@ -147,6 +147,7 @@ export type SyncEncryptionStateDecision =
     | 'blocked-no-key'
     | 'blocked-plaintext'
     | 'blocked-transition'
+    | 'blocked-partly-encrypted'
     | 'quiet'
     | 'legacy-plaintext'
     | 'probe';
@@ -257,7 +258,9 @@ export type SyncEncryptionTransitionLogKind =
     | SyncEncryptionTransitionKind
     | 'unlock'
     | 'enable-local-only'
-    | 'disable-local-only';
+    | 'disable-local-only'
+    | 'abandon'
+    | 'recheck';
 
 export type SyncEncryptionTransitionOutcome =
     | 'ok'

@@ -1,12 +1,19 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { Area, Project } from '@mindwtr/core';
+
 import { getListBulkMoveStatusOptions, ListBulkActions } from './ListBulkActions';
 
 const t = (key: string) => {
     const labels: Record<string, string> = {
         'bulk.selected': 'selected',
-        'bulk.moveTo': 'Move to',
+        'bulk.organizeStatus': 'Status',
+        'task.destination': 'Destination',
+        'projects.title': 'Projects',
+        'areas.manage': 'Areas',
+        'common.none': 'None',
+        'common.search': 'Search',
         'status.inbox': 'Inbox',
         'status.next': 'Next',
         'status.waiting': 'Waiting',
@@ -48,7 +55,7 @@ describe('ListBulkActions', () => {
             />
         );
 
-        fireEvent.change(getByRole('combobox', { name: 'Move to' }), {
+        fireEvent.change(getByRole('combobox', { name: 'Status' }), {
             target: { value: 'waiting' },
         });
 
@@ -67,52 +74,76 @@ describe('ListBulkActions', () => {
         expect(getListBulkMoveStatusOptions('next')).not.toContain('archived');
     });
 
-    it('assigns selected area from bulk action select', () => {
-        const onAssignArea = vi.fn();
-
-        const { getByRole } = render(
+    it('keeps the destination picker neutral and writes only after an explicit choice', () => {
+        const onMoveToDestination = vi.fn();
+        const onMoveToStatus = vi.fn();
+        const projects = [{ id: 'project-1', title: 'Plan', status: 'active' }] as Project[];
+        const areas = [{ id: 'area-1', name: 'Work' }] as Area[];
+        const { getByRole, getByLabelText, queryByRole } = render(
             <ListBulkActions
                 selectionCount={2}
-                onMoveToStatus={() => undefined}
-                onAssignArea={onAssignArea}
-                areaOptions={[{ id: 'area-1', name: 'Work' }]}
+                onMoveToStatus={onMoveToStatus}
+                onMoveToDestination={onMoveToDestination}
+                projects={projects}
+                areas={areas}
                 onAddTag={() => undefined}
                 onAddContext={() => undefined}
-                onRemoveContext={() => undefined}
                 onDelete={() => undefined}
                 t={t}
-            />
+            />,
         );
 
-        fireEvent.change(getByRole('combobox', { name: 'Area' }), {
-            target: { value: 'area-1' },
-        });
+        const trigger = getByRole('button', { name: 'Destination' });
+        expect(trigger).toHaveTextContent('Destination');
+        expect(queryByRole('combobox', { name: 'Area' })).not.toBeInTheDocument();
+        fireEvent.click(trigger);
+        expect(getByRole('option', { name: 'None' })).toHaveAttribute('aria-selected', 'false');
+        expect(getByRole('option', { name: 'Plan' })).toHaveAttribute('aria-selected', 'false');
+        expect(getByRole('option', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
+        fireEvent.keyDown(getByLabelText('Search'), { key: 'Enter' });
+        fireEvent.keyDown(getByLabelText('Search'), { key: 'Escape' });
+        expect(onMoveToDestination).not.toHaveBeenCalled();
+        expect(queryByRole('listbox')).not.toBeInTheDocument();
+        fireEvent.click(trigger);
+        fireEvent.mouseDown(document.body);
+        expect(onMoveToDestination).not.toHaveBeenCalled();
+        expect(queryByRole('listbox')).not.toBeInTheDocument();
 
-        expect(onAssignArea).toHaveBeenCalledWith('area-1');
+        for (const [label, destination] of [
+            ['Plan', { kind: 'project', id: 'project-1' }],
+            ['Work', { kind: 'area', id: 'area-1' }],
+            ['None', { kind: 'none' }],
+        ] as const) {
+            fireEvent.click(trigger);
+            fireEvent.click(getByRole('option', { name: label }));
+            expect(onMoveToDestination).toHaveBeenLastCalledWith(destination);
+            expect(trigger).toHaveTextContent('Destination');
+        }
+        expect(onMoveToDestination).toHaveBeenCalledTimes(3);
+        expect(onMoveToStatus).not.toHaveBeenCalled();
+        fireEvent.change(getByRole('combobox', { name: 'Status' }), { target: { value: 'waiting' } });
+        expect(onMoveToStatus).toHaveBeenCalledWith('waiting');
+        expect(onMoveToDestination).toHaveBeenCalledTimes(3);
     });
 
-    it('assigns no area when no-area option is selected', () => {
-        const onAssignArea = vi.fn();
-
-        const { getByRole } = render(
+    it('offers existing projects with no areas and no creation controls', () => {
+        const { getByRole, getByLabelText, queryByRole } = render(
             <ListBulkActions
                 selectionCount={1}
                 onMoveToStatus={() => undefined}
-                onAssignArea={onAssignArea}
-                areaOptions={[{ id: 'area-1', name: 'Work' }]}
+                onMoveToDestination={() => undefined}
+                projects={[{ id: 'project-1', title: 'Plan', status: 'active' }] as Project[]}
+                areas={[]}
                 onAddTag={() => undefined}
                 onAddContext={() => undefined}
-                onRemoveContext={() => undefined}
                 onDelete={() => undefined}
                 t={t}
-            />
+            />,
         );
-
-        fireEvent.change(getByRole('combobox', { name: 'Area' }), {
-            target: { value: '__NO_AREA__' },
-        });
-
-        expect(onAssignArea).toHaveBeenCalledWith(null);
+        fireEvent.click(getByRole('button', { name: 'Destination' }));
+        expect(getByRole('option', { name: 'Plan' })).toBeInTheDocument();
+        fireEvent.change(getByLabelText('Search'), { target: { value: 'New destination' } });
+        expect(queryByRole('button', { name: /New project|New area/ })).not.toBeInTheDocument();
     });
 
     it('assigns selected energy level from bulk action select', () => {

@@ -5,8 +5,12 @@ struct ReferenceScreen: View {
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @Environment(\.scenePhase) private var scenePhase
+    @State private var bulkDeletePresented = false
 
     var body: some View {
+        ZStack {
+        VStack(spacing: 0) {
+            if model.referenceSelectionMode { bulkDeleteBar }
         StatusListContent(model: model, palette: palette, data: model.reference, prefix: "reference",
                           current: model.referenceCurrent, enabled: model.referenceActionsEnabled,
                           error: model.referenceError, disableStatus: false,
@@ -23,14 +27,313 @@ struct ReferenceScreen: View {
                           onBackdateOptions: { row in await model.referenceTaskBackdateOptions(row) },
                           onBackdateSave: { row, instant, minutes in await model.backdateReferenceTask(row, completedAt: instant, timeSpentText: minutes) },
                           onDestinationOptions: { row, query, offset in await model.referenceTaskDestinationOptions(row, query: query, offset: offset) },
-                          onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) })
+                          onDestinationChoose: { row, destination in await model.moveReferenceTaskDestination(row, destination: destination) },
+                          errorIdentifier: model.referenceBulkRemoveWriteError ? "reference-bulk-remove-tag-error" : model.referenceBulkTagWriteError ? "reference-bulk-tag-error" : nil,
+                          selectionActive: model.referenceSelectionMode, selectedTaskIDs: model.referenceSelectedIDs,
+                          onSelection: { row in Task { await model.selectReferenceTask(row) } },
+                          onSelectionStart: { row in Task { await model.selectReferenceTask(row) } })
+        }
+        .accessibilityHidden(model.referenceBulkTagPresented || model.referenceBulkRemovePresented)
+        if model.referenceBulkTagPresented { ReferenceBulkTagDialog(model: model, palette: palette) }
+        if model.referenceBulkRemovePresented { ReferenceBulkRemoveTagDialog(model: model, palette: palette) }
+        }
+        .alert(model.archiveBulkDeleteConfirmation.text("title"), isPresented: $bulkDeletePresented) {
+            Button(model.archiveBulkDeleteConfirmation.text("cancelLabel"), role: .cancel) {
+                model.cancelArchiveBulkDeleteConfirmation()
+            }.accessibilityIdentifier("reference-bulk-cancel")
+            Button(model.archiveBulkDeleteConfirmation.text("confirmLabel"), role: .destructive) {
+                Task { await model.confirmDeleteSelectedArchiveTasks() }
+            }.accessibilityIdentifier("reference-bulk-confirm")
+        } message: { Text(model.archiveBulkDeleteConfirmation.text("message")) }
+        .onChange(of: model.archiveBulkDeleteConfirmation.isEmpty) { if $0 { bulkDeletePresented = false } }
+        .onDisappear { model.referenceSelectionOwnerChanged() }
         .task(id: scenePhase == .active) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
                 guard scenePhase == .active, model.selectedSurface == .reference else { return }
+                // The first selection query has not published selection mode yet.
+                // Do not queue a timer refresh behind that in-flight operation.
+                guard !model.busy else { continue }
+                // A periodic reread disables the current controls while it runs.
+                // Keep an in-progress selection usable; writes still validate
+                // the selected revisions against durable data before committing.
+                guard !model.referenceSelectionMode, !model.referenceBulkTagPresented, !model.referenceBulkRemovePresented, !model.referenceActionPending else {
+                    NSLog("Native iOS Reference periodic refresh deferred releaseCheck=v1.3.4/ios-reference-bulk-refresh outcome=selection")
+                    continue
+                }
                 await model.refresh()
             }
+        }
+    }
+
+    private var bulkDeleteBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(model.referenceBulk.object("bar").text("countLabel"))
+                    .rnFont(13).foregroundStyle(palette.secondary)
+                    .accessibilityIdentifier("reference-bulk-count")
+                Spacer(minLength: 0)
+                Button { model.leaveReferenceTaskSelection() } label: {
+                    AppIcon(name: "x", size: 16).frame(width: 45, height: 45).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.secondary)
+                .disabled(!model.referenceActionsEnabled)
+                .accessibilityLabel(model.referenceBulk.object("bar").object("exit").text("accessibilityLabel"))
+                .accessibilityIdentifier("reference-bulk-exit")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    let statuses = model.referenceBulk.object("bar").objects("statuses")
+                    ForEach(statuses.indices, id: \.self) { index in
+                        let option = statuses[index]
+                        Button { Task { await model.moveSelectedReferenceTasks(status: option.text("status")) } } label: {
+                            bulkActionLabel(option.text("label"))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint)
+                        .disabled(!model.referenceBulkStatusEnabled(option.text("status")))
+                        .accessibilityLabel(option.text("accessibilityLabel"))
+                        .accessibilityIdentifier("reference-bulk-status-" + option.text("status"))
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("reference-bulk-status-scroll")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button { Task { await model.toggleReferenceTaskRange() } } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("range").text("label"))
+                    }
+                    .buttonStyle(.plain).disabled(!model.referenceBulkDeleteEnabled)
+                    .accessibilityAddTraits(model.referenceBulk.object("bar").object("range").flag("active") ? .isSelected : [])
+                    .accessibilityIdentifier("reference-bulk-range")
+                    Button { model.openReferenceBulkTag() } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("addTag").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkTagEnabled)
+                    .accessibilityLabel(model.referenceBulk.object("bar").object("addTag").text("accessibilityLabel"))
+                    .accessibilityIdentifier("reference-bulk-add-tag")
+                    Button { model.openReferenceBulkRemove() } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("removeTag").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkRemoveEnabled)
+                    .accessibilityLabel(model.referenceBulk.object("bar").object("removeTag").text("accessibilityLabel"))
+                    .accessibilityIdentifier("reference-bulk-remove-tag")
+                    Button {
+                        model.requestDeleteSelectedReferenceTasks()
+                        bulkDeletePresented = !model.archiveBulkDeleteConfirmation.isEmpty
+                    } label: {
+                        bulkActionLabel(model.referenceBulk.object("bar").object("delete").text("label"))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(palette.danger).disabled(!model.referenceBulkDeleteEnabled)
+                    .accessibilityIdentifier("reference-bulk-delete")
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("reference-bulk-actions-scroll")
+        }
+        .padding(12).background(palette.card, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(palette.border).allowsHitTesting(false))
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+
+    private func bulkActionLabel(_ text: String) -> some View {
+        Text(text).rnFont(13, .semibold).fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 12).frame(minWidth: 45, minHeight: 45)
+            .background(palette.card, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border).allowsHitTesting(false))
+            .contentShape(Rectangle())
+    }
+}
+
+private struct ReferenceBulkTagDialog: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.referenceBulkTagOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+            TextField(model.referenceBulkTagOptions.text("placeholder"), text: Binding(
+                get: { model.referenceBulkTagText }, set: { model.setReferenceBulkTagText($0) }))
+                .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+                .disabled(model.busy || model.retryNeeded)
+                .accessibilityLabel(model.referenceBulkTagOptions.text("placeholder"))
+                .accessibilityIdentifier("reference-bulk-tag-input")
+            if let error = model.referenceBulkTagReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("reference-bulk-tag-read-error")
+                Button { model.setReferenceBulkTagText(model.referenceBulkTagText) } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded)
+                .accessibilityIdentifier("reference-bulk-tag-read-retry")
+            }
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture {
+                    if !model.busy && !model.retryNeeded { model.closeReferenceBulkTag() }
+                }.accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        ScrollView { fields }
+                            .frame(maxHeight: min(420, max(120, geometry.size.height - 132)))
+                            .accessibilityIdentifier("reference-bulk-tag-scroll")
+                    } else { fields }
+                    HStack {
+                        Spacer()
+                        Button { model.closeReferenceBulkTag() } label: {
+                            Text(model.referenceBulkTagOptions.text("cancelLabel")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(model.busy || model.retryNeeded)
+                        .accessibilityIdentifier("reference-bulk-tag-cancel")
+                        Button { Task { await model.saveReferenceBulkTag() } } label: {
+                            Text(model.referenceBulkTagOptions.text("saveLabel")).rnFont(14, .semibold)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkTagSaveEnabled)
+                        .accessibilityIdentifier("reference-bulk-tag-save")
+                    }
+                }
+                .padding(16).frame(maxWidth: 420)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("reference-bulk-tag-dialog").accessibilityAction(.escape) {
+                if !model.busy && !model.retryNeeded { model.closeReferenceBulkTag() }
+            }
+        }
+    }
+}
+
+private struct ReferenceBulkRemoveTagDialog: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var focused: Bool
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.referenceBulkRemoveOptions.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+            Text(model.referenceBulkRemoveOptions.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var queryInput: some View {
+        TextField(model.referenceBulkRemoveOptions.text("placeholder"), text: Binding(get: { model.referenceBulkRemoveQuery }, set: { model.setReferenceBulkRemoveQuery($0) }))
+            .rnFont(16).textInputAutocapitalization(.never).autocorrectionDisabled().focused($focused)
+            .submitLabel(.done).onSubmit { focused = false }
+            .padding(12).frame(minHeight: 44).background(palette.input, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.border, lineWidth: 1))
+            .accessibilityLabel(model.referenceBulkRemoveOptions.text("placeholder"))
+            .disabled(model.busy || model.retryNeeded)
+            .accessibilityIdentifier("reference-bulk-remove-tag-input")
+            .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+    }
+
+    private var options: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppChipFlow {
+                ForEach(model.referenceBulkRemoveItems.indices, id: \.self) { index in
+                    let item = model.referenceBulkRemoveItems[index]
+                    let picked = model.referenceBulkRemovePicked(item.text("value"))
+                    Button { model.toggleReferenceBulkRemove(item.text("value")) } label: {
+                        Text(item.text("label")).rnFont(14).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12).padding(.vertical, 8).frame(minWidth: 44, minHeight: 44)
+                            .background(picked ? palette.tint : palette.filter, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(picked ? palette.tint : palette.border, lineWidth: 1))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(picked ? palette.onTint : palette.text)
+                    .disabled(model.busy || model.retryNeeded || !model.referenceBulkRemoveCurrent || model.referenceBulkRemoveReading)
+                    .accessibilityLabel(item.text("label")).accessibilityAddTraits(picked ? .isSelected : [])
+                    .accessibilityIdentifier("reference-bulk-remove-tag-option-\(index)")
+                }
+            }
+            if model.referenceBulkRemoveReading { ProgressView().accessibilityLabel(model.label("common.loading")) }
+            if model.referenceBulkRemoveCurrent && model.referenceBulkRemoveTotal == 0 {
+                Text(model.label("common.noMatches")).rnFont(14).foregroundStyle(palette.secondary)
+                    .accessibilityIdentifier("reference-bulk-remove-tag-no-matches")
+            }
+            if model.referenceBulkRemoveItems.count < model.referenceBulkRemoveTotal {
+                Button { model.loadMoreReferenceBulkRemove() } label: {
+                    Text(model.label("common.more")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkRemoveCanLoadMore)
+                .accessibilityIdentifier("reference-bulk-remove-tag-more")
+            }
+            if let error = model.referenceBulkRemoveReadError {
+                Text(error).rnFont(13).foregroundStyle(palette.danger).accessibilityIdentifier("reference-bulk-remove-tag-read-error")
+                Button { model.retryReferenceBulkRemoveRead() } label: {
+                    Text(model.label("common.retry")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(model.busy || model.retryNeeded || model.referenceBulkRemoveReading)
+                .accessibilityIdentifier("reference-bulk-remove-tag-read-retry")
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack {
+            Spacer()
+            Button { model.closeReferenceBulkRemove() } label: {
+                Text(model.referenceBulkRemoveOptions.text("cancelLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.secondary).disabled(model.busy || model.retryNeeded).accessibilityIdentifier("reference-bulk-remove-tag-cancel")
+            Button { Task { await model.saveReferenceBulkRemove() } } label: {
+                Text(model.referenceBulkRemoveOptions.text("saveLabel")).rnFont(14, .semibold).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(palette.tint).disabled(!model.referenceBulkRemoveSaveEnabled)
+            .accessibilityIdentifier("reference-bulk-remove-tag-save")
+        }
+        .fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+    }
+
+    private func contents(scrollingHeading: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !scrollingHeading { heading }
+            queryInput
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if scrollingHeading { heading }
+                    options
+                }
+            }
+            .scrollDismissesKeyboard(.interactively).frame(minHeight: 44, maxHeight: 480)
+            .accessibilityIdentifier("reference-bulk-remove-tag-scroll")
+            actions
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { if !model.busy && !model.retryNeeded { model.closeReferenceBulkRemove() } }.accessibilityHidden(true)
+                // Keep one query field as keyboard height changes. Accessibility
+                // text or less than 500pt moves only informational copy into the scroll.
+                contents(scrollingHeading: dynamicTypeSize.isAccessibilitySize || geometry.size.height < 500)
+                .padding(16).frame(maxWidth: 420, maxHeight: max(0, geometry.size.height - 32))
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(palette.border, lineWidth: 1)).padding(16)
+                #if DEBUG && targetEnvironment(simulator)
+                if model.referenceBulkRemoveTestReadEnabled {
+                    Text("Reference picker read test state").font(.system(size: 1)).frame(width: 1, height: 1)
+                        .accessibilityIdentifier("reference-bulk-remove-tag-test-read-state")
+                        .accessibilityValue(model.referenceBulkRemoveTestReadState).allowsHitTesting(false)
+                }
+                #endif
+            }
+            .foregroundStyle(palette.text).accessibilityElement(children: .contain).accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("reference-bulk-remove-tag-dialog").accessibilityAction(.escape) { if !model.busy && !model.retryNeeded { model.closeReferenceBulkRemove() } }
+            .onAppear { focused = true }
         }
     }
 }
@@ -91,9 +394,16 @@ struct StatusListContent: View {
     @State private var referenceBackdateOptions: CoreObject = [:]
     @State private var referenceBackdateInitialDate = Date()
 
+    // Keep Reference's existing row identities during a background reread.
+    // Removing the snapshot here resets List's scroll position every minute.
+    // `current` still gates interaction until the new snapshot is accepted.
+    private var displaysSnapshot: Bool {
+        current || (prefix == "reference" && data.text("kind") == "reference" && error == nil)
+    }
+
     private var listContent: some View {
         VStack(spacing: 0) {
-            if current { activeFilters }
+            if displaysSnapshot { activeFilters }
             if prefix == "done" || prefix == "reference" {
                 List {
                     Group { contentRows }
@@ -282,6 +592,7 @@ struct StatusListContent: View {
         referenceStatusRow = [:]
         referenceStatusOpeningContext = ""
         if ownsReferenceStatusMenu { model.taskStatusMenuPresented = false }
+        model.presentQueuedReferenceProjectNextAction()
         ownsReferenceStatusMenu = false
         if let destination {
             // Navigation may have reached refresh before this owner's menu gate
@@ -302,23 +613,26 @@ struct StatusListContent: View {
                 .disabled(model.busy || (model.retryNeeded && !(prefix == "reference" ? model.referenceActionPending : model.historyDoneActionPending)))
                 .accessibilityIdentifier(prefix + "-retry")
         }
-        if current {
+        if displaysSnapshot {
             let items = data.objects("items")
             ForEach(items.map(ListRowEntry.init)) { entry in
                 let item = entry.item
                 if item.text("type") == "task" {
                     let row = item.object("row")
+                    let selected = prefix == "reference"
+                        ? selectedTaskIDs.contains(where: { $0.utf8.elementsEqual(row.text("id").utf8) })
+                        : selectedTaskIDs.contains(row.text("id"))
                     HStack(spacing: 8) {
                         if selectionActive, !row.flag("readOnly") {
                             Button { onSelection?(row) } label: {
-                                Image(systemName: selectedTaskIDs.contains(row.text("id")) ? "checkmark.circle.fill" : "circle")
+                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 22)).foregroundStyle(palette.tint)
-                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                                    .frame(width: 45, height: 45).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).disabled(!enabled || ownsReferenceStatusMenu)
                             .accessibilityLabel(row.text("title"))
-                            .accessibilityAddTraits(selectedTaskIDs.contains(row.text("id")) ? .isSelected : [])
-                            .accessibilityIdentifier("done-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier(prefix + "-select-" + (item.text("groupId").isEmpty ? "none" : item.text("groupId")) + "-" + row.text("id"))
                         }
                         TaskCard(row: row, model: model, palette: palette, readOnly: disableStatus || selectionActive || row.flag("readOnly"),
                                  hideStatusBadge: selectionActive,
@@ -329,6 +643,7 @@ struct StatusListContent: View {
                                  onSelectionStart: enabled && !row.flag("readOnly") ? onSelectionStart : nil)
                     }
                         .id(entry.id)
+                        .disabled(prefix == "reference" && !current)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             let swipe = row.object("meta").object("swipe")
                             if let onNextTask, enabled, !ownsReferenceStatusMenu, !selectionActive, !row.flag("readOnly"),

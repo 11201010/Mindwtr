@@ -24,6 +24,13 @@
      "dates without a default schedule time keep the date only"
     ]
    }
+  },
+  "recapturedFor1338": {
+   "sourceState": "fix/1338-incubate-date working tree based on ca0ca9a15a7ccbd06386302cf87c8dd183bfb2f9",
+   "change": "Incubate retains the required review date when its active quick-date chip is tapped again.",
+   "scenarios": [
+    "incubate needs a return date and keeps the someday section"
+   ]
   }
  },
  "timeZone": "America/New_York",
@@ -5824,7 +5831,10 @@
      "timeEstimate": null,
      "startTime": null,
      "dueDate": null,
-     "reviewAt": null,
+     "reviewAt": {
+      "date": "2026-09-28",
+      "dateOnly": false
+     },
      "delegateWho": "",
      "followUp": null,
      "convertToProject": false,

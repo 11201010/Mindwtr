@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -449,8 +450,9 @@ internal fun attachmentLaunchLog(kind: String, uri: String?, failure: Throwable)
  * the FileProvider URI with core's view type), else the share sheet, else its URI, as RN's open-file-externally and its
  * fallbacks do. Answers core's failure message for a link that nothing opened, else null.
  */
-fun startAttachmentPlan(context: Context, plan: JSONObject): String? {
+fun startAttachmentPlan(context: Context, plan: JSONObject, t: (String) -> String, diagnostic: (String) -> Unit): String? {
     if (plan.getString("kind") == "link") {
+        if (openUpNoteLink(context, plan.getString("uri"), t, diagnostic) != null) return null
         return try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(plan.getString("uri"))))
             null
@@ -534,11 +536,11 @@ fun EditorAttachments(model: InboxViewModel, editor: TaskEditor, locked: Boolean
 
 /** RN's attachments list (attachmentsList and its rows): [actions] draws each row's buttons at its end. */
 @Composable
-private fun AttachmentList(rows: List<AttachmentRowView>, enabled: Boolean, open: (String) -> Unit, download: (String) -> Unit,
+private fun AttachmentList(rows: List<AttachmentRowView>, enabled: Boolean, open: (String) -> Unit, download: (String) -> Unit, top: Int = 8,
                            actions: @Composable (AttachmentRowView) -> Unit) {
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(10.dp)
-    Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)) {
+    Column(Modifier.padding(top = top.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape)) {
         for (row in rows) {
             Row(Modifier.fillMaxWidth().hairline(c.border, top = false).padding(horizontal = 12.dp, vertical = 10.dp).testTag("attachment-row"),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -572,8 +574,8 @@ private fun RowIcon(icon: ImageVector, label: String, enabled: Boolean, onClick:
 }
 
 /**
- * RN's project Attachments card (ProjectDetailModal's attachmentsContainer): the title with Add file and Add link, and core's
- * rows with Remove. An archived project takes no edit (its buttons are off).
+ * RN's project Attachments block inside the project's Details (ProjectDetailModal's attachmentsContainer): the title with Add file
+ * and Add link, and core's rows with Remove. An archived project takes no edit (its buttons are off).
  */
 @Composable
 fun ProjectAttachments(model: InboxViewModel, projectId: String) = with(model.attachments) {
@@ -585,20 +587,16 @@ fun ProjectAttachments(model: InboxViewModel, projectId: String) = with(model.at
     LaunchedEffect(projectId, downloading) { while (downloading.isNotEmpty()) { delay(500); readProject(projectId) } }
     val rows = if (this.projectId == projectId) projectRows else emptyList()
     val canEdit = this.projectId == projectId && projectCanEdit && !model.busy
-    val shape = RoundedCornerShape(12.dp)
-    Column(Modifier.padding(bottom = 12.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape).padding(12.dp)) {
+    Column(Modifier.fillMaxWidth().background(c.cardBg).hairline(c.border, top = false).testTag("project-details-attachments")
+        .padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(t("attachments.title"), style = rnText(14, 600), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
-            for ((label, tag, action) in listOf(Triple("attachments.addFile", "project-attachment-add-file") { pickFile.launch(arrayOf("*/*")) },
-                Triple("attachments.addLink", "project-attachment-add-link") { openLink(owner) })) {
-                val buttonShape = RoundedCornerShape(8.dp)
-                Text(t(label), style = rnText(12, 600), color = c.tint, modifier = Modifier.padding(start = 8.dp).fade(if (canEdit) 1f else 0.5f)
-                    .clip(buttonShape).background(c.cardBg).border(1.dp, c.border, buttonShape).clickable(enabled = canEdit, role = Role.Button) { action() }
-                    .testTag(tag).padding(horizontal = 10.dp, vertical = 6.dp))
-            }
+            Text(t("attachments.title"), style = rnText(14, 700), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
+            SmallButton(t("attachments.addFile"), canEdit, "project-attachment-add-file") { pickFile.launch(arrayOf("*/*")) }
+            Spacer(Modifier.width(8.dp))
+            SmallButton(t("attachments.addLink"), canEdit, "project-attachment-add-link") { openLink(owner) }
         }
-        if (rows.isNotEmpty()) AttachmentList(rows, true, open = { open(owner, it) }, download = { download(owner, it) }) { row ->
-            Text(t("attachments.remove"), style = rnText(12, 600), color = c.secondaryText, modifier = Modifier.fade(if (canEdit) 1f else 0.5f)
+        if (rows.isNotEmpty()) AttachmentList(rows, true, open = { open(owner, it) }, download = { download(owner, it) }, top = 10) { row ->
+            Text(t("attachments.remove"), style = rnText(12, 700), color = c.secondaryText, modifier = Modifier.fade(if (canEdit) 1f else 0.5f)
                 .clickable(enabled = canEdit, role = Role.Button) { remove(owner, row.id) })
         }
     }
@@ -611,7 +609,7 @@ fun ProjectAttachments(model: InboxViewModel, projectId: String) = with(model.at
 @Composable
 fun AttachmentOverlays(model: InboxViewModel) = with(model.attachments) {
     val context = LocalContext.current
-    LaunchedEffect(launch) { launch?.let { plan -> launched(); startAttachmentPlan(context, plan)?.let { failed -> model.attachments.showAlert(failed) } } }
+    LaunchedEffect(launch) { launch?.let { plan -> launched(); startAttachmentPlan(context, plan, ::t) { outcome -> model.anyTime({ it.logLinkHandoff(outcome, "attachment") }, {}) }?.let { failed -> model.attachments.showAlert(failed) } } }
     alert?.let { message ->
         AlertDialog(onDismissRequest = ::dismissAlert, title = { Text(t("attachments.title")) }, text = { Text(message) },
             confirmButton = { TextButton(onClick = ::dismissAlert) { Text(t("common.ok")) } })

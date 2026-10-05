@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.util.Log
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.androidwidget.CheckoffStore
 import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
 import tech.dongdongbh.mindwtr.pilot.core.AndroidContentSource
 import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
@@ -13,6 +14,7 @@ import tech.dongdongbh.mindwtr.pilot.core.HostFiles
 import tech.dongdongbh.mindwtr.pilot.core.HostInstaller
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
 import tech.dongdongbh.mindwtr.pilot.core.HostNetwork
+import tech.dongdongbh.mindwtr.pilot.core.HostWidgets
 import tech.dongdongbh.mindwtr.pilot.core.LegacyRnStoreGuard
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import tech.dongdongbh.mindwtr.pilot.core.traced
@@ -108,9 +110,12 @@ internal object ProcessCoreHost {
             null
         }
         val installer = HostInstaller(app.filesDir, app.cacheDir)
+        val keyValue = RnKeyValue(app.getDatabasePath("RKStorage"))
         val runtime = CoreHost(legacy?.database ?: File(app.filesDir, "mindwtr-native-dev.db"), legacy?.let { app.dataDir }, HostIo(app),
             File(app.filesDir, "journal"), deviceStore(app), File(app.filesDir, DiagnosticsLogFile.RELATIVE_PATH),
-            RnKeyValue(app.getDatabasePath("RKStorage")), HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer)
+            keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer,
+            ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }),
+            HostWidgets(app) { appState })
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)
@@ -119,6 +124,9 @@ internal object ProcessCoreHost {
             // finished or rolled back by RN's rules, so no attachment write meets a half-installed file.
             recoverInstalls(installer)
             if (replay(runtime)) recovered(app, runtime, deferSync = true)
+            // The widgets show what this boot loaded (a store change before the validated load published nothing), once the first
+            // screen shows its content, as the boot's sync start waits; a CoreWork job publishes at its end.
+            deferredWidgets.set(runtime)
             return runtime
         } catch (failure: Throwable) {
             runCatching { runtime.close() }
@@ -145,6 +153,8 @@ internal object ProcessCoreHost {
 
     /** The boot's sync start, held until the first screen shows its content ([startDeferredSync]); null once it ran. */
     private val deferredSync = AtomicReference<(() -> Unit)?>(null)
+    /** The boot's widget publication, held with it; null once it ran. */
+    private val deferredWidgets = AtomicReference<CoreHost?>(null)
 
     /**
      * The first screen shows its content (the Inbox's first rows, another tab's boot read, or the screen's fallback): the boot's
@@ -153,6 +163,7 @@ internal object ProcessCoreHost {
      */
     fun startDeferredSync() {
         deferredSync.getAndSet(null)?.let { start -> syncThread.execute { start() } }
+        deferredWidgets.getAndSet(null)?.let(::refreshWidgets)
     }
 
     /**
@@ -196,6 +207,7 @@ internal object ProcessCoreHost {
     /** One sync start at a time: the boot's held start (sync thread) and CoreWork's (its worker) may meet. */
     private val syncLock = Any()
     private val syncThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-sync-events") }
+    private val widgetThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-widget-refresh") }
     private val syncListeners = CopyOnWriteArraySet<(JSONObject) -> Unit>()
     /** The last sync badge and finished-cycle count (host-sync.ts's `sync` event), for a screen that opens later. */
     @Volatile var syncState: JSONObject? = null
@@ -239,17 +251,77 @@ internal object ProcessCoreHost {
      * it goes through, sync waits, and CoreWork retries it with its back-off. True once drained.
      */
     fun recovered(app: Application, runtime: CoreHost, deferSync: Boolean = false): Boolean = StartOrder.afterReplay(
-        drain = { drain(runtime, queue(app)) },
+        drain = { drain(runtime, queue(app), app) },
         owe = { message -> recordFailure(PendingFailure(FailedAction("journal", ""), message, null)) },
         retryLater = { runCatching { CoreWork.retryDrain(app) }.onFailure { Log.w(CoreHost.TAG, "Native Android drain retry not queued", it) } },
-        // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once.
-        startSync = { if (deferSync) deferredSync.set { startSync(app, runtime) } else startSync(app, runtime) },
+        // The boot's start waits for the first screen's content (startDeferredSync); CoreWork's and a retry's start at once. The
+        // reminder alarms start with sync.
+        startSync = {
+            val start = {
+                startSync(app, runtime)
+                startReminders(runtime)
+            }
+            if (deferSync) deferredSync.set(start) else start()
+        },
+        refreshWidgets = { refreshWidgets(runtime) },
     )
+
+    // ---- Reminder alarms (bundle/host-reminders.ts: core plans every alarm and runs the timers) ----
+
+    /** The reminder alarms' start, and what a resume does (ReminderStart): plan again, or start again after a failed start. */
+    private val reminders = ReminderStart<CoreHost>(start = { it.remindersStart() }, cycle = { it.remindersCycle("cycle") })
+    @Volatile private var askedNotifications = false
+    /** Done once the reminder alarms started (with sync, after the first screen's content): the permission question waits for it. */
+    val remindersStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /**
+     * Started where sync starts, after the validated load, the journal replay and the queue drain: RN's old alarms are cancelled
+     * once, then core plans every alarm. A failure never fails the boot: the next resume starts again, and a reschedule plans.
+     */
+    private fun startReminders(runtime: CoreHost) {
+        runCatching { reminders.start(runtime) }
+            .onSuccess { now ->
+                if (now) logRemindersStarted()
+                remindersStarted.complete(Unit)
+            }
+            .onFailure { Log.w(CoreHost.TAG, "Native Android reminders start failed", it) }
+    }
+
+    private fun logRemindersStarted() {
+        val reply = reminders.reply ?: return
+        Log.i(CoreHost.TAG, "Native Android reminders started mode=${reply.optString("mode")} rnCancelled=${reply.optInt("rnCancelled")}")
+    }
+
+    /**
+     * Once per process, after the boot: true when RN would ask for the notification permission at start (a reminder feature is on and
+     * Android 13+ does not allow notifications yet). The screen asks; its answer reaches core's plan at the next resume.
+     */
+    @Synchronized fun askNotifications(): Boolean {
+        if (askedNotifications || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return false
+        val start = reminders.reply ?: return false
+        askedNotifications = true
+        return start.optBoolean("ask")
+    }
+
+    /** The home-screen widgets published from the store now if what they show changed, off the caller's thread. */
+    private fun refreshWidgets(runtime: CoreHost) = widgetThread.execute {
+        runCatching { runtime.refreshWidgets() }.onFailure { Log.w(CoreHost.TAG, "Native Android widget refresh failed", it) }
+    }
 
     /** MainActivity resumed ("active") or paused ("background"): core's triggers sync on resume and on leaving. */
     fun appState(state: String) {
+        // RN plans the reminder alarms again on every resume (its start runs one more cycle), so a permission that changed counts;
+        // a start that failed starts again.
+        if (state == "active") syncThread.execute {
+            runCatching { reminders.resume() }
+                .onSuccess { if (reminders.reply != null) remindersStarted.complete(Unit) }
+                .onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) }
+        }
         if (state == appState) return
         appState = state
+        // RN republishes the widgets when the app comes to the front (a new day, a changed theme) and flushes a change still
+        // waiting when it leaves; a boot still running publishes once it finished.
+        boot?.takeIf { it.isDone }?.let { task -> runCatching { task.get() }.getOrNull()?.let(::refreshWidgets) }
         val runtime = syncHost ?: return
         syncThread.execute { runCatching { runtime.syncAppState(state) }.onFailure { Log.w(CoreHost.TAG, "Native Android sync app state failed ${failureForLog(it)}") } }
     }
@@ -273,13 +345,27 @@ internal object ProcessCoreHost {
      * CoreWork's job. It waits while another retry is owed. SAVE_FAILED keeps the drain's journal entry, whose replay drains
      * again. An empty [queue] folder needs no drain, so a start with nothing queued journals nothing.
      */
-    private fun drain(runtime: CoreHost, queue: File): StartOrder.Drain {
+    private fun drain(runtime: CoreHost, queue: File, app: Application): StartOrder.Drain {
         if (failure != null) return StartOrder.Drain.Waiting
-        if (queue.list().isNullOrEmpty()) return StartOrder.Drain.Done
+        // RN's widget check-offs past their Undo window (an RN user's pending file on the first native start, or a sweep a killed
+        // process missed) go into the queue first, through RN's CheckoffStore, so this drain stores them. One that did not (a
+        // failed read or queue write, which RN's sweep keeps pending) is retried: the queue still drains, and CoreWork runs again.
+        val unswept = runCatching { CheckoffStore.sweep(app).failed > 0 }.onFailure { Log.w(CoreHost.TAG, "Native Android widget check-off sweep failed", it) }.getOrDefault(true)
+        if (unswept) runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "unswept"))
+        val drained = if (unswept) StartOrder.Drain.Unswept else StartOrder.Drain.Done
+        when (StartOrder.queueEmpty(queue.list(), queue.exists())) {
+            true -> return drained
+            // An unreadable queue folder strands its work as a failed sweep would: retried, never taken for empty.
+            null -> {
+                runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "unreadable"))
+                return StartOrder.Drain.Unswept
+            }
+            false -> Unit
+        }
         return try {
             val ingested = runtime.ingestPendingCaptures(UUID.randomUUID().toString()).optInt("ingested")
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "drained").put("ingested", ingested))
-            StartOrder.Drain.Done
+            drained
         } catch (error: Throwable) {
             val message = error.message ?: error.javaClass.simpleName
             runtime.logLine("Native Android queue drain", JSONObject().put("outcome", "failed").put("error", message.substringBefore(':')))

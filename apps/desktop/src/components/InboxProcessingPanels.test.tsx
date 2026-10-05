@@ -368,6 +368,26 @@ describe('InboxProcessingWizard draft editing', () => {
         cleanup();
     });
 
+    it.each([{ suggestedContexts: [] }, { suggestedContexts: ['@home'] }])('keeps the Contexts heading above its input with suggestions $suggestedContexts', ({ suggestedContexts }) => {
+        const view = render(<WizardHarness processingStep="context" options={{ ...options, suggestedContexts }} />);
+        expect(view.getByText('filters.contexts')).toBeInTheDocument();
+        const heading = view.getByText('taskEdit.contextsLabel');
+        const input = view.getByRole('combobox', { name: 'taskEdit.contextsLabel' });
+        expect(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it.each([
+        [true, false, 'taskEdit.contextsLabel'],
+        [false, true, 'taskEdit.tagsLabel'],
+        [false, false, 'taskEdit.details'],
+    ] as const)('labels organization accurately for contexts=%s tags=%s', (showContextsField, showTagsField, label) => {
+        const view = render(<WizardHarness processingStep="context" visibility={{ ...visibility, showContextsField, showTagsField }} />);
+        expect(view.queryByText('filters.contexts')).not.toBeInTheDocument();
+        expect(view.getAllByText(label).length).toBeGreaterThan(0);
+        expect(view.queryByPlaceholderText('@home') !== null).toBe(showContextsField);
+        expect(view.queryByPlaceholderText('#deep-work') !== null).toBe(showTagsField);
+    });
+
     it('writes refine-step title edits through the draft', () => {
         const { getByDisplayValue } = render(<WizardHarness />);
 
@@ -448,5 +468,32 @@ describe('InboxProcessingWizard draft editing', () => {
 
         expect(getByText('taskEdit.areaLabel')).toBeInTheDocument();
         expect(getByText('taskEdit.projectLabel')).toBeInTheDocument();
+    });
+});
+
+
+describe('Incubate requires a review date (#1338)', () => {
+    afterEach(cleanup);
+    it.each(['guided', 'quick'] as const)('offers only dates in %s mode, including the calendar popover', (mode) => {
+        const onDateChange = vi.fn();
+        const fields = { ...scheduleFields, review: { ...scheduleField(), date: '2026-10-10', onDateChange } };
+        const view = mode === 'quick'
+            ? render(<QuickPanelHarness actionabilityChoice="incubate" scheduleFields={fields} />)
+            : render(<WizardHarness processingStep="actionable" scheduleFields={fields} />);
+        if (mode === 'guided') {
+            fireEvent.click(view.getByRole('button', { name: 'inbox.no' }));
+            fireEvent.click(view.getByRole('button', { name: 'Incubate' }));
+        }
+        expect(view.queryByRole('button', { name: 'No date' })).toBeNull();
+        expect(view.queryByRole('button', { name: /common.clear/ })).toBeNull();
+        fireEvent.click(view.getByRole('button', { name: 'Tomorrow' }));
+        expect(onDateChange).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+        fireEvent.click(view.getByRole('button', { name: /taskEdit.reviewDateLabel/, hidden: false }));
+        expect(view.getByRole('dialog')).toBeInTheDocument();
+        expect(view.queryByRole('button', { name: 'No date' })).toBeNull();
+    });
+    it('retains No date for optional scheduling fields', () => {
+        const view = render(<QuickPanelHarness actionabilityChoice="later" />);
+        expect(view.getByRole('button', { name: 'No date' })).toBeInTheDocument();
     });
 });

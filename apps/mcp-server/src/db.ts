@@ -62,6 +62,14 @@ const normalizeBootstrapData = (core: CoreModule, raw: unknown): AppData => {
   });
 };
 
+const loadNodeSqlite = async () => {
+  try {
+    return await import('better-sqlite3');
+  } catch {
+    throw new Error('Node SQLite mode requires the optional better-sqlite3 addon. Install mindwtr-mcp with optional dependencies and enable the better-sqlite3 install script, use Bun, or select --api-url with MINDWTR_MCP_API_TOKEN for addon-free Local API access.');
+  }
+};
+
 const createBootstrapSqliteClient = async (dbPath: string) => {
   if (isBun()) {
     const mod = await import('bun:sqlite');
@@ -85,7 +93,7 @@ const createBootstrapSqliteClient = async (dbPath: string) => {
     };
   }
 
-  const mod = await import('better-sqlite3');
+  const mod = await loadNodeSqlite();
   const Database = mod.default;
   const db = new Database(dbPath);
   const run = async (sql: string, params: unknown[] = []) => {
@@ -226,7 +234,7 @@ export async function openMindwtrDb(options: DbOptions = {}) {
       ? new mod.Database(path, { readonly: true })
       : new mod.Database(path);
   } else {
-    const mod = await import('better-sqlite3');
+    const mod = await loadNodeSqlite();
     const Database = mod.default;
     db = new Database(path, {
       readonly: options.readonly ?? false,

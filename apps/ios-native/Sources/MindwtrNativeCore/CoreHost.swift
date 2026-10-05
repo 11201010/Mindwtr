@@ -15,11 +15,27 @@ public struct CoreHostAppLockRecovery: LocalizedError, Sendable {
     public var errorDescription: String? { "App lock outcome is unknown. Cancel the pending change to use the saved setting." }
 }
 
+public enum NativeBackupImportAction: String, Sendable {
+    case merge = "json", replace = "json-restore", csv = "csv", todoist = "todoist", ticktick = "ticktick", dgt = "dgt", omnifocus = "omnifocus"
+    public var operation: String {
+        switch self { case .merge: return "merge"; case .replace: return "replace"; case .csv: return "csv"; case .todoist: return "todoist"; case .ticktick: return "ticktick"; case .dgt: return "dgt"; case .omnifocus: return "omnifocus" }
+    }
+    public var usesBinarySource: Bool { self == .csv || self == .todoist || self == .ticktick || self == .dgt || self == .omnifocus }
+    var maximumBytes: Int { usesBinarySource ? 16 * 1024 * 1024 : NativeBackupImportFile.maximumBytes }
+}
+
+public struct NativeBackupImportPreview: Sendable {
+    public let action: NativeBackupImportAction
+    public let id: UUID
+    public let json: String
+}
+
 /// One off-main owner for the core runtime, database and pending command journal.
 /// Every result is the JSON-encoded core value, with host/core failures thrown.
 public final class CoreHost: @unchecked Sendable {
     private let queue = DispatchQueue(label: "tech.dongdongbh.mindwtr.native-core", qos: .userInitiated)
     private let engine: Engine
+    private let localAttachmentRequests = NativeAttachmentLocalRequests()
 
     public init(databaseURL: URL, bundleURL: URL) {
         engine = Engine(queue: queue, databaseURL: databaseURL, bundleURL: bundleURL)
@@ -40,6 +56,104 @@ public final class CoreHost: @unchecked Sendable {
 
     public func call(_ method: String, argumentsJSON: String = "[]") async throws -> String {
         try await perform { try $0.call(method, argumentsJSON: argumentsJSON) }
+    }
+
+    /// Task-local byte operations only; no project/store command or picker UI.
+    public func localAttachmentRequest(name: String, requestJSON: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.localAttachmentRequest(name: name, requestJSON: requestJSON, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+
+    public func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) async throws -> String {
+        try await perform { try $0.beginAttachmentDraft(expectedSession: expectedSession, expectedGeneration: expectedGeneration) }
+    }
+    public func beginAttachmentDraftV2(expectedSession: String, expectedGeneration: Int) async throws -> String {
+        try await perform { try $0.beginAttachmentDraftV2(expectedSession: expectedSession, expectedGeneration: expectedGeneration) }
+    }
+    public func readAttachmentDraft() async throws -> String {
+        try await perform { try $0.readAttachmentDraft() }
+    }
+    public func discardAttachmentDraft(requestJSON: String) async throws -> String {
+        try await perform { try $0.discardAttachmentDraft(requestJSON: requestJSON) }
+    }
+    public func addAttachmentDraft(requestJSON: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.addAttachmentDraft(requestJSON: requestJSON, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+    public func recoverAttachmentDraft(expectedSession: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.recoverAttachmentDraft(expectedSession: expectedSession, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+    #if DEBUG
+    func configureAttachmentDraftHost(_ hooks: AttachmentDraftHostHooks) async {
+        _ = try? await perform { $0.attachmentDraftHooks = hooks }
+    }
+    #endif
+
+    #if DEBUG
+    func configureAttachmentHost(_ hooks: NativeAttachmentHostHooks) async {
+        _ = try? await perform { $0.attachmentHooks = hooks }
+    }
+    #endif
+
+    /// Initialized file actions cannot activate, replay or acknowledge domain work.
+    public func diagnosticsFileAction(_ method: String) async throws -> String {
+        try await perform { try $0.diagnosticsFileAction(method) }
+    }
+
+    public func validatedDiagnosticsShareURL(_ path: String) async throws -> URL {
+        try await perform { try $0.validatedDiagnosticsShareURL(path) }
+    }
+
+    public func prepareDataBackup(format: NativeBackupFormat = .json) async throws -> NativeBackupExport {
+        try await perform { try $0.prepareDataBackup(format: format) }
+    }
+
+    public func discardDataBackup(_ id: UUID) async {
+        _ = try? await perform { $0.backupExportFile.discard(id) }
+    }
+
+    public func prepareBackupImport(_ url: URL, action: NativeBackupImportAction = .merge) async throws -> NativeBackupImportPreview {
+        try await perform { try $0.prepareBackupImport(url, action: action) }
+    }
+
+    public func discardBackupImport(_ id: UUID) async {
+        _ = try? await perform { $0.discardBackupImport(id) }
+    }
+
+    public func mergeBackupImport(_ id: UUID) async throws -> String {
+        try await perform { try $0.mergeBackupImport(id) }
+    }
+
+    public func listBackupSnapshots() async throws -> String {
+        try await perform { try $0.listBackupSnapshots() }
+    }
+
+    public func restoreBackupSnapshot(_ referenceJSON: String) async throws -> String {
+        try await perform { try $0.restoreBackupSnapshot(referenceJSON) }
+    }
+
+    public func backupDocumentResultModel(_ replyJSON: String) async throws -> String {
+        try await perform { try $0.backupDocumentResultModel(replyJSON) }
+    }
+
+    public func backupSnapshotRestoreModel(_ referenceJSON: String) async throws -> String {
+        try await perform { try $0.backupSnapshotRestoreModel(referenceJSON) }
     }
 
     public func readEditorDraft() async throws -> EditorDraftSnapshot? {
@@ -71,6 +185,9 @@ public final class CoreHost: @unchecked Sendable {
     public func cancelAppLockRecovery() async throws { try await perform { try $0.cancelAppLockRecovery() } }
 
     public func close() async {
+        // This primitive flag reaches a running local invoke immediately; an
+        // ordinary durable command remains governed by its existing journal.
+        localAttachmentRequests.close()
         await withCheckedContinuation { continuation in
             queue.async { [engine] in
                 engine.shutdown()
@@ -88,7 +205,10 @@ public final class CoreHost: @unchecked Sendable {
         }
     }
 
-    deinit { queue.async { [engine] in engine.shutdown() } }
+    deinit {
+        localAttachmentRequests.close()
+        queue.async { [engine] in engine.shutdown() }
+    }
 }
 
 private struct PendingCommand: Codable {
@@ -118,11 +238,24 @@ private final class Engine: @unchecked Sendable {
     private let queue: DispatchQueue
     private let databaseURL: URL
     private let bundleURL: URL
+    private let diagnosticsFile: NativeDiagnosticsLogFile
+    let backupExportFile: NativeBackupExportFile
+    private let backupImportFile: NativeBackupImportFile
+    private let backupOperationFiles: NativeBackupOperationFiles
+    private var backupSelections: [UUID: (selection: NativeBackupImportSelection, action: NativeBackupImportAction)] = [:]
     private let journalURL: URL
     private let editorDrafts: EditorDraftStore
     private let legacyStorage: LegacyRNStorage?
     private var context: JSContext?
     private var database: SQLiteBridge?
+    private var attachmentJobs: NativeAttachmentFileJobs?
+    private var attachmentGeneration: UInt64 = 0
+    private var attachmentIdlePump: DispatchWorkItem?
+    private var invoking = false
+    #if DEBUG
+    var attachmentHooks: NativeAttachmentHostHooks?
+    var attachmentDraftHooks: AttachmentDraftHostHooks?
+    #endif
     private var lockFD: Int32 = -1
     private var started = false
     private var recoveryActivationPending = false
@@ -136,11 +269,18 @@ private final class Engine: @unchecked Sendable {
     private var confirmedDoneTaskStatusEnvelope: String?
     private var confirmedReferenceTaskBackdateEnvelope: String?
     private var confirmedReferenceTaskDestinationEnvelope: String?
+    // Independent of the mutable completion/Undo notice cache.
+    private var referenceProjectNextActionOrigin: [String: Any]?
+    private var confirmedReferenceProjectNextActionEnvelope: String?
+    private var startupReferenceProjectNextActionResult: String?
     private var confirmedDoneTaskCompletedAtEnvelope: String?
     private var confirmedArchiveTaskCompletedAtEnvelope: String?
     private var confirmedTaskCompletionUndoEnvelope: String?
     private var confirmedArchivedTaskRestoreEnvelope: String?
     private var confirmedArchivedTasksRestoreEnvelope: String?
+    private var confirmedReferenceTasksMoveEnvelope: String?
+    private var confirmedReferenceTasksAddTagEnvelope: String?
+    private var confirmedReferenceTasksRemoveTagEnvelope: String?
     private var confirmedArchivedTasksDeleteEnvelope: String?
     private var confirmedArchivedTasksDeleteUndoEnvelope: String?
     private var confirmedProjectLifecycleEnvelope: String?
@@ -155,6 +295,9 @@ private final class Engine: @unchecked Sendable {
     private var startupTaskDeleteResult: String?
     private var startupArchivedTaskRestoreResult: String?
     private var startupArchivedTasksRestoreResult: String?
+    private var startupReferenceTasksMoveResult: String?
+    private var startupReferenceTasksAddTagResult: String?
+    private var startupReferenceTasksRemoveTagResult: String?
     private var startupArchivedTasksDeleteResult: String?
     private var startupArchivedTasksDeleteUndoResult: String?
     private var startupTaskCompletionResult: String?
@@ -182,6 +325,9 @@ private final class Engine: @unchecked Sendable {
     private var startupProjectSectionOrderResult: String?
     private var startupAppLockResult: String?
     private var startupGtdWorkflowResult: String?
+    private var backupUnreturnedReply: String?
+    private var startupBackupDocumentResult: String?
+    private var startupDataSettingResult: String?
     private var startupGeneralPreferenceResult: String?
     private var startupTaxonomyResult: String?
     private var startupPersonEditResult: String?
@@ -226,6 +372,7 @@ private final class Engine: @unchecked Sendable {
     #endif
 
     private static let methods: [String: Int] = [
+        "dataSetting": 1,
         "window": 3, "inboxView": 1, "focus": 1, "focusWindow": 4, "theme": 1, "areaFilter": 0, "setAreaFilter": 1,
         "captureOpen": 0, "captureView": 1, "captureEdit": 1, "captureSubmit": 1,
         "language": 2, "languageSaved": 2, "strings": 1, "complete": 1, "taskView": 1, "taskShare": 1, "taskOpenTab": 1, "taskViewReferenceTarget": 1, "editorModel": 1, "taskEditorDraftDirection": 1, "taskEditorResumeCheck": 1, "taskAttachmentList": 1, "taskAttachmentOpen": 1, "taskAttachmentLinks": 1, "taskAttachmentRemove": 1, "editDraft": 1, "saveDraft": 1, "search": 1,
@@ -261,6 +408,9 @@ private final class Engine: @unchecked Sendable {
         "taskCompletionUndoRetryOutcome": 1,
         "archivedTaskRestoreWrite": 1, "archivedTaskRestoreRetryOutcome": 1,
         "archivedTasksRestoreWrite": 1, "archivedTasksRestoreRetryOutcome": 1,
+        "referenceTasksMoveWrite": 1, "referenceTasksMoveRetryOutcome": 1, "referenceTasksMoveNotice": 1,
+        "referenceTasksAddTagWrite": 1, "referenceTasksAddTagRetryOutcome": 1,
+        "referenceTasksRemoveTagWrite": 1, "referenceTasksRemoveTagRetryOutcome": 1, "referenceBulkTagInput": 2,
         "archivedTasksDeleteWrite": 1, "archivedTasksDeleteRetryOutcome": 1,
         "archivedTasksDeleteUndoWrite": 1, "archivedTasksDeleteUndoRetryOutcome": 1,
         "taskDelete": 1, "taskDeleteReceiptOutcome": 1, "taskDeleteUndo": 1, "taskDeleteUndoReceiptOutcome": 1, "taskPromote": 1, "trashTaskRestoreWrite": 1, "trashTaskRestoreRetryOutcome": 1,
@@ -272,6 +422,7 @@ private final class Engine: @unchecked Sendable {
         "doneTaskStatusOptions": 1, "doneTaskStatusWrite": 1, "doneTaskStatusRetryOutcome": 1,
         "referenceTaskBackdateOptions": 1, "referenceTaskBackdate": 1, "referenceTaskBackdateRetryOutcome": 1,
         "referenceTaskDestinationOptions": 1, "referenceTaskDestination": 1, "referenceTaskDestinationRetryOutcome": 1,
+        "referenceProjectNextActionOptions": 1, "referenceProjectNextActionInput": 1, "referenceProjectNextAction": 1, "referenceProjectNextActionRetryOutcome": 1,
         "doneTaskCompletedAtOptions": 1, "doneTaskCompletedAtWrite": 1, "doneTaskCompletedAtRetryOutcome": 1,
         "archiveTaskCompletedAtOptions": 1, "archiveTaskCompletedAtWrite": 1, "archiveTaskCompletedAtRetryOutcome": 1,
         "somedaySectionMoveOptions": 1, "somedaySectionMoveWrite": 1, "somedaySectionMoveUndo": 1,
@@ -297,7 +448,7 @@ private final class Engine: @unchecked Sendable {
         "inboxCommit": 1, "inboxSkip": 1, "inboxAfterCommit": 1,
         "checklistEdit": 1, "checklistSave": 1, "checklistReset": 1,
     ]
-    private static let mutations: Set<String> = ["referenceTaskDestination", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
+    private static let mutations: Set<String> = ["dataSetting", "referenceTasksRemoveTagWrite", "referenceTasksAddTagWrite", "referenceTasksMoveWrite", "referenceTaskDestination", "referenceProjectNextAction", "referenceTaskBackdate", "archivedTasksDeleteWrite", "archivedTasksDeleteUndoWrite", "archivedTasksRestoreWrite", "archiveTaskCompletedAtWrite", "doneTaskCompletedAtWrite", "doneTaskStatusWrite", "archivedTaskRestoreWrite", "taskCompletion", "taskCompletionUndo", "taskDelete", "taskDeleteUndo", "taskPromote", "trashTaskRestoreWrite", "trashProjectRestoreWrite", "projectDeleteWrite", "projectDeleteUndo", "projectDuplicateWrite", "projectLifecycleWrite", "reviewTaskWrite", "taskCancellationUndo", "captureSubmit", "complete", "setAreaFilter", "saveDraft", "calendarUnschedule", "calendarDelete", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionOrderWrite", "somedaySectionTaskCommit", "somedaySectionMoveWrite", "somedaySectionMoveUndo", "boardAction", "calendarComposerSave", "mindSweepAdd", "inboxCommit", "inboxSkip", "checklistSave", "checklistReset", "projectCreate", "projectSectionCreate", "projectSectionRename", "projectSectionDelete", "projectSectionOrder", "areaCreate", "manageAreaCreate", "managePersonCreate", "appLock", "gtdWorkflow", "generalPreference", "manageTaxonomy", "managePersonEdit", "managePersonDelete", "areaColor", "areaRename", "manageAreaEdit", "areaOrder", "areaDelete", "manageAreaDelete", "projectFocusWrite", "taskFocusWrite", "focusOrderWrite", "focusSavedFilterWrite", "savedSearchWrite", "projectRenameWrite", "projectFlowWrite", "projectTaskSortWrite", "projectTaskOrderWrite", "projectNotesWrite", "projectTagsWrite", "projectAttachmentWrite", "projectStatusWrite", "projectDateWrite", "projectAreaWrite"]
     private static let scheduleFields: Set<String> = ["startTime", "dueDate", "reviewAt", "relativeStartOffset"]
     private static let recurrenceFields: Set<String> = ["recurrence", "recurrenceStrategy", "recurrenceRRule", "showFutureRecurrence"]
 
@@ -333,6 +484,10 @@ private final class Engine: @unchecked Sendable {
         self.queue = queue
         self.databaseURL = databaseURL
         self.bundleURL = bundleURL
+        diagnosticsFile = NativeDiagnosticsLogFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupExportFile = NativeBackupExportFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupImportFile = NativeBackupImportFile(libraryRoot: databaseURL.deletingLastPathComponent())
+        backupOperationFiles = NativeBackupOperationFiles(libraryRoot: databaseURL.deletingLastPathComponent())
         self.legacyStorage = legacyStorage
         journalURL = databaseURL.appendingPathExtension("pending.json")
         editorDrafts = EditorDraftStore(databaseURL: databaseURL)
@@ -358,6 +513,7 @@ private final class Engine: @unchecked Sendable {
         switch saved.terminal {
         case .success(let value):
             _ = try NativeJSON.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
+            if saved.method == "dataSetting" { try validateDataSettingAcknowledgment(value) }
         case .rejected(let message):
             guard isDefiniteRejection(message, method: saved.method) else { throw HostFailure("Invalid terminal command journal") }
         case nil: break
@@ -379,7 +535,37 @@ private final class Engine: @unchecked Sendable {
             try DurableFile.sync(databaseURL.deletingLastPathComponent().deletingLastPathComponent(), directory: true)
             lockFD = open(databaseURL.appendingPathExtension("host-lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
             guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw HostFailure("Native database is already in use or cannot be locked") }
+            // Optional platform capability: failure leaves attachments unbound,
+            // never prevents database recovery or leaks the exclusive lock.
+            attachmentJobs = try? NativeAttachmentFileJobs(libraryRoot: databaseURL.deletingLastPathComponent())
+            attachmentGeneration &+= 1
+            if let jobs = attachmentJobs {
+                #if DEBUG
+                attachmentHooks?.configureJobs?(jobs)
+                #endif
+                let generation = attachmentGeneration
+                jobs.setWake { [weak self] in
+                    guard let self else { return }
+                    self.queue.async { [weak self] in
+                        guard let self, self.attachmentGeneration == generation else { return }
+                        self.scheduleAttachmentIdle(immediate: true)
+                    }
+                }
+            }
+            // Optional cache cleanup cannot block startup or change an owed command.
+            try? backupExportFile.discardInterruptedExports()
             if pending == nil { pending = try loadPendingJournal() }
+            // An uncertain journal never authorizes garbage collection. Validate
+            // every owned backup byte before boot can activate domain work.
+            if let command = pending, command.method == "backupDocumentCommit" {
+                _ = try backupDocumentArguments(command)
+            }
+            let retainedBackup = try pending.flatMap { command -> String? in
+                command.method == "backupDocumentCommit" ? try backupOperationReference(command).id : nil
+            }
+            try? backupOperationFiles.discardUnreferencedOperations(retaining: Set(retainedBackup.map { [$0] } ?? []))
+            // Accepted operations own their frozen plan, never the picker copy.
+            try? backupImportFile.discardUnreferencedCopies(retaining: Set(backupSelections.values.map { $0.selection.reference.id }))
             guard let runtime = JSContext() else { throw HostFailure("Cannot create JavaScriptCore runtime") }
             context = runtime
             installBridge(runtime)
@@ -404,6 +590,18 @@ private final class Engine: @unchecked Sendable {
             }
             if let command = pending, let prefix = Self.historyTaskWritePrefix(command.method), command.method == prefix + "Commit" {
                 _ = try invoke(prefix + "Validate", arguments: journalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "referenceTasksMoveCommit" {
+                _ = try invoke("referenceTasksMoveValidate", arguments: referenceTasksMoveJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "referenceTasksAddTagCommit" {
+                _ = try invoke("referenceTasksAddTagValidate", arguments: referenceTasksAddTagJournalArguments(command))
+                if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
+            }
+            if let command = pending, command.method == "referenceTasksRemoveTagCommit" {
+                _ = try invoke("referenceTasksRemoveTagValidate", arguments: referenceTasksRemoveTagJournalArguments(command))
                 if case .success(let value) = command.terminal { try validatePreparedAcknowledgment(command, value: value) }
             }
             if let command = pending, let prefix = Self.archivedRestorePrefix(command.method) {
@@ -683,11 +881,16 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func startupWindow() throws -> String {
+        let recoveringBackupDocument = pending?.method == "backupDocumentCommit"
+        if pending == nil, let backupUnreturnedReply { startupBackupDocumentResult = backupUnreturnedReply }
         let recoveringBoard = pending?.method == "boardCommit"
         let recoveringTaskDelete = pending?.method == "taskDeleteCommit"
         let recoveringTaskDeleteCommand = recoveringTaskDelete ? pending : nil
         let recoveringTaskDeleteUndoCommand = pending?.method == "taskDeleteUndoCommit" ? pending : nil
         let recoveringArchivedTaskRestore = pending?.method == "archivedTaskRestoreCommit"
+        let recoveringReferenceTasksMove = pending?.method == "referenceTasksMoveCommit"
+        let recoveringReferenceTasksAddTag = pending?.method == "referenceTasksAddTagCommit"
+        let recoveringReferenceTasksRemoveTag = pending?.method == "referenceTasksRemoveTagCommit"
         let recoveringArchivedTasksRestore = pending?.method == "archivedTasksRestoreCommit"
         let recoveringArchivedTasksRestoreCommand = recoveringArchivedTasksRestore ? pending : nil
         let recoveringArchivedTasksDelete = pending?.method == "archivedTasksDeleteCommit"
@@ -697,6 +900,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringTaskCompletion = pending?.method == "taskCompletionCommit"
         let recoveringReferenceTaskBackdate = pending?.method == "referenceTaskBackdateCommit"
         let recoveringReferenceTaskDestination = pending?.method == "referenceTaskDestinationCommit"
+        let recoveringReferenceProjectNextAction = pending?.method == "referenceProjectNextActionCommit"
         let recoveringDoneTaskStatus = pending?.method == "doneTaskStatusCommit"
         let recoveringDoneTaskStatusCommand = recoveringDoneTaskStatus ? pending : nil
         let recoveringDoneTaskCompletedAt = pending?.method == "doneTaskCompletedAtCommit"
@@ -722,6 +926,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringProjectSectionOrder = pending?.method == "projectSectionOrderCommit"
         let recoveringAppLock = pending?.method == "appLockCommit"
         let recoveringGtdWorkflow = pending?.method == "gtdWorkflowCommit"
+        let recoveringDataSetting = pending?.method == "dataSetting"
         let recoveringGeneralPreference = pending?.method == "generalPreferenceCommit"
         let recoveringTaxonomy = pending?.method == "manageTaxonomyCommit"
         let recoveringPersonEdit = pending?.method == "managePersonEditCommit"
@@ -762,6 +967,7 @@ private final class Engine: @unchecked Sendable {
         let recoveringSomedaySectionMove = pending?.method == "somedaySectionMoveCommit"
         let recoveringSomedaySectionUndo = pending?.method == "somedaySectionMoveUndoCommit"
         let terminal = try resolvePending()
+        if recoveringBackupDocument, let terminal, case .success(let value) = terminal { startupBackupDocumentResult = value }
         if let recoveringTaskDeleteCommand, let terminal, case .success = terminal {
             rememberConfirmedTaskDelete(recoveringTaskDeleteCommand)
         }
@@ -782,6 +988,9 @@ private final class Engine: @unchecked Sendable {
         if recoveringBoard, let terminal, case .success(let value) = terminal { startupBoardResult = value }
         if recoveringTaskDelete, let terminal, case .success(let value) = terminal { startupTaskDeleteResult = value }
         if recoveringArchivedTaskRestore, let terminal, case .success(let value) = terminal { startupArchivedTaskRestoreResult = value }
+        if recoveringReferenceTasksMove, let terminal, case .success(let value) = terminal { startupReferenceTasksMoveResult = value }
+        if recoveringReferenceTasksAddTag, let terminal, case .success(let value) = terminal { startupReferenceTasksAddTagResult = value }
+        if recoveringReferenceTasksRemoveTag, let terminal, case .success(let value) = terminal { startupReferenceTasksRemoveTagResult = value }
         if recoveringArchivedTasksRestore, let terminal, case .success(let value) = terminal { startupArchivedTasksRestoreResult = value }
         if recoveringArchivedTasksDelete, let terminal, case .success(let value) = terminal { startupArchivedTasksDeleteResult = value }
         if recoveringArchivedTasksDeleteUndo, let terminal, case .success(let value) = terminal { startupArchivedTasksDeleteUndoResult = value }
@@ -793,6 +1002,7 @@ private final class Engine: @unchecked Sendable {
         }
         if recoveringReferenceTaskBackdate, let terminal, case .success(let value) = terminal { startupReferenceTaskBackdateResult = value }
         if recoveringReferenceTaskDestination, let terminal, case .success(let value) = terminal { startupReferenceTaskDestinationResult = value }
+        if recoveringReferenceProjectNextAction, let terminal, case .success(let value) = terminal { startupReferenceProjectNextActionResult = value }
         if recoveringDoneTaskCompletedAt, let terminal, case .success(let value) = terminal { startupDoneTaskCompletedAtResult = value }
         if recoveringArchiveTaskCompletedAt, let terminal, case .success(let value) = terminal { startupArchiveTaskCompletedAtResult = value }
         if recoveringTaskCompletionUndo, let terminal, case .success(let value) = terminal { startupTaskCompletionUndoResult = value }
@@ -815,6 +1025,7 @@ private final class Engine: @unchecked Sendable {
         if recoveringProjectSectionOrder, let terminal, case .success(let value) = terminal { startupProjectSectionOrderResult = value }
         if recoveringAppLock, let terminal, case .success(let value) = terminal { startupAppLockResult = value }
         if recoveringGtdWorkflow, let terminal, case .success(let value) = terminal { startupGtdWorkflowResult = value }
+        if recoveringDataSetting, let terminal, case .success(let value) = terminal { startupDataSettingResult = value }
         if recoveringGeneralPreference, let terminal, case .success(let value) = terminal { startupGeneralPreferenceResult = value }
         if recoveringTaxonomy, let terminal, case .success(let value) = terminal { startupTaxonomyResult = value }
         if recoveringPersonEdit, let terminal, case .success(let value) = terminal { startupPersonEditResult = value }
@@ -870,18 +1081,18 @@ private final class Engine: @unchecked Sendable {
         let recoveredSomedaySections = startupSomedaySectionCreateResult ?? startupSomedaySectionRenameResult
             ?? startupSomedaySectionDeleteResult ?? startupSomedaySectionOrderResult
             ?? startupSomedaySectionTaskResult
-        let recoveredManage = startupGtdWorkflowResult ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
+        let recoveredManage = startupBackupDocumentResult ?? startupDataSettingResult ?? startupGtdWorkflowResult ?? startupAppLockResult ?? startupGeneralPreferenceResult ?? startupUnassignedAreaColorResult ?? startupPersonCreateResult
             ?? startupPersonDeleteResult ?? startupPersonEditResult ?? startupTaxonomyResult
         let recoveredDoneRows = startupDoneTaskCompletedAtResult ?? startupDoneTaskStatusResult
         let recoveredHistoryRows = startupArchiveTaskCompletedAtResult ?? recoveredDoneRows
-        let recoveredReference = startupReferenceTaskDestinationResult ?? startupReferenceTaskBackdateResult ?? startupTaskCompletionResult ?? startupTaskCompletionUndoResult
+        let recoveredReference = startupReferenceProjectNextActionResult ?? startupReferenceTaskDestinationResult ?? startupReferenceTaskBackdateResult ?? startupTaskCompletionResult ?? startupTaskCompletionUndoResult
         let recoveredCompletion = recoveredHistoryRows ?? recoveredReference
         let recoveredLists = recoveredCompletion
             ?? startupInboxResult ?? startupChecklistResult ?? startupTaskListSortResult
             ?? recoveredManage ?? recoveredSomedaySections
             ?? startupSomedaySectionMoveResult ?? startupSomedaySectionUndoResult
         let recoveredArchiveDelete = startupArchivedTasksDeleteResult ?? startupArchivedTasksDeleteUndoResult
-        let recoveredArchiveRestore = recoveredArchiveDelete ?? startupArchivedTasksRestoreResult ?? startupArchivedTaskRestoreResult
+        let recoveredArchiveRestore = startupReferenceTasksRemoveTagResult ?? startupReferenceTasksAddTagResult ?? startupReferenceTasksMoveResult ?? recoveredArchiveDelete ?? startupArchivedTasksRestoreResult ?? startupArchivedTaskRestoreResult
         let recoveredDeleteRestore = recoveredArchiveRestore ?? startupTaskDeleteResult ?? startupProjectDeleteResult
             ?? startupProjectDeleteUndoResult ?? startupProjectDuplicateResult ?? startupProjectLifecycleResult
             ?? startupTrashTaskRestoreResult ?? startupTrashProjectRestoreResult
@@ -915,7 +1126,8 @@ private final class Engine: @unchecked Sendable {
             (startupProjectDateResult, "projectDateCommit"),
             (startupProjectAreaResult, "projectAreaCommit"),
         ].first(where: { $0.0 != nil })?.1
-        let completionRecoveryMethod = startupArchiveTaskCompletedAtResult != nil ? "archiveTaskCompletedAtCommit"
+        let completionRecoveryMethod = startupReferenceProjectNextActionResult != nil ? "referenceProjectNextActionCommit"
+            : startupArchiveTaskCompletedAtResult != nil ? "archiveTaskCompletedAtCommit"
             : startupDoneTaskCompletedAtResult != nil ? "doneTaskCompletedAtCommit"
             : startupDoneTaskStatusResult != nil ? "doneTaskStatusCommit"
             : startupReferenceTaskDestinationResult != nil ? "referenceTaskDestinationCommit"
@@ -924,7 +1136,7 @@ private final class Engine: @unchecked Sendable {
             : startupTaskCompletionUndoResult != nil ? "taskCompletionUndoCommit" : nil
         let archiveMutationRecoveryMethod = startupArchivedTasksDeleteResult != nil ? "archivedTasksDeleteCommit"
             : startupArchivedTasksDeleteUndoResult != nil ? "archivedTasksDeleteUndoCommit" : nil
-        let historyRecoveryMethod = archiveMutationRecoveryMethod ?? (startupArchivedTasksRestoreResult != nil ? "archivedTasksRestoreCommit" : completionRecoveryMethod)
+        let historyRecoveryMethod = startupReferenceTasksRemoveTagResult != nil ? "referenceTasksRemoveTagCommit" : startupReferenceTasksAddTagResult != nil ? "referenceTasksAddTagCommit" : startupReferenceTasksMoveResult != nil ? "referenceTasksMoveCommit" : archiveMutationRecoveryMethod ?? (startupArchivedTasksRestoreResult != nil ? "archivedTasksRestoreCommit" : completionRecoveryMethod)
         window["recovery"] = ["method": historyRecoveryMethod ?? (startupArchivedTaskRestoreResult != nil ? "archivedTaskRestoreCommit"
             : startupTaskDeleteResult != nil ? "taskDeleteCommit"
             : startupProjectDeleteResult != nil ? "projectDeleteCommit"
@@ -948,6 +1160,8 @@ private final class Engine: @unchecked Sendable {
                 : startupPersonCreateResult != nil ? "managePersonCreateCommit"
                 : startupAppLockResult != nil ? "appLockCommit"
                 : startupGtdWorkflowResult != nil ? "gtdWorkflowCommit"
+                : startupBackupDocumentResult != nil ? "backupDocumentCommit"
+                : startupDataSettingResult != nil ? "dataSetting"
                 : startupGeneralPreferenceResult != nil ? "generalPreferenceCommit"
                 : startupTaxonomyResult != nil ? "manageTaxonomyCommit"
                 : startupPersonEditResult != nil ? "managePersonEditCommit"
@@ -961,9 +1175,13 @@ private final class Engine: @unchecked Sendable {
                 : startupSomedaySectionMoveResult != nil ? "somedaySectionMoveCommit"
                 : startupSomedaySectionUndoResult != nil ? "somedaySectionMoveUndoCommit" : "focusGroupWrite")),
                               "result": try NativeJSON.jsonObject(with: Data(recovered.utf8))]
+        if startupReferenceTasksMoveResult != nil || startupReferenceTasksAddTagResult != nil || startupReferenceTasksRemoveTagResult != nil, var recovery = window["recovery"] as? [String: Any] {
+            recovery["source"] = "reference"
+            window["recovery"] = recovery
+        }
         if let command = recoveringArchivedTasksDeleteCommand, archiveMutationRecoveryMethod != nil,
-           historyBulkSource(command) == "done", var recovery = window["recovery"] as? [String: Any] {
-            recovery["source"] = "done"
+           ["done", "reference"].contains(historyBulkSource(command)), var recovery = window["recovery"] as? [String: Any] {
+            recovery["source"] = historyBulkSource(command)
             window["recovery"] = recovery
         }
         if let command = recoveringArchivedTasksRestoreCommand, startupArchivedTasksRestoreResult != nil,
@@ -973,6 +1191,12 @@ private final class Engine: @unchecked Sendable {
         }
         if startupDoneTaskStatusResult != nil, startupDoneTaskStatusSource == "reference",
            var recovery = window["recovery"] as? [String: Any], recovery["method"] as? String == "doneTaskStatusCommit" {
+            recovery["source"] = "reference"
+            window["recovery"] = recovery
+        }
+        if startupReferenceProjectNextActionResult != nil,
+           var recovery = window["recovery"] as? [String: Any], recovery["method"] as? String == "referenceProjectNextActionCommit" {
+            // This route is established only by the validated captured command's proven result.
             recovery["source"] = "reference"
             window["recovery"] = recovery
         }
@@ -998,6 +1222,9 @@ private final class Engine: @unchecked Sendable {
         startupBoardResult = nil
         startupArchivedTaskRestoreResult = nil
         startupArchivedTasksRestoreResult = nil
+        startupReferenceTasksMoveResult = nil
+        startupReferenceTasksAddTagResult = nil
+        startupReferenceTasksRemoveTagResult = nil
         startupArchivedTasksDeleteResult = nil
         startupArchivedTasksDeleteUndoResult = nil
         startupTaskDeleteResult = nil
@@ -1006,6 +1233,7 @@ private final class Engine: @unchecked Sendable {
         startupDoneTaskStatusResult = nil
         startupReferenceTaskBackdateResult = nil
         startupReferenceTaskDestinationResult = nil
+        startupReferenceProjectNextActionResult = nil
         startupDoneTaskStatusSource = nil
         startupDoneTaskCompletedAtResult = nil
         startupArchiveTaskCompletedAtResult = nil
@@ -1026,6 +1254,9 @@ private final class Engine: @unchecked Sendable {
         startupProjectSectionOrderResult = nil
         startupAppLockResult = nil
         startupGtdWorkflowResult = nil
+        if startupBackupDocumentResult != nil { backupUnreturnedReply = nil }
+        startupBackupDocumentResult = nil
+        startupDataSettingResult = nil
         startupGeneralPreferenceResult = nil
         startupTaxonomyResult = nil
         startupPersonEditResult = nil
@@ -1071,11 +1302,58 @@ private final class Engine: @unchecked Sendable {
         try call(method, argumentsJSON: argumentsJSON, editorAttempt: nil)
     }
 
+    private var attachmentDraftEvidence: Bool {
+        NativeAttachmentDraftCoordinator.hasEvidence(databaseURL: databaseURL)
+    }
+    private func requireNoAttachmentDraft() throws {
+        guard !attachmentDraftEvidence else { throw HostFailure("Attachment draft ownership requires exact recovery") }
+    }
+    private func attachmentDraftCoordinator() throws -> NativeAttachmentDraftCoordinator {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil, !recoveryActivationPending, let jobs = attachmentJobs else {
+            throw HostFailure("Attachment draft recovery is not ready")
+        }
+        let coordinator = try NativeAttachmentDraftCoordinator(databaseURL: databaseURL, jobs: jobs) { [unowned self] method, arguments in
+            try self.invoke(method, arguments: arguments)
+        }
+        #if DEBUG
+        coordinator.hooks = attachmentDraftHooks
+        #endif
+        return coordinator
+    }
+    private func attachmentDraftOperation(_ action: () throws -> String) throws -> String {
+        do { return try action() }
+        catch { throw HostFailure("Attachment draft operation could not be confirmed; retained evidence requires exact recovery") }
+    }
+    func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().begin(session: expectedSession, generation: expectedGeneration) }
+    }
+    func beginAttachmentDraftV2(expectedSession: String, expectedGeneration: Int) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().beginV2(session: expectedSession, generation: expectedGeneration) }
+    }
+    func readAttachmentDraft() throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed else { throw HostFailure("Attachment draft recovery is not ready") }
+        // Reading private evidence does not activate or replay pending domain work.
+        do { return try NativeAttachmentDraftCoordinator.readSummary(databaseURL: databaseURL) }
+        catch { throw HostFailure("Attachment draft capability is unavailable") }
+    }
+    func addAttachmentDraft(requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().add(requestJSON, cancellation: cancellation) }
+    }
+    func recoverAttachmentDraft(expectedSession: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().recover(session: expectedSession, cancellation: cancellation) }
+    }
+    func discardAttachmentDraft(requestJSON: String) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().discard(requestJSON) }
+    }
+
     func readEditorDraft() throws -> EditorDraftSnapshot? {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor draft recovery is not settled") }
         guard let current = try editorDrafts.read() else { return nil }
         if let attempt = current.attempt {
+            try requireNoAttachmentDraft()
             // No journal means the invocation never began, or a definite refusal settled.
             try editorDrafts.thaw(attempt)
         }
@@ -1085,17 +1363,29 @@ private final class Engine: @unchecked Sendable {
     func checkpointEditorDraft(_ snapshot: EditorDraftSnapshot) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor draft is not ready") }
+        if attachmentDraftEvidence {
+            guard (try? NativeAttachmentDraftStore(databaseURL: databaseURL).read())?.version == 2 else {
+                throw HostFailure("Attachment draft ownership requires exact recovery")
+            }
+            _ = try attachmentDraftOperation {
+                try attachmentDraftCoordinator().advance(snapshot)
+                return ""
+            }
+            return
+        }
         try editorDrafts.checkpoint(snapshot)
     }
 
     func discardEditorDraft(expectedSession: String) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor Save must settle before discard") }
+        try requireNoAttachmentDraft()
         try editorDrafts.discard(sessionID: expectedSession)
     }
 
     func discardCorruptEditorDraft() throws {
         dispatchPrecondition(condition: .onQueue(queue))
+        try requireNoAttachmentDraft()
         // A failed start may not yet have assigned `pending`. Inspect the durable
         // journal itself before removing the only frozen proof of an editor Save.
         let saved = try loadPendingJournal(checkingEditorSnapshot: false)
@@ -1132,6 +1422,7 @@ private final class Engine: @unchecked Sendable {
         guard started, !closed, pending == nil, ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote"].contains(method) else {
             throw HostFailure("Editor Save is not ready")
         }
+        try requireNoAttachmentDraft()
         let args = try arguments(method, argumentsJSON)
         guard let encoded = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -1151,7 +1442,7 @@ private final class Engine: @unchecked Sendable {
         } catch {
             // A command that never entered the journal, or a definite refusal,
             // cannot have written. Keep uncertain attempts frozen for exact replay.
-            if pending == nil { try editorDrafts.thaw(attempt) }
+            if pending == nil { try requireNoAttachmentDraft(); try editorDrafts.thaw(attempt) }
             throw error
         }
         // A prepared draft no-op returns before a journal exists. Cleanup errors
@@ -1161,14 +1452,286 @@ private final class Engine: @unchecked Sendable {
             #if DEBUG
             try faults?.editorDraftRemove?()
             #endif
+            try requireNoAttachmentDraft()
             try editorDrafts.removeMatching(attempt)
         }
         return value
     }
 
+    func diagnosticsFileAction(_ method: String) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, !recoveryActivationPending,
+              ["logShare", "logClearChecked"].contains(method) else {
+            throw HostFailure("Diagnostics file action unavailable")
+        }
+        // No pending check or mutation here: the file queue is independent from
+        // an already initialized host's exact owed domain command.
+        return try invoke(method, arguments: [])
+    }
+
+    func validatedDiagnosticsShareURL(_ path: String) throws -> URL {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, !recoveryActivationPending else { throw HostFailure("Diagnostics file action unavailable") }
+        return try diagnosticsFile.validatedShareURL(path)
+    }
+
+    func prepareDataBackup(format: NativeBackupFormat = .json) throws -> NativeBackupExport {
+        // Use the normal read gate. Unlike Diagnostics, export cannot bypass pending work.
+        let method: String
+        switch format {
+        case .json: method = "dataBackup"
+        case .csv: method = "dataCsvExport"
+        case .tasknotes: method = "dataTaskNotesExport"
+        }
+        let encoded = try call("menuRead", argumentsJSON: "[\"\(method)\",\"{}\"]")
+        guard let reply = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Set(reply.keys) == Set(["fileName", "content", "encoding"]),
+              let fileName = reply["fileName"] as? String, let content = reply["content"] as? String,
+              let encoding = reply["encoding"] as? String else {
+            throw HostFailure("Backup reply unavailable")
+        }
+        let bytes: Data
+        if format == .tasknotes {
+            guard encoding == "base64", let decoded = Data(base64Encoded: content),
+                  fileName.hasSuffix("-tasknotes.zip") else { throw HostFailure("Backup reply unavailable") }
+            bytes = decoded
+        } else {
+            guard encoding == "utf8", fileName.hasSuffix("." + format.rawValue) else { throw HostFailure("Backup reply unavailable") }
+            bytes = Data(content.utf8)
+        }
+        let prepared = try backupExportFile.prepare(fileName: fileName, bytes: bytes)
+        _ = try? invoke("backupExportPrepared", arguments: [format.rawValue])
+        return prepared
+    }
+
+    private func backupAdmission() throws {
+        try requireNoAttachmentDraft()
+        _ = try call("menuRead", argumentsJSON: "[\"dataSettings\",\"{}\"]")
+        guard try editorDrafts.read() == nil else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Finish or discard the saved task draft before importing a backup")
+        }
+    }
+
+    private func backupMetadata(fileName: String, modifiedAt: Double) -> [String: Any] {
+        ["fileName": fileName, "lastModified": modifiedAt,
+         "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"]
+    }
+
+    private func backupJSON(_ value: Any) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private func backupEncoded<T: Encodable>(_ value: T) throws -> String {
+        String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    }
+
+    func prepareBackupImport(_ url: URL, action: NativeBackupImportAction = .merge) throws -> NativeBackupImportPreview {
+        try backupAdmission()
+        let selection = try backupImportFile.stage(url, maximumBytes: action.maximumBytes)
+        let id = UUID(uuidString: selection.reference.id)!
+        do {
+            let text = try backupImportText(selection, action: action)
+            let preview = try invoke("backupDocumentInspect", arguments: [text,
+                try backupJSON(backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds)), action.rawValue])
+            guard let result = try NativeJSON.jsonObject(with: Data(preview.utf8)) as? [String: Any],
+                  Self.isBoolean(result["valid"]) else { throw HostFailure("Backup preview unavailable") }
+            if result["valid"] as? Bool == true { backupSelections[id] = (selection, action) }
+            else { try? backupImportFile.discard(selection.reference) }
+            return NativeBackupImportPreview(action: action, id: id, json: preview)
+        } catch {
+            try? backupImportFile.discard(selection.reference)
+            throw error
+        }
+    }
+
+    private func backupImportText(_ selection: NativeBackupImportSelection, action: NativeBackupImportAction) throws -> String {
+        guard selection.reference.byteCount <= action.maximumBytes else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Import source exceeds supported limit")
+        }
+        let data = try backupImportFile.read(selection.reference)
+        if action.usesBinarySource { return data.base64EncodedString() }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup file is not valid UTF-8")
+        }
+        return text
+    }
+
+    func discardBackupImport(_ id: UUID) {
+        guard let owned = backupSelections.removeValue(forKey: id) else { return }
+        try? backupImportFile.discard(owned.selection.reference)
+    }
+
+    func mergeBackupImport(_ id: UUID) throws -> String {
+        // Any pre-journal failure is definitely unwritten. Once pending is set,
+        // only finish may release it, even if durable journal promotion failed.
+        let operation: NativeBackupOperationReference
+        do {
+            try backupAdmission()
+            guard let owned = backupSelections[id] else {
+                throw HostFailure("Backup selection is no longer available")
+            }
+            let selection = owned.selection
+            let text = try backupImportText(selection, action: owned.action)
+            let name = try backupOperationFiles.nextSnapshotName(at: Date())
+            operation = try prepareBackupOperation(mode: owned.action.operation, text: text,
+                metadata: backupMetadata(fileName: selection.fileName, modifiedAt: selection.modifiedAtMilliseconds),
+                snapshotName: name, existingSnapshot: nil)
+        } catch {
+            // Never claim an unrelated owed command was rejected.
+            guard pending == nil else { throw error }
+            if let capacity = error as? NativeBackupOperationFilesError, capacity != .unavailable {
+                throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
+            }
+            if let failure = error as? HostFailure, [
+                "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
+                "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
+                "INVALID_INPUT: TickTick source exceeds 16 MiB", "INVALID_INPUT: TickTick import result exceeds 64 KiB",
+                "INVALID_INPUT: DGT source exceeds 16 MiB", "INVALID_INPUT: DGT import result exceeds 64 KiB",
+                "INVALID_INPUT: OmniFocus source exceeds 16 MiB", "INVALID_INPUT: OmniFocus import result exceeds 64 KiB",
+                "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
+                "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
+            ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup merge could not be prepared")
+        }
+        // The complete immutable plan now owns all accepted input bytes.
+        discardBackupImport(id)
+        return try commitBackupOperation(operation)
+    }
+
+    func listBackupSnapshots() throws -> String {
+        try backupAdmission()
+        return try backupEncoded(backupOperationFiles.listSnapshots())
+    }
+
+    private func backupSnapshotReference(_ encoded: String) throws -> NativeBackupSnapshotReference {
+        guard encoded.utf8.count <= 2048,
+              let raw = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Set(raw.keys) == Set(["id", "name", "sha256", "byteCount"]),
+              Self.isInteger(raw["byteCount"]),
+              let reference = try? JSONDecoder().decode(NativeBackupSnapshotReference.self, from: Data(encoded.utf8)) else {
+            throw HostFailure("INVALID_INPUT: Recovery snapshot reference is invalid")
+        }
+        // The storage owner proves canonical identity, completion and exact bytes.
+        guard try backupOperationFiles.listSnapshots().contains(reference) else {
+            throw HostFailure("INVALID_INPUT: Recovery snapshot is no longer available")
+        }
+        return reference
+    }
+
+    func backupSnapshotRestoreModel(_ encoded: String) throws -> String {
+        try backupAdmission()
+        let reference = try backupSnapshotReference(encoded)
+        return try invoke("backupSnapshotRestoreModel", arguments: [reference.name])
+    }
+
+    func backupDocumentResultModel(_ encoded: String) throws -> String {
+        try backupAdmission()
+        return try invoke("backupDocumentResultModel", arguments: [encoded])
+    }
+
+    func restoreBackupSnapshot(_ encoded: String) throws -> String {
+        let operation: NativeBackupOperationReference
+        do {
+            try backupAdmission()
+            let reference = try backupSnapshotReference(encoded)
+            let text = try backupOperationFiles.readSnapshot(reference)
+            operation = try prepareBackupOperation(mode: "restore", text: text,
+                metadata: backupMetadata(fileName: reference.name, modifiedAt: 0),
+                snapshotName: reference.name, existingSnapshot: reference)
+        } catch {
+            guard pending == nil else { throw error }
+            if let capacity = error as? NativeBackupOperationFilesError, capacity != .unavailable {
+                throw CoreHostRejection(message: "INVALID_INPUT: " + capacity.localizedDescription)
+            }
+            if let failure = error as? HostFailure, [
+                "INVALID_INPUT: CSV source exceeds 16 MiB", "INVALID_INPUT: CSV import result exceeds 64 KiB",
+                "INVALID_INPUT: Todoist source exceeds 16 MiB", "INVALID_INPUT: Todoist import result exceeds 64 KiB",
+                "INVALID_INPUT: TickTick source exceeds 16 MiB", "INVALID_INPUT: TickTick import result exceeds 64 KiB",
+                "INVALID_INPUT: DGT source exceeds 16 MiB", "INVALID_INPUT: DGT import result exceeds 64 KiB",
+                "INVALID_INPUT: OmniFocus source exceeds 16 MiB", "INVALID_INPUT: OmniFocus import result exceeds 64 KiB",
+                "INVALID_INPUT: Backup source exceeds 128 MiB", "INVALID_INPUT: Recovery snapshot exceeds 128 MiB",
+                "INVALID_INPUT: Prepared backup plan exceeds 512 MiB", "INVALID_INPUT: Recovery snapshot is not a valid backup"
+            ].contains(failure.message) { throw CoreHostRejection(message: failure.message) }
+            throw CoreHostRejection(message: "INVALID_INPUT: Recovery snapshot could not be prepared")
+        }
+        return try commitBackupOperation(operation)
+    }
+
+    private func prepareBackupOperation(mode: String, text: String, metadata: [String: Any],
+                                        snapshotName: String, existingSnapshot: NativeBackupSnapshotReference?) throws -> NativeBackupOperationReference {
+        let id = UUID().uuidString.lowercased()
+        let prepared = try invoke("backupDocumentPrepare", arguments: [try backupJSON([
+            "requestId": id, "mode": mode, "snapshotName": snapshotName, "text": text, "metadata": metadata
+        ])])
+        guard let value = try NativeJSON.jsonObject(with: Data(prepared.utf8)) as? [String: Any],
+              Set(value.keys) == Set(["planJSON", "recoveryJSON"]), let plan = value["planJSON"] as? String else {
+            throw HostFailure("Backup plan unavailable")
+        }
+        if mode == "merge" || mode == "csv" || mode == "replace" || mode == "todoist" || mode == "ticktick" || mode == "dgt" || mode == "omnifocus" {
+            guard let snapshot = value["recoveryJSON"] as? String, existingSnapshot == nil else {
+                throw HostFailure("Backup recovery copy unavailable")
+            }
+            return try backupOperationFiles.prepare(id: id, planJSON: plan,
+                newSnapshot: (name: snapshotName, content: snapshot), existingSnapshot: nil)
+        }
+        guard value["recoveryJSON"] is NSNull, let existingSnapshot else { throw HostFailure("Backup restore plan unavailable") }
+        return try backupOperationFiles.prepare(id: id, planJSON: plan, newSnapshot: nil, existingSnapshot: existingSnapshot)
+    }
+
+    private func commitBackupOperation(_ reference: NativeBackupOperationReference) throws -> String {
+        let command = PendingCommand(version: 2, method: "backupDocumentCommit",
+                                     argumentsJSON: try backupJSON([backupEncoded(reference)]))
+        // Full byte ownership is verified before the journal can permit a write.
+        let arguments: [Any]
+        do { arguments = try backupDocumentArguments(command) }
+        catch {
+            try? backupOperationFiles.discard(reference, provenRejected: true)
+            throw CoreHostRejection(message: "INVALID_INPUT: Backup operation is unavailable")
+        }
+        pending = command
+        try persist(command)
+        // Document reload intentionally suppresses maintenance until this exact
+        // journal is complete. Normal activation resumes after durable cleanup.
+        recoveryActivationPending = true
+        let terminal: TerminalResult
+        do { terminal = .success(try invoke(command.method, arguments: arguments)) }
+        catch let error as HostFailure {
+            guard isDefiniteRejection(error.message, method: command.method) else { throw error }
+            terminal = .rejected(error.message)
+        }
+        let finished = try finish(command, with: terminal)
+        try resumeActivationIfNeeded()
+        let reply = try publicValue(finished, method: command.method)
+        backupUnreturnedReply = nil
+        return reply
+    }
+
+    private func backupOperationReference(_ command: PendingCommand) throws -> NativeBackupOperationReference {
+        guard command.method == "backupDocumentCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 2048,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String], args.count == 1,
+              let raw = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+              Set(raw.keys) == Set(["id", "sha256", "byteCount"]),
+              let id = raw["id"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
+              let sha = raw["sha256"] as? String, sha.count == 64,
+              sha.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              Self.isInteger(raw["byteCount"]), let count = raw["byteCount"] as? Int, (1...8192).contains(count),
+              let reference = try? JSONDecoder().decode(NativeBackupOperationReference.self, from: Data(args[0].utf8)) else {
+            throw HostFailure("Invalid backup document journal")
+        }
+        return reference
+    }
+
+    private func backupDocumentArguments(_ command: PendingCommand) throws -> [Any] {
+        let reference = try backupOperationReference(command)
+        let operation = try backupOperationFiles.read(reference)
+        return [try backupEncoded(reference), operation.planJSON, operation.snapshot.name]
+    }
+
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        if Self.mutations.contains(method) { try requireNoAttachmentDraft() }
         if editorAttempt == nil, ["taskCompletion", "taskCompletionUndo"].contains(method) {
             let completionRequest: [String: Any]?
             if method == "taskCompletion" {
@@ -1182,10 +1745,25 @@ private final class Engine: @unchecked Sendable {
                 throw CoreHostRejection(message: "INVALID_INPUT: Reference completion cannot replace a saved editor draft")
             }
         }
-        if method == "referenceTaskDestination" {
+        if ["referenceTaskDestination", "referenceProjectNextAction"].contains(method) {
             let savedEditor = try editorDrafts.read()
             guard editorAttempt == nil, savedEditor == nil else {
                 throw CoreHostRejection(message: "INVALID_INPUT: Reference destination cannot carry an editor draft")
+            }
+        }
+        if method == "referenceTasksMoveWrite" {
+            guard editorAttempt == nil, try editorDrafts.read() == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Reference bulk Move cannot carry an editor draft")
+            }
+        }
+        if method == "referenceTasksAddTagWrite" {
+            guard editorAttempt == nil, try editorDrafts.read() == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Reference bulk Add tag cannot carry an editor draft")
+            }
+        }
+        if method == "referenceTasksRemoveTagWrite" {
+            guard editorAttempt == nil, try editorDrafts.read() == nil else {
+                throw CoreHostRejection(message: "INVALID_INPUT: Reference bulk Remove tag cannot carry an editor draft")
             }
         }
         if method == "referenceTaskBackdate" {
@@ -1218,7 +1796,7 @@ private final class Engine: @unchecked Sendable {
             }
         }
         catch {
-            if Self.historyTaskWritePrefix(method) != nil, pending == nil {
+            if (Self.historyTaskWritePrefix(method) != nil || ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "referenceTasksAddTagRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "referenceTasksMoveNotice"].contains(method)), pending == nil {
                 throw CoreHostRejection(message: error.localizedDescription)
             }
             if ["archivedTaskRestoreWrite", "archivedTaskRestoreRetryOutcome", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome", "reviewTaskWrite", "taskCancellationUndo", "taskCompletion", "taskCompletionUndo", "taskCompletionRetryOutcome", "taskCompletionUndoRetryOutcome", "taskDelete", "taskDeleteReceiptOutcome", "taskDeleteUndo", "taskDeleteUndoReceiptOutcome", "taskPromote", "trashTaskRestoreWrite", "trashTaskRestoreRetryOutcome", "trashProjectRestoreWrite", "trashProjectRestoreRetryOutcome", "projectDeleteWrite", "projectDeleteRetryOutcome", "projectDeleteReceiptOutcome", "projectDeleteUndo", "projectDeleteUndoRetryOutcome", "projectDuplicateWrite", "projectDuplicateRetryOutcome", "projectLifecycleWrite", "projectLifecycleRetryOutcome"].contains(method), pending == nil {
@@ -1245,6 +1823,19 @@ private final class Engine: @unchecked Sendable {
         }
         guard pending == nil else { throw HostFailure("SAVE_FAILED: A pending command requires exact retry") }
         guard Self.mutations.contains(method) else {
+            if method == "referenceProjectNextActionOptions" {
+                do {
+                    guard let text = args.first as? String,
+                          let input = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                          let originRef = input["origin"] as? [String: Any], let params = input["params"] else { throw HostFailure("INVALID_INPUT: Missing prompt origin") }
+                    let origin = try expandedReferenceProjectNextActionOrigin(originRef)
+                    let expanded = String(decoding: try JSONSerialization.data(withJSONObject: ["origin": origin, "params": params], options: [.sortedKeys]), as: UTF8.self)
+                    guard expanded.utf8.count <= 2_100_000 else { throw HostFailure("INVALID_INPUT: Next action origin is too large") }
+                    let result = try invoke(method, arguments: [expanded])
+                    guard result.utf8.count <= 2_100_000 else { throw HostFailure("INVALID_INPUT: Next action options are too large") }
+                    return result
+                } catch { throw CoreHostRejection(message: error.localizedDescription) }
+            }
             if method == "taskDeleteReceiptOutcome" {
                 return try taskDeleteReceiptOutcome(arguments: args)
             }
@@ -1256,6 +1847,15 @@ private final class Engine: @unchecked Sendable {
             }
             if method == "projectDeleteReceiptOutcome" {
                 return try projectDeleteReceiptOutcome(arguments: args)
+            }
+            if method == "referenceTasksMoveRetryOutcome" {
+                return try referenceTasksMoveReceiptOutcome(arguments: args)
+            }
+            if method == "referenceTasksAddTagRetryOutcome" {
+                return try referenceTasksAddTagReceiptOutcome(arguments: args)
+            }
+            if method == "referenceTasksRemoveTagRetryOutcome" {
+                return try referenceTasksRemoveTagReceiptOutcome(arguments: args)
             }
             if let prefix = Self.archivedRestorePrefix(method), method == prefix + "RetryOutcome" {
                 return try archivedRestoreReceiptOutcome(prefix: prefix, arguments: args)
@@ -2916,6 +3516,23 @@ private final class Engine: @unchecked Sendable {
         } else if ["taskCompletion", "taskCompletionUndo"].contains(method) {
             do { command = try prepareTaskCompletionCommand(method, args: args) }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "referenceTasksMoveWrite" {
+            do { command = try prepareReferenceTasksMoveCommand(arguments: args) }
+            catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "referenceTasksAddTagWrite" {
+            do {
+                switch try prepareReferenceTasksAddTagCommand(arguments: args) {
+                case .noop(let result): return result
+                case .prepared(let prepared): command = prepared
+                }
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
+        } else if method == "referenceTasksRemoveTagWrite" {
+            do {
+                switch try prepareReferenceTasksRemoveTagCommand(arguments: args) {
+                case .noop(let result): return result
+                case .prepared(let prepared): command = prepared
+                }
+            } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let prefix = Self.archivedRestorePrefix(method), method == prefix + "Write" {
             do {
                 switch try prepareArchivedRestoreCommand(prefix: prefix, arguments: args) {
@@ -2924,15 +3541,23 @@ private final class Engine: @unchecked Sendable {
                 }
             }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
-        } else if let prefix = Self.historyTaskWritePrefix(method), method == prefix + "Write" || ["referenceTaskBackdate", "referenceTaskDestination"].contains(method) {
+        } else if let prefix = Self.historyTaskWritePrefix(method), method == prefix + "Write" || ["referenceTaskBackdate", "referenceTaskDestination", "referenceProjectNextAction"].contains(method) {
             do {
-                let action = prefix == "referenceTaskDestination" ? "Reference destination" : prefix == "referenceTaskBackdate" ? "Reference completion time" : prefix == "doneTaskStatus" ? "Done status"
+                let action = prefix == "referenceProjectNextAction" ? "Reference project next action" : prefix == "referenceTaskDestination" ? "Reference destination" : prefix == "referenceTaskBackdate" ? "Reference completion time" : prefix == "doneTaskStatus" ? "Done status"
                     : prefix == "archiveTaskCompletedAt" ? "Archive completion time" : "Done completion time"
                 guard let original = args.first as? String,
                       let submitted = try NativeJSON.jsonObject(with: Data(original.utf8)) as? [String: Any] else {
                     throw HostFailure("INVALID_INPUT: \(action) needs a bounded request")
                 }
-                let value = try invoke(prefix + "Prepare", arguments: args)
+                let prepareArgs: [Any]
+                if prefix == "referenceProjectNextAction" {
+                    guard editorAttempt == nil, let originRef = submitted["origin"] as? [String: Any] else { throw HostFailure("INVALID_INPUT: Next action cannot carry an editor draft") }
+                    let origin = try expandedReferenceProjectNextActionOrigin(originRef)
+                    let expanded = String(decoding: try JSONSerialization.data(withJSONObject: ["request": submitted, "origin": origin], options: [.sortedKeys]), as: UTF8.self)
+                    guard expanded.utf8.count <= 2_100_000 else { throw HostFailure("INVALID_INPUT: Next action origin is too large") }
+                    prepareArgs = [expanded]
+                } else { prepareArgs = args }
+                let value = try invoke(prefix + "Prepare", arguments: prepareArgs)
                 guard let response = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any] else {
                     throw HostFailure("Malformed \(action) preparation")
                 }
@@ -2956,7 +3581,15 @@ private final class Engine: @unchecked Sendable {
                 _ = try invoke(prefix + "Validate", arguments: journalArguments(command))
             } catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if let prefix = Self.archivedTasksDeletePrefix(method), method == prefix + "Write" {
-            do { command = try prepareArchivedTasksDeleteCommand(prefix: prefix, arguments: args) }
+            do {
+                let encoded = prefix == "archivedTasksDeleteUndo" ? confirmedArchivedTasksDeleteEnvelope : args.first as? String
+                let value = encoded.flatMap { try? NativeJSON.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                let request = prefix == "archivedTasksDeleteUndo" ? value?["request"] as? [String: Any] : value
+                guard request?["source"] as? String != "reference" || editorAttempt == nil else {
+                    throw HostFailure("INVALID_INPUT: Reference bulk Trash cannot carry an editor draft")
+                }
+                command = try prepareArchivedTasksDeleteCommand(prefix: prefix, arguments: args)
+            }
             catch { throw CoreHostRejection(message: error.localizedDescription) }
         } else if method == "taskDelete" {
             do {
@@ -3386,7 +4019,8 @@ private final class Engine: @unchecked Sendable {
         let terminal: TerminalResult
         do {
             let replay: [Any]
-            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             terminal = .success(try invoke(command.method, arguments: replay))
         } catch {
@@ -3413,7 +4047,11 @@ private final class Engine: @unchecked Sendable {
         let method = command?.method
         let terminal = try resolvePending()
         try resumeActivationIfNeeded()
-        guard let terminal else { return nil }
+        guard let terminal else {
+            let reply = backupUnreturnedReply
+            backupUnreturnedReply = nil
+            return reply
+        }
         if case .success = terminal, let command {
             rememberConfirmedSomedayMove(command)
             rememberConfirmedTaskCancellation(command)
@@ -3421,7 +4059,9 @@ private final class Engine: @unchecked Sendable {
             rememberConfirmedTaskDelete(command)
             rememberConfirmedProjectDelete(command)
         }
-        return try publicValue(terminal, method: method)
+        let reply = try publicValue(terminal, method: method)
+        if method == "backupDocumentCommit" { backupUnreturnedReply = nil }
+        return reply
     }
 
     private func validateDraftAcknowledgment(_ command: PendingCommand, value: String? = nil) throws {
@@ -3471,6 +4111,24 @@ private final class Engine: @unchecked Sendable {
         guard started, !closed else { throw HostFailure("Core host is not ready; retry startup") }
         guard let command = pending else { return nil }
         if let terminal = command.terminal {
+            if command.method == "referenceTasksMoveCommit", case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksMoveOutcome", arguments: referenceTasksMoveJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Move has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+            if command.method == "referenceTasksAddTagCommit", case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksAddTagOutcome", arguments: referenceTasksAddTagJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Add tag has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+            if command.method == "referenceTasksRemoveTagCommit", case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksRemoveTagOutcome", arguments: referenceTasksRemoveTagJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Remove tag has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
             if let prefix = Self.archivedTasksDeletePrefix(command.method), case .success(let value) = terminal {
                 let probed = try invoke(prefix + "Outcome", arguments: archivedTasksDeleteJournalArguments(command))
                 guard probed != "null" else { throw HostFailure("STALE_REVISION: Archive bulk Delete has no exact saved receipt") }
@@ -3530,12 +4188,14 @@ private final class Engine: @unchecked Sendable {
         }
         // Also repairs a failed journal promotion before any execution can occur.
         try persist(command)
+        if command.method == "backupDocumentCommit" { recoveryActivationPending = true }
         // A rejection here remains ambiguous: an earlier execution may have
         // succeeded. Only a successful exact replay establishes its terminal value.
         let value: String
         do {
             let replay: [Any]
-            if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
+            if command.method == "backupDocumentCommit" { replay = try backupDocumentArguments(command) }
+            else if command.method == "projectLifecycleCommit" { replay = try projectLifecycleJournalArguments(command) }
             else { replay = try journalArguments(command) }
             value = try invoke(command.method, arguments: replay)
         }
@@ -3550,6 +4210,46 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func finish(_ command: PendingCommand, with terminal: TerminalResult) throws -> TerminalResult {
+        if command.method == "backupDocumentCommit", case .success(let value) = terminal {
+            // A terminal journal is not permission to apply a missing receipt.
+            // This probe is SQL read-only, including after a cold restart.
+            let proven = try invoke("backupDocumentOutcome", arguments: backupDocumentArguments(command))
+            guard proven != "null",
+                  Self.equalJSON(try NativeJSON.jsonObject(with: Data(proven.utf8)),
+                                 try NativeJSON.jsonObject(with: Data(value.utf8))) else {
+                throw HostFailure("SAVE_FAILED: Backup document outcome cannot be verified")
+            }
+        }
+        if command.method == "dataSetting", case .success(let value) = terminal {
+            try validateDataSettingAcknowledgment(value)
+        }
+        if command.method == "referenceTasksMoveCommit" {
+            _ = try invoke("referenceTasksMoveValidate", arguments: referenceTasksMoveJournalArguments(command))
+            if case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksMoveOutcome", arguments: referenceTasksMoveJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Move has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
+        if command.method == "referenceTasksAddTagCommit" {
+            _ = try invoke("referenceTasksAddTagValidate", arguments: referenceTasksAddTagJournalArguments(command))
+            if case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksAddTagOutcome", arguments: referenceTasksAddTagJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Add tag has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
+        if command.method == "referenceTasksRemoveTagCommit" {
+            _ = try invoke("referenceTasksRemoveTagValidate", arguments: referenceTasksRemoveTagJournalArguments(command))
+            if case .success(let value) = terminal {
+                let probed = try invoke("referenceTasksRemoveTagOutcome", arguments: referenceTasksRemoveTagJournalArguments(command))
+                guard probed != "null" else { throw HostFailure("STALE_REVISION: Reference bulk Remove tag has no exact saved receipt") }
+                try validatePreparedAcknowledgment(command, value: probed)
+                try validatePreparedAcknowledgment(command, value: value)
+            }
+        }
         if let prefix = Self.archivedTasksDeletePrefix(command.method) {
             _ = try invoke(prefix + "Validate", arguments: archivedTasksDeleteJournalArguments(command))
             if case .success(let value) = terminal { try validatePreparedAcknowledgment(command, value: value) }
@@ -3804,12 +4504,25 @@ private final class Engine: @unchecked Sendable {
            let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String] {
             if prefix == "doneTaskStatus" { confirmedDoneTaskStatusEnvelope = args.first }
             else if prefix == "doneTaskCompletedAt" { confirmedDoneTaskCompletedAtEnvelope = args.first }
-            else if prefix == "referenceTaskBackdate" { confirmedReferenceTaskBackdateEnvelope = args.first }
+            else if prefix == "referenceTaskBackdate" {
+                confirmedReferenceTaskBackdateEnvelope = args.first
+                if let encoded = args.first { rememberReferenceProjectNextActionOrigin(kind: "backdate", envelope: encoded) }
+            }
             else if prefix == "referenceTaskDestination" { confirmedReferenceTaskDestinationEnvelope = args.first }
+            else if prefix == "referenceProjectNextAction" { confirmedReferenceProjectNextActionEnvelope = args.first }
             else { confirmedArchiveTaskCompletedAtEnvelope = args.first }
         }
         if Self.archivedTasksDeletePrefix(command.method) != nil, case .success = terminal {
             rememberConfirmedArchivedTasksDelete(command)
+        }
+        if command.method == "referenceTasksMoveCommit", case .success = terminal {
+            confirmedReferenceTasksMoveEnvelope = (try? referenceTasksMoveJournalArguments(command))?.first as? String
+        }
+        if command.method == "referenceTasksAddTagCommit", case .success = terminal {
+            confirmedReferenceTasksAddTagEnvelope = (try? referenceTasksAddTagJournalArguments(command))?.first as? String
+        }
+        if command.method == "referenceTasksRemoveTagCommit", case .success = terminal {
+            confirmedReferenceTasksRemoveTagEnvelope = (try? referenceTasksRemoveTagJournalArguments(command))?.first as? String
         }
         if Self.archivedRestorePrefix(command.method) != nil, case .success = terminal {
             rememberConfirmedArchivedRestore(command)
@@ -3833,14 +4546,30 @@ private final class Engine: @unchecked Sendable {
         // Once persisted, restart can clean up without entering core again.
         pending = finished
         try persist(finished)
+        // Both removal after success and thaw after definite refusal belong to
+        // this exact editor proof. Retain the terminal journal on a conflict.
+        if command.editorDraft != nil { try requireNoAttachmentDraft() }
+        if command.method == "backupDocumentCommit", case .success = terminal {
+            try backupOperationFiles.complete(backupOperationReference(command))
+        }
         if let attempt = command.editorDraft, case .success = terminal {
             #if DEBUG
             try faults?.editorDraftRemove?()
             #endif
+            try requireNoAttachmentDraft()
             try editorDrafts.removeMatching(attempt)
         }
         try clearPending()
+        if command.method == "backupDocumentCommit" {
+            if case .success(let value) = terminal { backupUnreturnedReply = value }
+            let rejected: Bool
+            if case .rejected = terminal { rejected = true } else { rejected = false }
+            // Cleanup failure cannot turn a proven completed write into a retry.
+            // Startup can remove the now unreferenced immutable operation later.
+            try? backupOperationFiles.discard(backupOperationReference(command), provenRejected: rejected)
+        }
         if let attempt = command.editorDraft, case .rejected = terminal {
+            try requireNoAttachmentDraft()
             try editorDrafts.thaw(attempt)
         }
         if command.method == "draftCommit", case .success = terminal {
@@ -3879,6 +4608,26 @@ private final class Engine: @unchecked Sendable {
 #endif
             NSLog("Native iOS Done completion time saved releaseCheck=v1.3.4/ios-done-completion-time outcome=confirmed")
         }
+        if command.method == "referenceProjectNextActionCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("referenceProjectNextAction")
+#endif
+        }
+        if command.method == "referenceTasksMoveCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("referenceTasksMove")
+#endif
+        }
+        if command.method == "referenceTasksAddTagCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("referenceTasksAddTag")
+#endif
+        }
+        if command.method == "referenceTasksRemoveTagCommit", case .success = terminal {
+#if DEBUG
+            faults?.commandDiagnostic?("referenceTasksRemoveTag")
+#endif
+        }
         if command.method == "referenceTaskDestinationCommit", case .success = terminal {
 #if DEBUG
             faults?.commandDiagnostic?("referenceTaskDestination")
@@ -3909,13 +4658,15 @@ private final class Engine: @unchecked Sendable {
             NSLog("Native iOS archived Task restored releaseCheck=v1.3.4/ios-archive-task-restore outcome=confirmed")
         }
         if let prefix = Self.archivedTasksDeletePrefix(command.method), case .success = terminal {
-            let done = historyBulkSource(command) == "done"
+            let source = historyBulkSource(command), done = source == "done", reference = source == "reference"
             #if DEBUG
-            faults?.commandDiagnostic?(done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
+            faults?.commandDiagnostic?(reference ? (prefix == "archivedTasksDelete" ? "referenceTasksDelete" : "referenceTasksDeleteUndo")
+                : done ? (prefix == "archivedTasksDelete" ? "doneTasksDelete" : "doneTasksDeleteUndo") : prefix)
             #endif
             let outcome = prefix == "archivedTasksDelete" ? "deleted" : "restored"
+            // Reference's shared core emits its ACK diagnostic; preserve old native logs.
             if done { NSLog("Native iOS Done bulk Trash confirmed releaseCheck=v1.3.4/ios-done-bulk-trash outcome=\(outcome)") }
-            else { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
+            else if !reference { NSLog("Native iOS Archive bulk Trash confirmed releaseCheck=v1.3.4/ios-archive-bulk-trash outcome=\(outcome)") }
         }
         if command.method == "archivedTasksRestoreCommit", case .success = terminal {
             let done = historyBulkSource(command) == "done"
@@ -4391,12 +5142,12 @@ private final class Engine: @unchecked Sendable {
 
     private func isDefiniteRejection(_ message: String, method: String) -> Bool {
         ["INVALID_INPUT:", "TASK_NOT_FOUND:", "NOT_READY:"].contains(where: { message.hasPrefix($0) })
-            || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
-            || (["archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["doneTaskStatusCommit", "doneTaskCompletedAtCommit", "archiveTaskCompletedAtCommit", "referenceTaskBackdateCommit", "referenceTaskDestinationCommit", "referenceProjectNextActionCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
+            || (["referenceTasksRemoveTagCommit", "referenceTasksAddTagCommit", "referenceTasksMoveCommit", "archivedTaskRestoreCommit", "archivedTasksRestoreCommit", "archivedTasksDeleteCommit", "archivedTasksDeleteUndoCommit", "taskCompletionCommit", "taskCompletionUndoCommit", "taskDeleteCommit", "taskDeleteUndoCommit", "taskPromoteCommit", "trashTaskRestoreCommit", "trashProjectRestoreCommit", "projectDeleteCommit", "projectDeleteUndoCommit", "projectDuplicateCommit", "projectLifecycleCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["saveDraft", "draftCommit", "calendarPreference", "focusGroupWrite", "taskListSortWrite", "unassignedAreaColorWrite", "somedaySectionCreateWrite", "somedaySectionRenameWrite", "somedaySectionDeleteWrite", "somedaySectionTaskCommit", "boardCommit", "calendarUnscheduleCommit", "calendarDeleteCommit", "calendarComposerCommit", "calendarComposerCreateCommit", "mindSweepCommit", "inboxPreparedCommit", "checklistPreparedCommit", "taskCancellationUndoCommit", "projectCreateCommit", "projectSectionCreateCommit", "projectSectionRenameCommit", "projectSectionDeleteCommit", "projectSectionOrderCommit", "areaCreateCommit", "manageAreaCreateCommit", "managePersonCreateCommit", "appLockCommit", "gtdWorkflowCommit", "generalPreferenceCommit", "manageTaxonomyCommit", "managePersonEditCommit", "managePersonDeleteCommit", "areaColorCommit", "areaRenameCommit", "manageAreaEditCommit", "areaOrderCommit", "areaDeleteCommit", "manageAreaDeleteCommit", "projectFocusCommit", "taskFocusCommit", "focusOrderCommit", "focusSavedFilterCommit", "savedSearchCommit", "projectRenameCommit", "projectFlowCommit", "projectTaskSortCommit", "projectTaskOrderCommit", "projectNotesWriteCommit", "projectTagsWriteCommit", "projectAttachmentWriteCommit", "projectStatusCommit", "projectDateCommit", "projectAreaCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
             || (["somedaySectionMoveCommit", "somedaySectionMoveUndoCommit"].contains(method)
                 && message.hasPrefix("STALE_REVISION:"))
-            || (method == "somedaySectionOrderWrite" && message.hasPrefix("STALE_REVISION:"))
+            || (["somedaySectionOrderWrite", "backupDocumentCommit"].contains(method) && message.hasPrefix("STALE_REVISION:"))
     }
 
     private func validateBoardAcknowledgment(_ command: PendingCommand, value: String) throws {
@@ -5960,6 +6711,7 @@ private final class Engine: @unchecked Sendable {
               let request = envelope["request"] as? [String: Any], request["requestId"] is String else { return }
         confirmedTaskCompletionUndoEnvelope = nil
         confirmedTaskCompletionEnvelope = encoded
+        rememberReferenceProjectNextActionOrigin(kind: "completion", envelope: encoded)
     }
 
     private static func archivedTasksDeletePrefix(_ method: String) -> String? {
@@ -5975,7 +6727,8 @@ private final class Engine: @unchecked Sendable {
               let encoded = args.first, let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any] else { return "archive" }
         let deletion = command.method == "archivedTasksDeleteUndoCommit"
             ? (envelope["prepared"] as? [String: Any])?["delete"] as? [String: Any] : envelope
-        return (deletion?["request"] as? [String: Any])?["source"] as? String == "done" ? "done" : "archive"
+        let source = (deletion?["request"] as? [String: Any])?["source"] as? String
+        return source == "reference" ? "reference" : source == "done" ? "done" : "archive"
     }
 
     private func historyBulkTagAction(_ command: PendingCommand) -> String? {
@@ -6004,9 +6757,9 @@ private final class Engine: @unchecked Sendable {
         let keys: Set<String> = ["version", "request", "before", "after", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]
         let ids: [String]
         if prefix == "archivedTasksDelete" {
-            let done = request["source"] as? String == "done"
-            guard Set(prepared.keys) == (done ? keys.union(["projects"]) : keys),
-                  !done || prepared["projects"] is [[String: Any]], let selected = request["taskIds"] as? [String] else {
+            let withProjects = ["done", "reference"].contains(request["source"] as? String ?? "")
+            guard Set(prepared.keys) == (withProjects ? keys.union(["projects"]) : keys),
+                  !withProjects || prepared["projects"] is [[String: Any]], let selected = request["taskIds"] as? [String] else {
                 throw HostFailure("Malformed Archive bulk Delete structure")
             }
             ids = selected
@@ -6089,6 +6842,250 @@ private final class Engine: @unchecked Sendable {
                                      argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed]), as: UTF8.self))
         _ = try invoke(prefix + "Validate", arguments: archivedTasksDeleteJournalArguments(command))
         let value = try invoke(prefix + "Outcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    // Foundation can preserve canonically equivalent NSString keys while a
+    // Swift Dictionary collapses them. Opaque JSON must fail closed before
+    // crossing that bridge; otherwise replay would silently change the payload.
+    private static func referenceTasksMoveJSONIsLossless(_ value: Any) -> Bool {
+        if let object = value as? NSDictionary {
+            guard let swift = object as? [String: Any], swift.count == object.count else { return false }
+            let rawKeys = object.allKeys.compactMap { ($0 as? String).map { Data($0.utf8) } }
+            guard rawKeys.count == object.count, Set(rawKeys) == Set(swift.keys.map { Data($0.utf8) }) else { return false }
+            return object.allValues.allSatisfy(referenceTasksMoveJSONIsLossless)
+        }
+        if let array = value as? NSArray { return array.allSatisfy(referenceTasksMoveJSONIsLossless) }
+        return true
+    }
+
+    private static func validReferenceTasksMoveRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "status", "params"]),
+              let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
+              ["inbox", "next", "waiting", "someday", "done"].contains(request["status"] as? String ?? ""),
+              request["params"] is [String: Any],
+              let ids = request["taskIds"] as? [String], !ids.isEmpty, ids.count <= 10_000,
+              Set(ids.map { Data($0.utf8) }).count == ids.count, ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }),
+              let revisions = request["taskRevisions"] as? [String: Any], revisions.count == ids.count,
+              Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }),
+              revisions.values.allSatisfy({ ($0 as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true }) else { return false }
+        return true
+    }
+
+    private static func validReferenceTasksMoveResult(_ result: [String: Any], request: [String: Any]) -> Bool {
+        guard let ids = request["taskIds"] as? [String] else { return false }
+        return Set(result.keys) == Set(["count", "status"]) && isInteger(result["count"], equalTo: ids.count)
+            && equalJSON(result["status"], request["status"])
+    }
+
+    private func referenceTasksMoveJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "referenceTasksMoveCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(args[0].utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let envelope = raw as? [String: Any],
+              Set(envelope.keys) == Set(["request", "prepared"]), let request = envelope["request"] as? [String: Any],
+              Self.validReferenceTasksMoveRequest(request), let prepared = envelope["prepared"] as? [String: Any],
+              Self.isInteger(prepared["version"], equalTo: 1), Self.equalJSON(prepared["request"], request),
+              let result = prepared["result"] as? [String: Any], Self.validReferenceTasksMoveResult(result, request: request) else {
+            throw HostFailure("Malformed Reference bulk Move journal")
+        }
+        return args
+    }
+
+    private func prepareReferenceTasksMoveCommand(arguments args: [Any]) throws -> PendingCommand {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Self.validReferenceTasksMoveRequest(request) else { throw HostFailure("INVALID_INPUT: Reference bulk Move needs a bounded request") }
+        let value = try invoke("referenceTasksMovePrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(value.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let response = raw as? [String: Any],
+              Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed Reference bulk Move preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Reference bulk Move journal is too large; select fewer tasks") }
+        let outer = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Reference bulk Move journal is too large; select fewer tasks") }
+        let command = PendingCommand(version: 2, method: "referenceTasksMoveCommit", argumentsJSON: outer)
+        _ = try invoke("referenceTasksMoveValidate", arguments: referenceTasksMoveJournalArguments(command))
+        return command
+    }
+
+    private func referenceTasksMoveReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let confirmed = confirmedReferenceTasksMoveEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "referenceTasksMoveCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
+        _ = try invoke("referenceTasksMoveValidate", arguments: referenceTasksMoveJournalArguments(command))
+        let value = try invoke("referenceTasksMoveOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private static func validReferenceTasksAddTagRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "tag", "params"]),
+              let tag = request["tag"] as? String, tag.utf16.count <= 2_000 else { return false }
+        // Reuse the exact-byte selection transport; core owns tag semantics.
+        var selection = request
+        selection.removeValue(forKey: "tag")
+        selection["status"] = "inbox"
+        return validReferenceTasksMoveRequest(selection)
+    }
+
+    private static func validReferenceTasksAddTagResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
+        guard Set(result.keys) == Set(["count", "changed"]), isInteger(result["count"]), isBoolean(result["changed"]),
+              let ids = request["taskIds"] as? [String], let count = result["count"] as? NSNumber,
+              let changed = result["changed"] as? Bool else { return false }
+        return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
+    }
+
+    private func referenceTasksAddTagJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "referenceTasksAddTagCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(args[0].utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let envelope = raw as? [String: Any], Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any], Self.validReferenceTasksAddTagRequest(request),
+              let prepared = envelope["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+              Self.equalJSON(prepared["request"], request), let result = prepared["result"] as? [String: Any],
+              Self.validReferenceTasksAddTagResult(result, request: request) else {
+            throw HostFailure("Malformed Reference bulk Add tag journal")
+        }
+        return args
+    }
+
+    private func prepareReferenceTasksAddTagCommand(arguments args: [Any]) throws -> ArchivedRestorePreparation {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Self.validReferenceTasksAddTagRequest(request) else { throw HostFailure("INVALID_INPUT: Reference bulk Add tag needs a bounded request") }
+        let value = try invoke("referenceTasksAddTagPrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(value.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let response = raw as? [String: Any] else { throw HostFailure("Malformed Reference bulk Add tag preparation") }
+        if response["kind"] as? String == "noop" {
+            guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                  result["changed"] as? Bool == false,
+                  Self.validReferenceTasksAddTagResult(result, request: request, allowNoop: true) else {
+                throw HostFailure("Malformed Reference bulk Add tag no-op")
+            }
+            return .noop(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+        }
+        guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed Reference bulk Add tag preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Reference tag journal is too large; select fewer tasks") }
+        let outer = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Reference tag journal is too large; select fewer tasks") }
+        let command = PendingCommand(version: 2, method: "referenceTasksAddTagCommit", argumentsJSON: outer)
+        _ = try invoke("referenceTasksAddTagValidate", arguments: referenceTasksAddTagJournalArguments(command))
+        return .prepared(command)
+    }
+
+    private func referenceTasksAddTagReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let confirmed = confirmedReferenceTasksAddTagEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "referenceTasksAddTagCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
+        _ = try invoke("referenceTasksAddTagValidate", arguments: referenceTasksAddTagJournalArguments(command))
+        let value = try invoke("referenceTasksAddTagOutcome", arguments: [confirmed])
+        if value == "null" { return #"{"kind":"unproven"}"# }
+        try validatePreparedAcknowledgment(command, value: value)
+        let result = try NativeJSON.jsonObject(with: Data(value.utf8))
+        return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    private static func validReferenceTasksRemoveTagRequest(_ request: [String: Any]) -> Bool {
+        guard Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "tags", "params"]),
+              let tags = request["tags"] as? [String], (1...10_000).contains(tags.count),
+              tags.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 2_000_000 }),
+              Set(tags.map { Data($0.utf8) }).count == tags.count else { return false }
+        // Preserve raw picks: core owns JavaScript trim/prefix semantics.
+        var selection = request
+        selection.removeValue(forKey: "tags")
+        selection["status"] = "inbox"
+        return validReferenceTasksMoveRequest(selection)
+    }
+
+    private static func validReferenceTasksRemoveTagResult(_ result: [String: Any], request: [String: Any], allowNoop: Bool = false) -> Bool {
+        guard Set(result.keys) == Set(["count", "changed"]), isInteger(result["count"]), isBoolean(result["changed"]),
+              let ids = request["taskIds"] as? [String], let count = result["count"] as? NSNumber,
+              let changed = result["changed"] as? Bool else { return false }
+        return changed ? count.doubleValue > 0 && count.doubleValue <= Double(ids.count) : allowNoop && count.doubleValue == 0
+    }
+
+    private func referenceTasksRemoveTagJournalArguments(_ command: PendingCommand) throws -> [Any] {
+        guard command.method == "referenceTasksRemoveTagCommit", command.editorDraft == nil,
+              command.argumentsJSON.utf8.count <= 12_000_000,
+              let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+              args.count == 1, args[0].utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(args[0].utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let envelope = raw as? [String: Any], Set(envelope.keys) == Set(["request", "prepared"]),
+              let request = envelope["request"] as? [String: Any], Self.validReferenceTasksRemoveTagRequest(request),
+              let prepared = envelope["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 1),
+              Self.equalJSON(prepared["request"], request), let result = prepared["result"] as? [String: Any],
+              Self.validReferenceTasksRemoveTagResult(result, request: request) else {
+            throw HostFailure("Malformed Reference bulk Remove tag journal")
+        }
+        return args
+    }
+
+    private func prepareReferenceTasksRemoveTagCommand(arguments args: [Any]) throws -> ArchivedRestorePreparation {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              Self.validReferenceTasksRemoveTagRequest(request) else { throw HostFailure("INVALID_INPUT: Reference bulk Remove tag needs a bounded request") }
+        let value = try invoke("referenceTasksRemoveTagPrepare", arguments: args)
+        guard value.utf8.count <= 2_000_000,
+              let raw = try? NativeJSON.jsonObject(with: Data(value.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+              let response = raw as? [String: Any] else { throw HostFailure("Malformed Reference bulk Remove tag preparation") }
+        if response["kind"] as? String == "noop" {
+            guard Set(response.keys) == Set(["kind", "result"]), let result = response["result"] as? [String: Any],
+                  result["changed"] as? Bool == false,
+                  Self.validReferenceTasksRemoveTagResult(result, request: request, allowNoop: true) else {
+                throw HostFailure("Malformed Reference bulk Remove tag no-op")
+            }
+            return .noop(String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+        }
+        guard Set(response.keys) == Set(["kind", "prepared"]), response["kind"] as? String == "prepared",
+              let prepared = response["prepared"] as? [String: Any], Self.equalJSON(prepared["request"], request) else {
+            throw HostFailure("Malformed Reference bulk Remove tag preparation")
+        }
+        let envelope = String(decoding: try JSONSerialization.data(withJSONObject: ["request": request, "prepared": prepared], options: [.sortedKeys]), as: UTF8.self)
+        guard envelope.utf8.count <= 2_000_000 else { throw HostFailure("INVALID_INPUT: Reference tag journal is too large; select fewer tasks") }
+        let outer = String(decoding: try JSONSerialization.data(withJSONObject: [envelope]), as: UTF8.self)
+        guard outer.utf8.count <= 12_000_000 else { throw HostFailure("INVALID_INPUT: Reference tag journal is too large; select fewer tasks") }
+        let command = PendingCommand(version: 2, method: "referenceTasksRemoveTagCommit", argumentsJSON: outer)
+        _ = try invoke("referenceTasksRemoveTagValidate", arguments: referenceTasksRemoveTagJournalArguments(command))
+        return .prepared(command)
+    }
+
+    private func referenceTasksRemoveTagReceiptOutcome(arguments args: [Any]) throws -> String {
+        guard let encoded = args.first as? String,
+              let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let confirmed = confirmedReferenceTasksRemoveTagEnvelope,
+              let envelope = try NativeJSON.jsonObject(with: Data(confirmed.utf8)) as? [String: Any],
+              Self.equalJSON(envelope["request"], request) else { return #"{"kind":"unproven"}"# }
+        let command = PendingCommand(version: 2, method: "referenceTasksRemoveTagCommit",
+            argumentsJSON: String(decoding: try JSONSerialization.data(withJSONObject: [confirmed], options: [.sortedKeys]), as: UTF8.self))
+        _ = try invoke("referenceTasksRemoveTagValidate", arguments: referenceTasksRemoveTagJournalArguments(command))
+        let value = try invoke("referenceTasksRemoveTagOutcome", arguments: [confirmed])
         if value == "null" { return #"{"kind":"unproven"}"# }
         try validatePreparedAcknowledgment(command, value: value)
         let result = try NativeJSON.jsonObject(with: Data(value.utf8))
@@ -6426,6 +7423,7 @@ private final class Engine: @unchecked Sendable {
         case "doneTaskStatusOptions", "doneTaskStatusWrite", "doneTaskStatusRetryOutcome", "doneTaskStatusCommit": return "doneTaskStatus"
         case "referenceTaskBackdateOptions", "referenceTaskBackdate", "referenceTaskBackdateRetryOutcome", "referenceTaskBackdateCommit": return "referenceTaskBackdate"
         case "referenceTaskDestinationOptions", "referenceTaskDestination", "referenceTaskDestinationRetryOutcome", "referenceTaskDestinationCommit": return "referenceTaskDestination"
+        case "referenceProjectNextActionOptions", "referenceProjectNextActionInput", "referenceProjectNextAction", "referenceProjectNextActionRetryOutcome", "referenceProjectNextActionCommit": return "referenceProjectNextAction"
         case "doneTaskCompletedAtOptions", "doneTaskCompletedAtWrite", "doneTaskCompletedAtRetryOutcome", "doneTaskCompletedAtCommit": return "doneTaskCompletedAt"
         case "archiveTaskCompletedAtOptions", "archiveTaskCompletedAtWrite", "archiveTaskCompletedAtRetryOutcome", "archiveTaskCompletedAtCommit": return "archiveTaskCompletedAt"
         default: return nil
@@ -6460,6 +7458,7 @@ private final class Engine: @unchecked Sendable {
         case "archiveTaskCompletedAt": confirmedEnvelope = confirmedArchiveTaskCompletedAtEnvelope
         case "referenceTaskBackdate": confirmedEnvelope = confirmedReferenceTaskBackdateEnvelope
         case "referenceTaskDestination": confirmedEnvelope = confirmedReferenceTaskDestinationEnvelope
+        case "referenceProjectNextAction": confirmedEnvelope = confirmedReferenceProjectNextActionEnvelope
         default: confirmedEnvelope = nil
         }
         guard let encodedRequest = args.first as? String,
@@ -6632,7 +7631,7 @@ private final class Engine: @unchecked Sendable {
             }
             try validateChecklistResult(result, request: request, kind: kind)
         }
-        if let prefix = Self.historyTaskWritePrefix(command.method), command.method == prefix + "Commit" {
+        if let prefix = Self.historyTaskWritePrefix(command.method), prefix != "referenceProjectNextAction", command.method == prefix + "Commit" {
             guard let request = envelope["request"] as? [String: Any], Set(result.keys) == Set(["id"]),
                   ((Self.isReferenceTaskStatusRequest(request) || ["referenceTaskBackdate", "referenceTaskDestination"].contains(prefix)) ? Self.equalJSON(result["id"], request["id"]) : result["id"] as? String == request["id"] as? String) else { throw HostFailure("Malformed Done status acknowledgment") }
         }
@@ -6654,6 +7653,21 @@ private final class Engine: @unchecked Sendable {
                   result["id"] as? String == request["taskId"] as? String,
                   result["status"] as? String == "inbox" else {
                 throw HostFailure("Malformed archived Task restore acknowledgment")
+            }
+        }
+        if command.method == "referenceTasksMoveCommit" {
+            guard let request = envelope["request"] as? [String: Any], Self.validReferenceTasksMoveResult(result, request: request) else {
+                throw HostFailure("Malformed Reference bulk Move acknowledgment")
+            }
+        }
+        if command.method == "referenceTasksAddTagCommit" {
+            guard let request = envelope["request"] as? [String: Any], Self.validReferenceTasksAddTagResult(result, request: request) else {
+                throw HostFailure("Malformed Reference bulk Add tag acknowledgment")
+            }
+        }
+        if command.method == "referenceTasksRemoveTagCommit" {
+            guard let request = envelope["request"] as? [String: Any], Self.validReferenceTasksRemoveTagResult(result, request: request) else {
+                throw HostFailure("Malformed Reference bulk Remove tag acknowledgment")
             }
         }
         if command.method == "archivedTasksRestoreCommit" {
@@ -6900,7 +7914,156 @@ private final class Engine: @unchecked Sendable {
         return String(decoding: try JSONSerialization.data(withJSONObject: ["kind": "confirmed", "result": result], options: [.sortedKeys]), as: UTF8.self)
     }
 
+    private func rememberReferenceProjectNextActionOrigin(kind: String, envelope encoded: String) {
+        guard let envelope = try? NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+              let request = envelope["request"] as? [String: Any], request["source"] as? String == "reference",
+              let prepared = envelope["prepared"] as? [String: Any], Self.isInteger(prepared["version"], equalTo: 2),
+              prepared["kind"] as? String == (kind == "completion" ? "referenceComplete" : "referenceBackdate") else { return }
+        referenceProjectNextActionOrigin = ["kind": kind, "envelope": envelope]
+    }
+
+    private func expandedReferenceProjectNextActionOrigin(_ ref: [String: Any]) throws -> [String: Any] {
+        guard let origin = referenceProjectNextActionOrigin, let envelope = origin["envelope"] as? [String: Any],
+              let request = envelope["request"] as? [String: Any],
+              Self.equalJSON(origin["kind"], ref["kind"]), Self.equalJSON(request["id"], ref["id"]),
+              Self.equalJSON(request["requestId"], ref["requestId"]) else {
+            throw HostFailure("STALE_REVISION: The completion proof for this prompt is unavailable")
+        }
+        return origin
+    }
+
+    private static func validReferenceProjectNextActionOriginRef(_ value: Any?) -> Bool {
+        guard let origin = value as? [String: Any], Set(origin.keys) == Set(["kind", "id", "requestId"]),
+              ["completion", "backdate"].contains(origin["kind"] as? String ?? ""),
+              let id = origin["id"] as? String, !id.isEmpty, id.utf16.count <= 500,
+              let requestID = origin["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID else { return false }
+        return true
+    }
+
+    private static func validReferenceProjectNextActionRequest(_ request: [String: Any]) -> Bool {
+        guard let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
+              validReferenceProjectNextActionOriginRef(request["origin"]),
+              let revision = request["promptRevision"] as? String, !revision.isEmpty, revision.utf16.count <= 200 else { return false }
+        switch request["action"] as? String {
+        case "choose":
+            return Set(request.keys) == Set(["requestId", "origin", "promptRevision", "action", "candidateId", "candidateRevision"])
+                && (request["candidateId"] as? String).map { !$0.isEmpty && $0.utf16.count <= 500 } == true
+                && (request["candidateRevision"] as? String).map { !$0.isEmpty && $0.utf16.count <= 200 } == true
+        case "add":
+            return Set(request.keys) == Set(["requestId", "origin", "promptRevision", "action", "text", "openAfterSave"])
+                && (request["text"] as? String).map { $0.utf16.count <= 100_000 } == true && request["openAfterSave"] is Bool
+        case "completeProject": return Set(request.keys) == Set(["requestId", "origin", "promptRevision", "action"])
+        default: return false
+        }
+    }
+
+    private static func validReferenceProjectNextActionResult(_ result: [String: Any], request: [String: Any]) -> Bool {
+        guard Self.equalJSON(result["action"], request["action"]), let id = result["id"] as? String,
+              !id.isEmpty, id.utf16.count <= 500 else { return false }
+        switch request["action"] as? String {
+        case "choose": return Set(result.keys) == Set(["action", "id"]) && Self.equalJSON(result["id"], request["candidateId"])
+        case "add": return Set(result.keys) == Set(["action", "id", "openAfterSave"]) && result["openAfterSave"] is Bool && Self.equalJSON(result["openAfterSave"], request["openAfterSave"])
+        case "completeProject": return Set(result.keys) == Set(["action", "id", "status"]) && result["status"] as? String == "archived"
+        default: return false
+        }
+    }
+
+    private static func validReferenceProjectNextActionWitness(_ prepared: [String: Any], request: [String: Any]) -> Bool {
+        guard let context = prepared["context"] as? [String: Any],
+              Set(context.keys) == Set(["source", "rawSource", "project", "section", "tasks", "scope"]),
+              context["source"] is [String: Any], context["rawSource"] is [String: Any], context["project"] is [String: Any],
+              context["section"] is NSNull || context["section"] is [String: Any], context["tasks"] is [[String: Any]],
+              ["project", "section"].contains(context["scope"] as? String ?? ""),
+              let operation = prepared["operation"] as? [String: Any], Self.equalJSON(operation["kind"], request["action"]) else { return false }
+        func lists(_ value: Any?, keys: Set<String>) -> Bool {
+            guard let rows = value as? [String: Any], Set(rows.keys) == keys else { return false }
+            return keys.allSatisfy { rows[$0] is [[String: Any]] }
+        }
+        func clock(_ value: Any?, extra: Set<String> = []) -> Bool {
+            guard let fields = value as? [String: Any],
+                  Set(fields.keys) == Set(["preparedLocalDay", "preparedOffsetMinutes", "boundaryOffsetMinutes", "futureBoundary", "dates"]).union(extra),
+                  fields["preparedLocalDay"] is String, fields["futureBoundary"] is String,
+                  Self.isInteger(fields["preparedOffsetMinutes"]), Self.isInteger(fields["boundaryOffsetMinutes"]), fields["dates"] is [[String: Any]] else { return false }
+            return true
+        }
+        switch request["action"] as? String {
+        case "choose":
+            return Set(operation.keys) == Set(["kind", "lists", "settings", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "clock", "effect"])
+                && lists(operation["lists"], keys: Set(["tasks", "projects", "sections", "areas"]))
+                && operation["settings"] is [String: Any] && operation["effect"] is [String: Any] && clock(operation["clock"])
+        case "add":
+            guard Set(operation.keys) == Set(["kind", "creation", "task", "deviceIdBefore", "deviceIdToInitialize", "updateAt"]),
+                  operation["task"] is [String: Any], let creation = operation["creation"] as? [String: Any],
+                  Set(creation.keys) == Set(["intent", "containers", "projectOrder", "focus"]),
+                  let intent = creation["intent"] as? [String: Any], Set(intent.keys) == Set(["title", "props"]),
+                  intent["title"] is String, let props = intent["props"] as? [String: Any],
+                  Set(["status", "projectId"]).isSubset(of: Set(props.keys)),
+                  Set(props.keys).isSubset(of: Set(["status", "projectId", "sectionId", "areaId", "startTime", "dueDate", "reviewAt", "description", "contexts", "tags", "priority", "energyLevel", "assignedTo", "attachments", "isFocusedToday"])),
+                  !props.values.contains(where: { $0 is NSNull }),
+                  let containers = creation["containers"] as? [String: Any], Set(containers.keys) == Set(["project", "section", "areas"]),
+                  containers["project"] is [String: Any], containers["section"] is NSNull || containers["section"] is [String: Any], containers["areas"] is [[String: Any]],
+                  let order = creation["projectOrder"] as? [String: Any], Set(order.keys) == Set(["projectId", "max"]), order["projectId"] is String, order["max"] is NSNumber else { return false }
+            if let attachments = props["attachments"] {
+                guard let links = attachments as? [[String: Any]], links.allSatisfy({
+                    Set($0.keys) == Set(["id", "kind", "title", "uri", "createdAt", "updatedAt"]) && $0["kind"] as? String == "link"
+                }) else { return false }
+            }
+            if creation["focus"] is NSNull { return true }
+            guard let focus = creation["focus"] as? [String: Any],
+                  clock(focus, extra: Set(["lists", "focusCount", "focusLimit"])),
+                  lists(focus["lists"], keys: Set(["tasks", "projects", "sections"])), Self.isInteger(focus["focusCount"]), Self.isInteger(focus["focusLimit"]) else { return false }
+            return true
+        case "completeProject":
+            guard Set(operation.keys) == Set(["kind", "lifecycle"]), let lifecycle = operation["lifecycle"] as? [String: Any],
+                  Set(lifecycle.keys) == Set(["version", "request", "scope", "effect", "deviceIdBefore", "deviceIdToInitialize", "updateAt", "result"]),
+                  Self.isInteger(lifecycle["version"], equalTo: 1), let scope = lifecycle["scope"] as? [String: Any],
+                  Set(scope.keys) == Set(["project", "tasks", "sections"]), let effect = lifecycle["effect"] as? [String: Any],
+                  Set(effect.keys) == Set(["project", "tasks", "sections"]), let result = prepared["result"] as? [String: Any],
+                  let project = context["project"] as? [String: Any], Self.equalJSON(result["id"], project["id"]) else { return false }
+            return true
+        default: return false
+        }
+    }
+
     private func journalArguments(_ command: PendingCommand, checkingEditorSnapshot: Bool = true) throws -> [Any] {
+        if command.method == "backupDocumentCommit" {
+            _ = try backupOperationReference(command)
+            return [try backupEncoded(backupOperationReference(command))]
+        }
+        if command.method == "dataSetting" {
+            guard command.editorDraft == nil else { throw HostFailure("Invalid Data setting journal") }
+            return try arguments(command.method, command.argumentsJSON)
+        }
+        if command.method == "referenceTasksMoveCommit" { return try referenceTasksMoveJournalArguments(command) }
+        if command.method == "referenceTasksAddTagCommit" { return try referenceTasksAddTagJournalArguments(command) }
+        if command.method == "referenceTasksRemoveTagCommit" { return try referenceTasksRemoveTagJournalArguments(command) }
+        if command.method == "referenceProjectNextActionCommit" {
+            guard command.editorDraft == nil, command.argumentsJSON.utf8.count <= 12_610_000,
+                  let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
+                  args.count == 1, args[0].utf8.count <= 2_100_000,
+                  let envelope = try NativeJSON.jsonObject(with: Data(args[0].utf8)) as? [String: Any],
+                  Set(envelope.keys) == Set(["request", "prepared"]), let request = envelope["request"] as? [String: Any],
+                  Self.validReferenceProjectNextActionRequest(request), let prepared = envelope["prepared"] as? [String: Any],
+                  Set(prepared.keys) == Set(["version", "kind", "request", "origin", "context", "rawBefore", "operation", "result"]),
+                  Self.isInteger(prepared["version"], equalTo: 1), prepared["kind"] as? String == "referenceProjectNextAction",
+                  Self.equalJSON(prepared["request"], request), let origin = prepared["origin"] as? [String: Any],
+                  Set(origin.keys) == Set(["kind", "envelope"]), let original = origin["envelope"] as? [String: Any],
+                  Set(original.keys) == Set(["request", "prepared"]), let originalRequest = original["request"] as? [String: Any],
+                  let ref = request["origin"] as? [String: Any], let originalPrepared = original["prepared"] as? [String: Any],
+                  Self.isInteger(originalPrepared["version"], equalTo: 2),
+                  originalPrepared["kind"] as? String == (origin["kind"] as? String == "completion" ? "referenceComplete" : "referenceBackdate"),
+                  Self.equalJSON(origin["kind"], ref["kind"]), Self.equalJSON(originalRequest["id"], ref["id"]),
+                  Self.equalJSON(originalRequest["requestId"], ref["requestId"]), originalRequest["source"] as? String == "reference",
+                  Self.validReferenceProjectNextActionWitness(prepared, request: request),
+                  Self.validReferenceCompletionRawBefore(prepared["rawBefore"]),
+                  let result = prepared["result"] as? [String: Any], Self.validReferenceProjectNextActionResult(result, request: request) else {
+                throw HostFailure("Malformed Reference project next action journal")
+            }
+            // Pure core validation binds the deep context/operation, resolved creation
+            // intent and original proof before any journal replay SQL.
+            return args
+        }
+
         if command.method == "referenceTaskDestinationCommit" {
             guard command.editorDraft == nil, command.argumentsJSON.utf8.count <= 12_610_000,
                   let args = try NativeJSON.jsonObject(with: Data(command.argumentsJSON.utf8)) as? [String],
@@ -7995,12 +9158,13 @@ private final class Engine: @unchecked Sendable {
                 guard Self.isInteger(argument) else {
                     throw HostFailure("Core numeric arguments must be integers")
                 }
-            } else if method == "doneBulkTagInput" && index == 1 {
+            } else if ["doneBulkTagInput", "referenceBulkTagInput"].contains(method) && index == 1 {
                 guard Self.isInteger(argument), let count = argument as? NSNumber, count.doubleValue >= 0, count.doubleValue <= 10_000 else {
-                    throw HostFailure("INVALID_INPUT: Done tag count must be an integer from 0 to 10000")
+                    throw HostFailure("INVALID_INPUT: Bulk tag count must be an integer from 0 to 10000")
                 }
             } else if !(argument is String) { throw HostFailure("Core arguments must be strings") }
         }
+        if method == "dataSetting" { try validateDataSettingArguments(args, json) }
         try validateTaskReadArguments(method, args, json, allowPreparedDates: allowPreparedDates)
         try validateListAndInboxArguments(method, args, json, allowPreparedDates: allowPreparedDates)
         try validateProjectCollectionArguments(method, args, json, allowPreparedDates: allowPreparedDates)
@@ -8011,14 +9175,69 @@ private final class Engine: @unchecked Sendable {
         return args
     }
 
+    private func validateDataSettingArguments(_ args: [Any], _ transport: String) throws {
+        guard transport.utf8.count <= 2_048, let raw = args.first as? String, raw.utf8.count <= 1_024,
+              let request = try NativeJSON.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+              Set(request.keys) == Set(["requestId", "edit"]), let id = request["requestId"] as? String,
+              id.utf8.count == 36, UUID(uuidString: id) != nil,
+              let edit = request["edit"] as? [String: Any], Set(edit.keys) == Set(["type", "value"]),
+              edit["type"] as? String == "debugLogging", Self.isBoolean(edit["value"]) else {
+            throw HostFailure("INVALID_INPUT: Invalid Data setting request")
+        }
+        guard try dataSettingHasExactKeyTokens(raw, expected: ["requestId", "edit", "type", "value"]) else {
+            throw HostFailure("INVALID_INPUT: Invalid Data setting request keys")
+        }
+    }
+
+    private func validateDataSettingAcknowledgment(_ value: String) throws {
+        guard let result = try NativeJSON.jsonObject(with: Data(value.utf8)) as? [String: Any],
+              Set(result.keys) == Set(["changed", "deviceWrites"]), Self.isBoolean(result["changed"]),
+              let writes = result["deviceWrites"] as? [Any], writes.isEmpty else {
+            throw HostFailure("Malformed Data setting acknowledgment")
+        }
+        guard try dataSettingHasExactKeyTokens(value, expected: ["changed", "deviceWrites"]) else {
+            throw HostFailure("Malformed Data setting acknowledgment")
+        }
+    }
+
+    /// Syntax/placement is checked by NativeJSON and the fixed schemas above.
+    /// These schemas have no valid repeated key at any level; Foundation alone
+    /// would silently collapse duplicates, including escaped equivalent names.
+    private func dataSettingHasExactKeyTokens(_ raw: String, expected: Set<String>) throws -> Bool {
+        let bytes = Array(raw.utf8)
+        var index = 0, keys: [String] = []
+        while index < bytes.count {
+            guard bytes[index] == 0x22 else { index += 1; continue }
+            let start = index
+            index += 1
+            while index < bytes.count {
+                if bytes[index] == 0x5c { index += 2; continue }
+                if bytes[index] == 0x22 { index += 1; break }
+                index += 1
+            }
+            let end = index
+            var next = end
+            while next < bytes.count, [0x20, 0x09, 0x0a, 0x0d].contains(bytes[next]) { next += 1 }
+            if next < bytes.count, bytes[next] == 0x3a {
+                guard let key = try NativeJSON.jsonObject(with: Data(bytes[start..<end]), options: [.fragmentsAllowed]) as? String else { return false }
+                keys.append(key)
+            }
+        }
+        return keys.count == expected.count && Set(keys) == expected
+    }
+
     private func validateArgumentTransportSize(_ method: String, _ json: String) throws {
-        if ["archiveTaskSelection", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
-            throw HostFailure("INVALID_INPUT: Archive selection request is too large; select fewer tasks")
+        if method == "dataSetting", json.utf8.count > 2_048 { throw HostFailure("INVALID_INPUT: Data setting request is too large") }
+        if Self.historyTaskWritePrefix(method) == "referenceProjectNextAction", json.utf8.count > 12_610_000 {
+            throw HostFailure("INVALID_INPUT: Next action request is too large")
+        }
+        if ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome", "referenceTasksAddTagWrite", "referenceTasksAddTagRetryOutcome", "referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome", "archiveTaskSelection", "archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome", "archivedTasksDeleteUndoWrite", "archivedTasksDeleteUndoRetryOutcome"].contains(method), json.utf8.count > 12_000_000 {
+            throw HostFailure("INVALID_INPUT: Bulk selection request is too large; select fewer tasks")
         }
         if let prefix = Self.historyTaskWritePrefix(method), ["referenceTaskBackdate", "referenceTaskDestination"].contains(prefix), json.utf8.count > 24_586 {
             throw HostFailure("INVALID_INPUT: Reference completion time request is too large")
         }
-        if let prefix = Self.historyTaskWritePrefix(method), !["referenceTaskBackdate", "referenceTaskDestination"].contains(prefix), json.utf8.count > 4_096 {
+        if let prefix = Self.historyTaskWritePrefix(method), !["referenceTaskBackdate", "referenceTaskDestination", "referenceProjectNextAction"].contains(prefix), json.utf8.count > 4_096 {
             throw HostFailure("INVALID_INPUT: Done status request is too large")
         }
         if method == "taskOpenTab", json.utf8.count > 4_096 {
@@ -9349,6 +10568,23 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: Archive selection needs accepted parameters and a displayed revision")
             }
         }
+        if let prefix = Self.historyTaskWritePrefix(method), prefix == "referenceProjectNextAction", method != prefix + "Commit" {
+            guard let text = args.first as? String else { throw HostFailure("INVALID_INPUT: Next action input must be text") }
+            if method == "referenceProjectNextActionInput" {
+                guard text.utf16.count <= 100_000 else { throw HostFailure("INVALID_INPUT: Next action text is too large") }
+            } else {
+                guard text.utf8.count <= 2_000_000, let request = try NativeJSON.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw HostFailure("INVALID_INPUT: Next action request is too large") }
+                if method == "referenceProjectNextActionOptions" {
+                    guard Set(request.keys) == Set(["origin", "params"]), Self.validReferenceProjectNextActionOriginRef(request["origin"]),
+                          let params = request["params"] as? [String: Any], Set(params.keys) == Set(["offset", "revision"]),
+                          Self.isInteger(params["offset"]), let offset = params["offset"] as? NSNumber,
+                          offset.doubleValue >= 0, offset.doubleValue <= 9_007_199_254_740_991,
+                          params["revision"] is NSNull || (params["revision"] as? String).map { !$0.isEmpty && $0.utf16.count <= 200 } == true else { throw HostFailure("INVALID_INPUT: Next action needs a bounded origin and page") }
+                } else {
+                    guard Self.validReferenceProjectNextActionRequest(request) else { throw HostFailure("INVALID_INPUT: Next action needs an exact bounded request") }
+                }
+            }
+        }
         if let prefix = Self.historyTaskWritePrefix(method), prefix == "referenceTaskDestination", method != prefix + "Commit" {
             let options = method == "referenceTaskDestinationOptions"
             guard let text = args.first as? String, text.utf8.count <= 4_096,
@@ -9400,7 +10636,7 @@ private final class Engine: @unchecked Sendable {
                 }
             }
         }
-        if let prefix = Self.historyTaskWritePrefix(method), !["referenceTaskBackdate", "referenceTaskDestination"].contains(prefix), method != prefix + "Commit" {
+        if let prefix = Self.historyTaskWritePrefix(method), !["referenceTaskBackdate", "referenceTaskDestination", "referenceProjectNextAction"].contains(prefix), method != prefix + "Commit" {
             let options = method == prefix + "Options"
             let completionTime = prefix != "doneTaskStatus"
             guard let text = args.first as? String, text.utf8.count <= 4_096,
@@ -9424,19 +10660,50 @@ private final class Engine: @unchecked Sendable {
                 throw HostFailure("INVALID_INPUT: History row needs a displayed revision, \(value), and lowercase UUID")
             }
         }
+        if ["referenceTasksMoveWrite", "referenceTasksMoveRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+                  let request = raw as? [String: Any], Self.validReferenceTasksMoveRequest(request) else {
+                throw HostFailure("INVALID_INPUT: Reference bulk Move needs exact selected revisions, scope, status and a lowercase UUID")
+            }
+        }
+        if ["referenceTasksAddTagWrite", "referenceTasksAddTagRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+                  let request = raw as? [String: Any], Self.validReferenceTasksAddTagRequest(request) else {
+                throw HostFailure("INVALID_INPUT: Reference bulk Add tag needs exact selected revisions, scope, tag and a lowercase UUID")
+            }
+        }
+        if ["referenceTasksRemoveTagWrite", "referenceTasksRemoveTagRetryOutcome"].contains(method) {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
+                  let raw = try? NativeJSON.jsonObject(with: Data(encoded.utf8)), Self.referenceTasksMoveJSONIsLossless(raw),
+                  let request = raw as? [String: Any], Self.validReferenceTasksRemoveTagRequest(request) else {
+                throw HostFailure("INVALID_INPUT: Reference bulk Remove tag needs exact selected revisions, scope, tags and a lowercase UUID")
+            }
+        }
+        if method == "referenceTasksMoveNotice" {
+            guard let encoded = args.first as? String, encoded.utf8.count <= 512,
+                  let result = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
+                  Set(result.keys) == Set(["count", "status"]), Self.isInteger(result["count"]),
+                  let count = result["count"] as? NSNumber, (1...10_000).contains(count.intValue),
+                  ["inbox", "next", "waiting", "someday", "done"].contains(result["status"] as? String ?? "") else {
+                throw HostFailure("INVALID_INPUT: Reference bulk Move notice needs a bounded result")
+            }
+        }
         if ["archivedTasksRestoreWrite", "archivedTasksRestoreRetryOutcome", "archivedTasksDeleteWrite", "archivedTasksDeleteRetryOutcome"].contains(method) {
             guard let encoded = args.first as? String, encoded.utf8.count <= 2_000_000,
                   let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
                   ((method.hasPrefix("archivedTasksRestore") && (Self.archivedTasksRestoreTarget(request) != nil || Self.isDoneBulkAddTagRequest(request) || Self.isDoneBulkRemoveTagRequest(request)))
                     || (method.hasPrefix("archivedTasksDelete")
                         && (Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions"])
-                            || (request["source"] as? String == "done"
+                            || (["done", "reference"].contains(request["source"] as? String ?? "")
                                 && Set(request.keys) == Set(["requestId", "taskIds", "taskRevisions", "source"]))))),
                   let requestID = request["requestId"] as? String, UUID(uuidString: requestID)?.uuidString.lowercased() == requestID,
                   let ids = request["taskIds"] as? [String], !ids.isEmpty, ids.count <= 10_000,
                   Set(ids.map { Data($0.utf8) }).count == ids.count, ids.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 500 }),
                   let revisions = request["taskRevisions"] as? [String: Any], revisions.count == ids.count,
                   Set(revisions.keys) == Set(ids),
+                  request["source"] as? String != "reference" || Set(revisions.keys.map { Data($0.utf8) }) == Set(ids.map { Data($0.utf8) }),
                   revisions.values.allSatisfy({ ($0 as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true }) else {
                 throw HostFailure("INVALID_INPUT: Archive bulk restore needs unique selected IDs, exact revisions and a lowercase UUID")
             }
@@ -9704,30 +10971,37 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func validateMenuAndDraftArguments(_ method: String, _ args: [Any], _ json: String, allowPreparedDates: Bool) throws {
-        if method == "doneBulkTagInput" {
+        if ["doneBulkTagInput", "referenceBulkTagInput"].contains(method) {
             guard let tag = args.first as? String, tag.utf16.count <= 2_000 else {
-                throw HostFailure("INVALID_INPUT: Done tag input exceeds 2000 characters")
+                throw HostFailure("INVALID_INPUT: Bulk tag input exceeds 2000 characters")
             }
         }
         if method == "menuRead" {
-            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
+            guard let name = args[0] as? String, ["more", "savedSearch", "projects", "projectDetailView", "projectTaskOrderView", "projectDetailFilterView", "projectDetailFilterOptions", "waiting", "someday", "reference", "history", "done", "bulk", "archive", "archiveTokens", "trash", "contexts", "focus", "focusSection", "focusControls", "collection", "reviewOverview", "dailyReview", "weeklyReview", "weeklyReviewList", "calendar", "calendarItem", "calendarPreferences", "board", "boardList", "settingsMenu", "dataSettings", "dataBackup", "dataCsvExport", "dataTaskNotesExport", "generalSettings", "manageSettings", "manageAreas", "managePeople", "manageContexts", "manageTags", "managePersonCreateCheck", "manageTaxonomyCheck", "managePersonEditCheck", "somedaySections"].contains(name),
                   let json = args[1] as? String,
                   let input = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
                 throw HostFailure("Unsupported native menu read or JSON object input")
             }
+            if ["dataSettings", "dataBackup", "dataCsvExport", "dataTaskNotesExport"].contains(name), !input.isEmpty { throw HostFailure("INVALID_INPUT: Unsupported Data settings read") }
             if name == "bulk" {
-                guard json.utf8.count <= 2_000_000, input["list"] as? String == "done",
-                      Set(input.keys).isSubset(of: ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]),
+                let referenceSelection = input["list"] as? String == "reference"
+                // Both lists expose only the revision-bound Remove tag picker validated below.
+                let selectionKeys: Set<String> = ["list", "params", "taskIds", "anchorId", "selectionEdit", "rangeSelectMode", "busy", "picker"]
+                guard json.utf8.count <= 2_000_000, ["done", "reference"].contains(input["list"] as? String ?? ""),
+                      Set(input.keys).isSubset(of: selectionKeys),
                       input["rangeSelectMode"] == nil || Self.isBoolean(input["rangeSelectMode"]),
                       input["busy"] == nil || Self.isBoolean(input["busy"]),
                       input["anchorId"] == nil || input["anchorId"] is NSNull
                         || (input["anchorId"] as? String).map({ !$0.isEmpty && $0.utf16.count <= 200 }) == true else {
-                    throw HostFailure("INVALID_INPUT: Unsupported native Done selection read")
+                    throw HostFailure(referenceSelection ? "INVALID_INPUT: Unsupported native Reference selection read" : "INVALID_INPUT: Unsupported native Done selection read")
                 }
                 if let params = input["params"] {
+                    let parameterKeys: Set<String> = referenceSelection
+                        ? ["groupBy", "includeArchivedProjects", "collapsedGroupIds", "filters"]
+                        : ["groupBy", "sortBy", "collapsedGroupIds", "filters"]
                     guard let value = params as? [String: Any],
-                          Set(value.keys).isSubset(of: ["groupBy", "sortBy", "collapsedGroupIds", "filters"]) else {
-                        throw HostFailure("INVALID_INPUT: Done selection requires the list's own view params")
+                          Set(value.keys).isSubset(of: parameterKeys) else {
+                        throw HostFailure(referenceSelection ? "INVALID_INPUT: Reference selection requires the list's own view params" : "INVALID_INPUT: Done selection requires the list's own view params")
                     }
                 }
                 if let selected = input["taskIds"] {
@@ -9745,7 +11019,7 @@ private final class Engine: @unchecked Sendable {
                           value["limit"] == nil || Self.isInteger(value["limit"]) && (1...100).contains((value["limit"] as? NSNumber)?.intValue ?? 0),
                           value["revision"] == nil || value["revision"] is String,
                           ((value["offset"] as? NSNumber)?.doubleValue ?? 0) == 0 || value["revision"] is String else {
-                        throw HostFailure("INVALID_INPUT: Done Remove tag requires a bounded query and revision-bound option window")
+                        throw HostFailure(referenceSelection ? "INVALID_INPUT: Reference Remove tag requires a bounded query and revision-bound option window" : "INVALID_INPUT: Done Remove tag requires a bounded query and revision-bound option window")
                     }
                 }
                 if let selection = input["selectionEdit"] {
@@ -10070,29 +11344,133 @@ private final class Engine: @unchecked Sendable {
         #if DEBUG
         try faults?.journalRemove?()
         #endif
+        if pending?.editorDraft != nil { try requireNoAttachmentDraft() }
         try DurableFile.remove(journalURL)
         pending = nil
     }
 
-    private func invoke(_ method: String, arguments: [Any]) throws -> String {
+    func localAttachmentRequest(name: String, requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, !recoveryActivationPending, pending == nil else {
+            throw HostFailure("Core host is not ready; retry startup")
+        }
+        guard attachmentJobs != nil else { throw HostFailure("Attachment file operation is unavailable") }
+        if ["draftAddFile", "draftRemove", "settleTaskDraftAttachments"].contains(name) { try requireNoAttachmentDraft() }
+        if cancellation.isCancelled { throw CancellationError() }
+        guard requestJSON.utf8.count <= 6_400_000,
+              let request = try? NativeJSON.jsonObject(with: Data(requestJSON.utf8)) as? [String: Any] else {
+            throw HostFailure("INVALID_INPUT: Local attachment request is invalid")
+        }
+        func text(_ value: Any?, limit: Int = 500, nonempty: Bool = true) -> Bool {
+            guard let value = value as? String else { return false }
+            return value.utf16.count <= limit && (!nonempty || !value.isEmpty)
+        }
+        func uuid(_ value: Any?) -> Bool {
+            guard let value = value as? String else { return false }
+            return UUID(uuidString: value)?.uuidString.lowercased() == value
+        }
+        let valid: Bool
+        switch name {
+        case "draftAddFile":
+            let picked = request["picked"] as? [String: Any] ?? [:]
+            let nullableName = picked["name"] is NSNull || text(picked["name"], limit: 100_000, nonempty: false)
+            let nullableMime = picked["mimeType"] is NSNull || text(picked["mimeType"], nonempty: false)
+            let size = picked["size"] as? NSNumber
+            let validSize = picked["size"] is NSNull || (size != nil && CFGetTypeID(size!) != CFBooleanGetTypeID()
+                && size!.doubleValue.isFinite && size!.doubleValue >= 0)
+            valid = Set(request.keys) == Set(["requestId", "owner", "source", "picked"])
+                && uuid(request["requestId"]) && Self.validTaskAttachmentOwner(request["owner"])
+                && ["file", "image"].contains(request["source"] as? String ?? "")
+                && Set(picked.keys) == Set(["uri", "name", "mimeType", "size"])
+                && text(picked["uri"], limit: 16 * 1024) && nullableName && nullableMime && validSize
+        case "draftRemove":
+            valid = Set(request.keys) == Set(["requestId", "owner", "attachmentId"])
+                && uuid(request["requestId"]) && Self.validTaskAttachmentOwner(request["owner"])
+                && text(request["attachmentId"])
+        case "openAttachment":
+            valid = Set(request.keys) == Set(["owner", "attachmentId"])
+                && Self.validTaskAttachmentOwner(request["owner"]) && text(request["attachmentId"])
+        case "settleTaskDraftAttachments":
+            valid = Set(request.keys) == Set(["taskId", "taskRevision", "baseline", "draft", "committed"])
+                && text(request["taskId"]) && text(request["taskRevision"], limit: 100_000, nonempty: false)
+                && ["baseline", "draft", "committed"].allSatisfy { Self.validTaskAttachmentList(request[$0]) }
+        default: valid = false
+        }
+        guard valid else { throw HostFailure("INVALID_INPUT: Local attachment request is invalid") }
+        do {
+            let result = try invoke("attachmentRequest", arguments: [name, requestJSON], localCancellation: cancellation)
+            guard result.utf8.count <= 6_400_000,
+                  (try? NativeJSON.jsonObject(with: Data(result.utf8))) is [String: Any] else {
+                throw HostFailure("Local attachment operation failed")
+            }
+            return result
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw HostFailure("Local attachment operation failed") }
+    }
+
+    private func invoke(_ method: String, arguments: [Any], localCancellation: NativeAttachmentCancellation? = nil) throws -> String {
         guard let context, let host = context.objectForKeyedSubscript("MindwtrHost") else { throw HostFailure("Core runtime unavailable") }
+        invoking = true
+        defer { invoking = false; scheduleAttachmentIdle(immediate: true) }
         context.exception = nil
-        let ticket = host.invokeMethod(method, withArguments: arguments)
+        let ticket: JSValue?
+        if method == "dataSetting" {
+            guard arguments.count == 1, let originalRequest = arguments.first as? String else {
+                throw HostFailure("INVALID_INPUT: Invalid Data setting request")
+            }
+            // The journal retains its original method and raw request. The
+            // shared host exposes this exact existing command through its menu dispatcher.
+            ticket = host.invokeMethod("menuCommand", withArguments: ["dataSetting", originalRequest])
+        } else {
+            ticket = host.invokeMethod(method, withArguments: arguments)
+        }
         try checkException()
         guard let ticket, ticket.isString, let id = ticket.toString(), Int(id).map({ $0 > 0 }) == true else {
             throw HostFailure("Malformed core request ticket")
         }
         // No timeout abandons a command while its durable result is unknown.
         // Promise jobs drain whenever JSC returns from a call; timers share this queue.
+        var cancelled = false
+        defer {
+            if cancelled {
+                attachmentJobs?.cancelAndDrain()
+                _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+                _ = context.objectForKeyedSubscript("__resumeHostCalls")?.call(withArguments: [])
+                context.exception = nil
+            }
+        }
         while true {
-            _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
-            try checkException()
-            let reply = host.invokeMethod("poll", withArguments: [id])
-            try checkException()
+            var reply: JSValue?
+            if !cancelled, localCancellation?.isCancelled == true {
+                // An already acknowledged terminal result wins the cancellation
+                // race; do not report failure after its completion diagnostic.
+                reply = host.invokeMethod("poll", withArguments: [id])
+                try checkException()
+                if reply == nil || reply!.isNull || reply!.isUndefined {
+                    cancelled = true
+                    _ = host.invokeMethod("cancel", withArguments: [id])
+                    try checkException()
+                    // Completes uninterruptible RN installer work before allowing
+                    // another operation or library owner to observe the namespace.
+                    attachmentJobs?.cancelAndDrain()
+                }
+            }
+            if reply == nil || reply!.isNull || reply!.isUndefined {
+                _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+                try checkException()
+                #if DEBUG
+                if localCancellation != nil { attachmentHooks?.pump?() }
+                #endif
+                reply = host.invokeMethod("poll", withArguments: [id])
+                try checkException()
+            }
             if let reply, !reply.isNull, !reply.isUndefined {
                 guard reply.isString, let json = reply.toString(),
                       let envelope = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any],
                       let ok = envelope["ok"] as? Bool else { throw HostFailure("Malformed core response") }
+                if cancelled {
+                    throw CancellationError()
+                }
                 if !ok { throw HostFailure(envelope["error"] as? String ?? "Core command failed") }
                 guard let value = envelope["value"] else { throw HostFailure("Core response has no value") }
                 return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]), as: UTF8.self)
@@ -10101,6 +11479,32 @@ private final class Engine: @unchecked Sendable {
             try checkException()
             Thread.sleep(forTimeInterval: delay.isFinite && delay > 0 ? min(delay, 10) / 1_000 : 0.001)
         }
+    }
+
+    private func scheduleAttachmentIdle(immediate: Bool = false) {
+        guard started, !closed, !invoking, !recoveryActivationPending, pending == nil,
+              attachmentJobs != nil, let context else { return }
+        let delay = immediate ? 0 : context.objectForKeyedSubscript("__nextTimerDelay")?.call(withArguments: [])?.toDouble() ?? -1
+        guard delay.isFinite, delay >= 0 else { return }
+        // One scheduled idle turn per generation; completions can move a timer
+        // earlier but never capture a JSContext/JSValue on the worker queue.
+        if attachmentIdlePump != nil && !immediate { return }
+        attachmentIdlePump?.cancel()
+        let generation = attachmentGeneration
+        let item = DispatchWorkItem { [weak self] in self?.pumpAttachmentIdle(generation: generation) }
+        attachmentIdlePump = item
+        queue.asyncAfter(deadline: .now() + min(delay, 60_000) / 1_000, execute: item)
+    }
+
+    private func pumpAttachmentIdle(generation: UInt64) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard generation == attachmentGeneration else { return }
+        attachmentIdlePump = nil
+        guard started, !closed, !invoking, !recoveryActivationPending, pending == nil, let context else { return }
+        _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+        // No arbitrary JS exception content enters diagnostics.
+        if context.exception != nil { context.exception = nil }
+        scheduleAttachmentIdle()
     }
 
     private func checkException() throws {
@@ -10123,6 +11527,10 @@ private final class Engine: @unchecked Sendable {
         let exec: @convention(block) (String) -> String? = { [weak self] sql in
             guard let self else { return "!MindwtrNativeError:Native database unavailable" }
             return self.guarded { _ = try self.requireDatabase().execute(sql); return nil }
+        }
+        let logFile: @convention(block) (JSValue, JSValue) -> String = { [weak self] operation, text in
+            guard let self, operation.isString, text.isString else { return "!MindwtrNativeError:Diagnostics file operation unavailable" }
+            return self.guarded { try self.diagnosticsFile.perform(operation.toString(), text: text.toString()) } ?? ""
         }
         let now: @convention(block) () -> Double = { ProcessInfo.processInfo.systemUptime * 1_000 }
         let random: @convention(block) (Int) -> String = { length in
@@ -10179,6 +11587,24 @@ private final class Engine: @unchecked Sendable {
                     self?.faults?.commandDiagnostic?("calendarPreference:" + outcome)
                     #endif
                     NSLog("Native Calendar preference releaseCheck=v1.3.3/native-calendar-preference outcome=%@", outcome)
+                } else if context["releaseCheck"] as? String == "v1.3.4/ios-reference-bulk-tag",
+                          context["outcome"] as? String == "added",
+                          Self.isInteger(context["count"]), let count = context["count"] as? NSNumber,
+                          (1.0...10_000.0).contains(count.doubleValue) {
+                    // Forward only the shared core's bounded aggregate receipt acknowledgment.
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("referenceTasksAddTagCoreAck:" + String(count.intValue))
+                    #endif
+                    NSLog("Native Reference bulk tag confirmed releaseCheck=v1.3.4/ios-reference-bulk-tag count=%ld outcome=added", count.intValue)
+                } else if context["releaseCheck"] as? String == "v1.3.4/ios-reference-bulk-remove-tag",
+                          context["outcome"] as? String == "removed",
+                          Self.isInteger(context["count"]), let count = context["count"] as? NSNumber,
+                          (1.0...10_000.0).contains(count.doubleValue) {
+                    // Forward only the shared core's bounded aggregate receipt acknowledgment.
+                    #if DEBUG
+                    self?.faults?.commandDiagnostic?("referenceTasksRemoveTagCoreAck:" + String(count.intValue))
+                    #endif
+                    NSLog("Native Reference bulk Remove tag confirmed releaseCheck=v1.3.4/ios-reference-bulk-remove-tag count=%ld outcome=removed", count.intValue)
                 }
                 return
             }
@@ -10202,8 +11628,33 @@ private final class Engine: @unchecked Sendable {
         }
         let bridge = JSValue(newObjectIn: context)!
         for (name, block) in ["sqlRun": run as Any, "sqlAll": all as Any, "sqlExec": exec as Any,
-                              "nowMs": now as Any, "randomBytes": random as Any, "rnStateCommit": rnState as Any, "log": log as Any] {
+                              "nowMs": now as Any, "randomBytes": random as Any, "rnStateCommit": rnState as Any, "log": log as Any, "logFile": logFile as Any] {
             bridge.setObject(block, forKeyedSubscript: name as NSString)
+        }
+        if let jobs = attachmentJobs {
+            let fileCall: @convention(block) (JSValue) -> String = { [weak self] request in
+                guard let self, request.isString, let json = request.toString() else { return "!MindwtrNativeError:Attachment file request is invalid" }
+                return self.guarded { try jobs.submit(json) } ?? "!MindwtrNativeError:Attachment file operation is unavailable"
+            }
+            let installerCall: @convention(block) (JSValue) -> String = { [weak self] request in
+                guard let self, request.isString, let json = request.toString() else { return "!MindwtrNativeError:Attachment installer request is invalid" }
+                return self.guarded { try jobs.submit(json, installer: true) } ?? "!MindwtrNativeError:Attachment file operation is unavailable"
+            }
+            let abort: @convention(block) (JSValue) -> Void = { request in
+                guard request.isString, let id = request.toString() else { return }; jobs.abort(id)
+            }
+            let directories: @convention(block) () -> String = { jobs.directoriesJSON }
+            let delete: @convention(block) (JSValue) -> String? = { [weak self] request in
+                guard let self, request.isString, let uri = request.toString() else { return "!MindwtrNativeError:Attachment file request is invalid" }
+                return self.guarded { try jobs.deleteNow(uri); return nil }
+            }
+            let next: @convention(block) () -> String = { jobs.next() }
+            let body: @convention(block) () -> String = { jobs.body() }
+            for (name, block) in ["fileCall": fileCall as Any, "installerCall": installerCall as Any,
+                                  "fileAbort": abort as Any, "fileDirectories": directories as Any,
+                                  "fileDeleteNow": delete as Any, "ioNext": next as Any, "ioBody": body as Any] {
+                bridge.setObject(block, forKeyedSubscript: name as NSString)
+            }
         }
         context.setObject(bridge, forKeyedSubscript: "__mindwtrNative" as NSString)
     }
@@ -10225,12 +11676,17 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func releaseRuntime() {
+        attachmentGeneration &+= 1
+        attachmentIdlePump?.cancel(); attachmentIdlePump = nil
+        // No file/installer worker survives release of the library lock.
+        attachmentJobs?.shutdown(); attachmentJobs = nil
         started = false
         recoveryActivationPending = false
         startupBoardResult = nil
         startupDoneTaskStatusResult = nil
         startupReferenceTaskBackdateResult = nil
         startupReferenceTaskDestinationResult = nil
+        startupReferenceProjectNextActionResult = nil
         startupDoneTaskStatusSource = nil
         startupTaskCompletionSource = nil
         startupDoneTaskCompletedAtResult = nil

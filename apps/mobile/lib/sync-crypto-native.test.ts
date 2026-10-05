@@ -1,5 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import * as nodeCrypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { argon2id } from '@noble/hashes/argon2.js';
 import {
   computeSha256Hex,
@@ -20,6 +21,7 @@ import {
 } from './sync-crypto-native';
 
 import vectors from '../../../packages/core/src/__fixtures__/sync-crypto/vectors.json';
+import primitiveVectors from '../../../packages/core/src/__fixtures__/sync-crypto/primitive-vectors.json';
 
 /**
  * react-native-quick-crypto is a native (Nitro/C++/OpenSSL) module and cannot load in a
@@ -236,5 +238,58 @@ describe('native module unavailability latch', () => {
     expect(mobileSha256Hex(new Uint8Array([0x61, 0x62, 0x63]))).toBe(
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
     );
+  });
+});
+
+/**
+ * The shared primitive vectors (core's primitive-vectors.json, also checked by core and by the Android host's HostCrypto.kt)
+ * through this adapter on OpenSSL, the library quick-crypto wraps: node's own crypto for AES-GCM and SHA-256, and the OpenSSL
+ * command line's Argon2id KDF (the one HybridArgon2 calls) where the installed OpenSSL has it (3.2 or later).
+ */
+describe('mobileSyncCryptoPrimitives on OpenSSL against the shared primitive vectors', () => {
+  const fromHex = (hex: string): Uint8Array => new Uint8Array(Buffer.from(hex, 'hex'));
+  const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+  const opensslArgon2id: SyncCryptoNativeModule['argon2'] = (_algorithm, params, callback) => {
+    try {
+      const out = execFileSync('openssl', ['kdf', '-binary', '-keylen', String(params.tagLength),
+        '-kdfopt', `hexpass:${toHex(params.message)}`, '-kdfopt', `hexsalt:${toHex(params.nonce)}`,
+        '-kdfopt', `memcost:${params.memory}`, '-kdfopt', `iter:${params.passes}`, '-kdfopt', `lanes:${params.parallelism}`, 'ARGON2ID'],
+      { stdio: ['ignore', 'pipe', 'ignore'] });
+      callback(null, new Uint8Array(out));
+    } catch (err) {
+      callback(err as Error, new Uint8Array(0));
+    }
+  };
+  const hasOpensslArgon2id = (() => {
+    try {
+      execFileSync('openssl', ['kdf', '-keylen', '32', '-kdfopt', 'pass:x', '-kdfopt', 'salt:saltsalt', '-kdfopt', 'memcost:8',
+        '-kdfopt', 'iter:1', 'ARGON2ID'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  afterEach(() => setSyncCryptoNativeModuleForTests(nodeBackedQuickCrypto));
+
+  it.skipIf(!hasOpensslArgon2id)('derives every Argon2id key as OpenSSL does', async () => {
+    setSyncCryptoNativeModuleForTests({ ...nodeBackedQuickCrypto, argon2: opensslArgon2id });
+    for (const vector of primitiveVectors.argon2id) {
+      const key = await mobileSyncCryptoPrimitives.argon2id(fromHex(vector.passHex), fromHex(vector.saltHex),
+        { mKib: vector.mKib, t: vector.t, p: vector.p }, vector.dkLen);
+      expect(toHex(key), vector.passphrase).toBe(vector.keyHex);
+    }
+  });
+
+  it('seals, opens and hashes every case as OpenSSL does', async () => {
+    setSyncCryptoNativeModuleForTests(nodeBackedQuickCrypto);
+    for (const vector of primitiveVectors.aesGcm) {
+      const [key, nonce, plaintext, aad] = [vector.keyHex, vector.nonceHex, vector.plaintextHex, vector.aadHex].map(fromHex);
+      expect(toHex(await mobileSyncCryptoPrimitives.aesGcmSeal(key, nonce, plaintext, aad))).toBe(vector.sealedHex);
+      expect(toHex(await mobileSyncCryptoPrimitives.aesGcmOpen(key, nonce, fromHex(vector.sealedHex), aad))).toBe(vector.plaintextHex);
+    }
+    for (const vector of primitiveVectors.sha256) {
+      expect(mobileSha256Hex(fromHex(vector.inputHex))).toBe(vector.digestHex);
+    }
   });
 });

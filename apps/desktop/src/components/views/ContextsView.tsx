@@ -12,7 +12,6 @@ import {
     buildContextsViewFilterSections,
     getContextsTokenCount,
     collectBulkTaskTokens,
-    compareAreasByOrder,
     tFallback,
     type Task,
     type ContextOrTagMatchMode,
@@ -68,9 +67,10 @@ const CLEAR_SELECTION_OPTION = '__clear__';
 
 export function ContextsView() {
     const perf = usePerformanceMonitor('ContextsView');
-    const { tasksById, areas, settings, theme, undoNotificationsEnabled, updateSettings } = useTaskStore(
+    const { tasksById, projects, areas, settings, theme, undoNotificationsEnabled, updateSettings } = useTaskStore(
         (state) => ({
             tasksById: state._tasksById,
+            projects: state.projects,
             areas: state.areas,
             settings: state.settings,
             theme: state.settings?.theme,
@@ -234,7 +234,7 @@ export function ContextsView() {
     const {
         activeAction,
         allVisibleTasksSelected,
-        assignAreaToSelectedTasks,
+        moveSelectedTasksToDestination,
         assignEnergyToSelectedTasks,
         clearTaskSelection,
         deleteSelectedTasks,
@@ -311,12 +311,6 @@ export function ContextsView() {
         () => collectBulkTaskTokens(selectedIdsArray, tasksById, 'contexts'),
         [selectedIdsArray, tasksById]
     );
-    const bulkAreaOptions = useMemo(
-        () => [...areas]
-            .sort(compareAreasByOrder)
-            .map((area) => ({ id: area.id, name: area.name })),
-        [areas]
-    );
 
     const renderContextTask = useCallback((task: Task) => (
         <StoreTaskItem
@@ -372,7 +366,7 @@ export function ContextsView() {
         setBulkTokenPicker({ field: 'contexts', action: 'remove' });
     };
 
-    const handleBatchAssignArea = assignAreaToSelectedTasks;
+    const handleBatchMoveToDestination = moveSelectedTasksToDestination;
 
     const handleBatchAssignEnergyLevel = assignEnergyToSelectedTasks;
 
@@ -720,8 +714,9 @@ export function ContextsView() {
                                 <ListBulkActions
                                     selectionCount={selectedIdsArray.length}
                                     onMoveToStatus={handleBatchMove}
-                                    onAssignArea={handleBatchAssignArea}
-                                    areaOptions={bulkAreaOptions}
+                                    onMoveToDestination={handleBatchMoveToDestination}
+                                    projects={projects}
+                                    areas={areas}
                                     onAssignEnergyLevel={handleBatchAssignEnergyLevel}
                                     onAddTag={handleBatchPickTag}
                                     onRemoveTag={handleBatchRemoveTag}

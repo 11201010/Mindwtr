@@ -62,7 +62,7 @@ vi.mock('expo-sharing', () => ({
   isAvailableAsync: vi.fn().mockResolvedValue(false),
   shareAsync: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../../lib/app-log', () => ({ logWarn: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../../lib/app-log', () => ({ logInfo: vi.fn().mockResolvedValue(undefined), logWarn: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../../lib/open-file-externally', () => ({
   tryOpenWithAndroidViewer: vi.fn().mockResolvedValue(false),
 }));
@@ -175,6 +175,31 @@ describe('useProjectAttachments download settlement', () => {
     act(() => { expose.current!.confirmAddProjectLink(); });
     expect(expose.current!.selectedProject?.attachments).toHaveLength(3);
     expect(expose.current!.linkInput).toBe('https://three.example\ninvalid line');
+    act(() => tree.unmount());
+  });
+
+  it('adds all UpNote input forms without opening and preserves project data after a missing app failure', async () => {
+    const Linking = await import('expo-linking');
+    const Clipboard = await import('expo-clipboard');
+    const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+    const project = makeProject(makeAttachment(1));
+    coreStoreState._allProjects = [project];
+    const expose = React.createRef<HarnessApi | null>();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<Harness expose={expose} initial={project} />); });
+    act(() => { expose.current!.setLinkInput(`${uri}\nNote | ${uri}\n[My note](${uri})`); });
+    act(() => { expose.current!.confirmAddProjectLink(); });
+    const saved = expose.current!.selectedProject!;
+    const added = saved.attachments!.slice(1);
+    expect(added.map((attachment) => attachment.uri)).toEqual([uri, uri, uri]);
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    vi.mocked(Linking.openURL).mockRejectedValueOnce(new Error('Missing app'));
+    await act(async () => { await expose.current!.openAttachment(added[0]); });
+    expect(Linking.openURL).toHaveBeenCalledWith(uri);
+    expect(expose.current!.selectedProject).toEqual(saved);
+    expect(coreStoreState._allProjects[0]).toEqual(saved);
+    vi.mocked(Alert.alert).mock.calls.at(-1)![2]!.find((button) => button.text === 'Copy link')!.onPress!();
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(uri);
     act(() => tree.unmount());
   });
 

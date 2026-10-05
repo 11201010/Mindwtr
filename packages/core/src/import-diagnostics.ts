@@ -81,7 +81,7 @@ export const createImportDiagnostic = (
     if (/duplicat|repeated csv id/u.test(normalized)) {
         return { code: 'duplicate-identity', params: { count }, severity };
     }
-    if (/already imported|previously imported|deleted or permanently removed/u.test(normalized)) {
+    if (/already imported|previously imported|imported earlier and then deleted here|deleted or permanently removed/u.test(normalized)) {
         return { code: 'skipped-existing-records', params: { count }, severity };
     }
     if (/nested zip|non-csv|non-json/u.test(normalized)) {

@@ -48,7 +48,27 @@ class CoreHost(
     private val files: HostFiles,
     /** RN's attachment installer: core's native installer port. */
     private val installer: HostInstaller,
+    /** Reminder alarms' platform side (host-reminders.ts's bridges); null: this host plans no alarms. */
+    private val reminders: Reminders? = null,
+    /** RN's home-screen widgets (bundle/host-widgets.ts publishes through it); null: this host has none. */
+    private val widgets: HostWidgets? = null,
 ) {
+    /**
+     * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
+     * reads it, and React Native's old alarms cancelled once. Engine thread.
+     */
+    interface Reminders {
+        /** Core's NativeReminderAlarmPlan (JSON, with the channel's name): `writeAhead` stored, cancels, alarms, then `alarms` stored. */
+        fun apply(plan: String)
+        fun permissionGranted(): Boolean
+        /** React Native's alarms cancelled and its alarm maps removed; how many were cancelled (0 once none is left). */
+        fun cleanupRn(): Int
+        /** `{ dropped, notQueued }` since the last call, then zero (ReminderReceiverCounts). */
+        fun receiverCounts(): String
+        /** `{ fired, shown }`: ids of alarms that showed (ReminderLedger), and of reminder notifications still in the tray. */
+        fun ledger(): String
+    }
+
     companion object {
         const val TAG = "MindwtrNativeDev"
         /** Must match NATIVE_ERROR in bundle/host-entry.ts. */
@@ -305,6 +325,8 @@ class CoreHost(
         bridge.setProperty("netFetch", guarded { args -> io.fetch(args[0] as String) })
         bridge.setProperty("netAbort", guarded { args -> io.abort(args[0] as String); null })
         bridge.setProperty("secretCall", guarded { args -> io.secret(args[0] as String) })
+        // Sync encryption's Argon2id and AES-GCM (HostCrypto): started here, run on HostIo's crypto thread, settled as a fetch.
+        bridge.setProperty("cryptoCall", guarded { args -> io.crypto(args[0] as String) })
         bridge.setProperty("ioNext", guarded { _ -> io.next() })
         bridge.setProperty("ioBody", guarded { _ -> io.body() })
         // RN's diagnostics log file: core's diagnostics-log.ts decides every write; this is its file IO.
@@ -340,6 +362,20 @@ class CoreHost(
         bridge.setProperty("fileDirectories", guarded { _ ->
             JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
         })
+        // Reminder alarms (host-reminders.ts): core's plan applied, the notification permission, RN's old alarms cancelled once.
+        reminders?.let { alarms ->
+            bridge.setProperty("alarmApply", guarded { args -> alarms.apply(args[0] as String); null })
+            bridge.setProperty("notificationsAllowed", guarded { _ -> alarms.permissionGranted() })
+            bridge.setProperty("rnAlarmCleanup", guarded { _ -> alarms.cleanupRn() })
+            bridge.setProperty("reminderReceiverCounts", guarded { _ -> alarms.receiverCounts() })
+            bridge.setProperty("reminderLedger", guarded { _ -> alarms.ledger() })
+        }
+        // RN's widget module (HostWidgets): the publication's device inputs, and core's payload to store and draw.
+        widgets?.let { widgets ->
+            bridge.setProperty("widgetInputs", guarded { _ -> widgets.inputs() })
+            bridge.setProperty("widgetPublish", guarded { args -> widgets.publish(args[0] as String); null })
+            bridge.setProperty("widgetAppState", guarded { _ -> widgets.appState() })
+        }
         engine.globalObject.setProperty("__mindwtrNative", bridge)
     }
 
@@ -426,6 +462,16 @@ class CoreHost(
     /** A Menu tab command (host-entry.ts MENU_COMMANDS) with [json] unchanged; its request or capture UUID makes a retry exact. */
     fun menuCommand(name: String, json: String): JSONObject = callAsync("menuCommand", name, json)
 
+    /**
+     * A Menu command journaled now, on the caller's thread, ahead of its send: its later [menuCommand] finds the same entry
+     * (the journal never holds a request twice), and a death before then leaves it for the boot's replay. Project details'
+     * edits only: what the user typed is on disk the moment the field lets go or Back is pressed.
+     */
+    fun journalAhead(name: String, json: String) {
+        require(name == "projectEdit") { "$name is not journaled ahead" }
+        checkNotNull(journal) { "The write journal is not open" }.append("menuCommand", listOf(name, json))
+    }
+
     /** Core's getTaskEditorModel for one task: its draft, the fields to show by section, and each field's choices. */
     fun taskEditorModel(id: String): JSONObject = callAsync("editorModel", id)
 
@@ -488,12 +534,44 @@ class CoreHost(
      * A line of the runner's (CoreWork, the queue drain) through core's logger: logcat, and RN's diagnostics log file while Debug
      * logging is on, its fields in [context]. It never fails its caller: a line that cannot go through core goes to logcat.
      */
+    fun logLinkHandoff(outcome: String, surface: String) {
+        runCatching { callAsync("logLinkHandoff", outcome, surface) }
+    }
+
     fun logLine(message: String, context: JSONObject) {
         runCatching { callAsync("logLine", message, context.toString()) }.onFailure { Log.i(TAG, "$message $context") }
     }
 
     /** Core's runContextAutomation with [json] (`{ action, context }`): `{ notification }`, the details to post, or null. */
     fun contextAutomation(json: String): JSONObject = callAsync("contextAutomation", json)
+
+    /**
+     * Reminder alarms (bundle/host-reminders.ts): React Native's old alarms cancelled once, core's plan applied now, then again on
+     * core's timers (a store change, the capped window's top-up). `{ active, permissionGranted, ask }`: `ask` while a reminder
+     * feature is on and notifications are not allowed, where RN asks for the permission at start.
+     */
+    fun remindersStart(): JSONObject = callAsync("remindersStart")
+
+    /**
+     * Core's reminder plan applied now: [mode] "cycle", "rebuild" to remake every alarm (a reboot dropped them, exact alarms were just
+     * allowed), or "fired" to make the daily or weekly alarm [key] that fired again at its next time.
+     */
+    fun remindersCycle(mode: String, key: String = ""): JSONObject = callAsync("remindersCycle", mode, key)
+
+    /** A reminder's Done (core's completeReminderTask), journaled under [requestId]: a retry or a replay writes nothing twice. */
+    fun reminderDone(requestId: String, taskId: String): JSONObject = callAsync("reminderDone", requestId, taskId)
+
+    /** A reminder's Snooze (core's snoozeReminder) with [json] (`{ requestId, requestedAt, details }`), journaled: the alarm to make. */
+    fun reminderSnooze(json: String): JSONObject = callAsync("reminderSnooze", json)
+
+    /**
+     * The home-screen widgets published now if what they show changed (bundle/host-widgets.ts), and stored and drawn before this
+     * returns: after a CoreWork job, and when the app comes to the front.
+     */
+    fun refreshWidgets() {
+        callAsync("widgetsRefresh")
+        widgets?.settle()
+    }
 
     /** Core's receipts older than 30 days go; ProcessCoreHost calls it once, after a boot replay that left no entry. */
     fun pruneReceipts(): JSONObject = callAsync("pruneReceipts")

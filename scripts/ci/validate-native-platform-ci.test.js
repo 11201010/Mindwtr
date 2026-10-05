@@ -456,9 +456,10 @@ test("desktop Rust pull requests check and test the native library on Windows", 
 
   expect(workflow.match(/- "apps\/desktop\/src-tauri\/\*\*"/g)).toHaveLength(2);
   expect(workflow).toContain("windows: ${{ steps.filter.outputs.windows }}");
-  expect(workflow).toMatch(
-    /apps\/desktop\/src-tauri\/\*\|\.github\/workflows\/native-platform-ci\.yml\)\n\s+windows=true/,
-  );
+  const windowsPaths = workflow.match(/([^\n]+)\)\n\s+windows=true/)?.[1].trim().split("|");
+  for (const path of ["apps/desktop/src-tauri/*", "apps/mcp-server/*", "scripts/build-mcp-sidecar*", ".bun-version", "packages/core/src/*", "package.json", "bun.lock", ".github/workflows/native-platform-ci.yml"]) {
+    expect(windowsPaths).toContain(path);
+  }
   expect(workflow).toContain('echo "windows=$windows" >> "$GITHUB_OUTPUT"');
 
   expect(windowsJob).toBeDefined();
@@ -530,7 +531,10 @@ test("SwiftUI client changes and shared host changes select the isolated Apple b
   const job = workflow.jobs["ios-client"];
   expect(job.if).toContain("needs.changes.outputs.ios_client == 'true'");
   expect(job.if).toContain("needs.changes.outputs.macmini != 'true'");
-  expect(job.steps.some((step) => step.run === "bash apps/ios-native/scripts/validate.sh")).toBe(true);
+  const validation = job.steps.find((step) => step.run?.includes("bash apps/ios-native/scripts/validate.sh"));
+  expect(validation).toBeDefined();
+  expect(validation.run).toContain("set -o pipefail");
+  expect(validation.run).toContain('bash apps/ios-native/scripts/validate.sh 2>&1 | tee "$RUNNER_TEMP/ios-swiftui-artifacts/validation.log"');
   expect(readFileSync("apps/ios-native/scripts/validate.sh", "utf8")).toContain("export TZ=America/New_York");
   expect(workflow.jobs["ios-macmini"].if).toContain("needs.changes.outputs.ios_client == 'true'");
 });

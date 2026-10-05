@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -366,6 +366,129 @@ for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 
     run("fetch('https://dav.example/later')");
     assert.equal(sent.at(-1).url, 'https://dav.example/later', 'calls reach the host again once it resumes them');
 }
+
+// S4b: sync encryption's primitives on the host's crypto calls (host-polyfills.js __mindwtrCryptoCall, host-sync.ts
+// createHostSyncCrypto) with core itself. The fake bridge answers as HostCrypto.kt does (Argon2id, AES-256-GCM, `auth` for a tag
+// mismatch); HostCryptoTest proves the Kotlin bytes. Here: every byte crosses the base64 transport whole, an answer settles only in
+// the pump, core opens and reproduces every MWENC1 vector, a tag mismatch is core's own SyncCryptoAuthError (core checks it with
+// instanceof), and a host without the calls refuses every primitive.
+{
+    const { argon2id } = await import('@noble/hashes/argon2.js');
+    const nodeCrypto = await import('node:crypto');
+    const vectors = JSON.parse(readFileSync(resolve(app, '../../packages/core/src/__fixtures__/sync-crypto/vectors.json'), 'utf8'));
+    const answers = [];
+    const requests = [];
+    let taken = '';
+    let ids = 0;
+    const b = (text) => Buffer.from(text, 'base64');
+    const bridge = {
+        log() {},
+        nowMs: () => performance.now(),
+        randomBytes: (length) => JSON.stringify([...nodeCrypto.randomBytes(length)]),
+        cryptoCall(json) {
+            const request = JSON.parse(json);
+            requests.push(request);
+            const id = String(++ids);
+            try {
+                let out;
+                if (request.op === 'argon2id') out = argon2id(b(request.pass), b(request.salt), { m: request.m, t: request.t, p: request.p, dkLen: request.dkLen });
+                else if (request.op === 'aesGcmSeal') {
+                    const cipher = nodeCrypto.createCipheriv('aes-256-gcm', b(request.key), b(request.nonce)).setAAD(b(request.aad));
+                    out = Buffer.concat([cipher.update(b(request.data)), cipher.final(), cipher.getAuthTag()]);
+                } else {
+                    const data = b(request.data);
+                    if (data.length < 16) throw Object.assign(new Error('wrong passphrase or corrupted data'), { auth: true });
+                    const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', b(request.key), b(request.nonce)).setAAD(b(request.aad));
+                    decipher.setAuthTag(data.subarray(data.length - 16));
+                    try { out = Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]); }
+                    catch { throw Object.assign(new Error('wrong passphrase or corrupted data'), { auth: true }); }
+                }
+                answers.push({ json: JSON.stringify({ id, body: true }), body: Buffer.from(out).toString('base64') });
+            } catch (error) {
+                answers.push({ json: JSON.stringify({ id, error: error.message, ...(error.auth ? { auth: true } : {}) }) });
+            }
+            return id;
+        },
+        ioNext() { const next = answers.shift(); taken = next?.body ?? ''; return next?.json ?? ''; },
+        ioBody() { return taken; },
+    };
+    const entry = `import { createHostSyncCrypto } from './host-sync';
+// Core's own file, not its index: esbuild never runs a lazily initialized module that an entry reaches only through the index.
+import { SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact } from '../../../packages/core/src/sync-crypto';
+globalThis.cryptoGate = { prims: createHostSyncCrypto(globalThis.__mindwtrCryptoCall), refusing: createHostSyncCrypto(undefined),
+    SyncCryptoAuthError, SyncCryptoUnsupportedError, decryptSyncArtifact, deriveSyncKeyMaterial, encryptSyncArtifact };`;
+    const gateBundle = await build({ stdin: { contents: entry, loader: 'ts', resolveDir: resolve(app, 'bundle') }, bundle: true, write: false, format: 'iife', logLevel: 'silent' });
+    const context = vm.createContext({ console: { info() {}, warn() {}, error() {}, log() {} }, Intl: undefined, __mindwtrNative: bridge });
+    vm.runInContext(readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8'), context);
+    vm.runInContext(gateBundle.outputFiles[0].text, context);
+    const gate = context.cryptoGate;
+    // Settles a crypto promise the way CoreHost's pump does: only __pumpTimers hands an answer back.
+    const pumped = async (promise) => {
+        let done = false;
+        const settled = promise.finally(() => { done = true; });
+        settled.catch(() => {}); // the caller takes the rejection; this only keeps Node from calling it unhandled meanwhile
+        await new Promise((tick) => setImmediate(tick));
+        assert.equal(done, false, 'a crypto call settles only in the pump');
+        while (!done) { context.__pumpTimers(); await new Promise((tick) => setImmediate(tick)); }
+        return settled;
+    };
+    const ContextBytes = vm.runInContext('Uint8Array', context);
+    const u8 = (bytes) => new ContextBytes(bytes);
+    for (const vector of vectors) {
+        const material = await pumped(gate.deriveSyncKeyMaterial(vector.passphrase, u8(b(vector.saltB64)), vector.params, gate.prims));
+        const encrypted = u8(b(vector.encryptedB64));
+        const opened = await pumped(gate.decryptSyncArtifact(encrypted, material.key, gate.prims));
+        assert(Buffer.from(opened).equals(b(vector.plaintextB64)), `${vector.name} opens through the host's calls`);
+        // The same key, salt and nonce reproduce the container byte for byte.
+        const nonce = encrypted.slice(34, 46);
+        const sealed = await pumped(gate.encryptSyncArtifact(u8(b(vector.plaintextB64)), material, { ...gate.prims, randomBytes: () => nonce }));
+        assert(Buffer.from(sealed).equals(b(vector.encryptedB64)), `${vector.name} seals byte for byte`);
+    }
+    const argonRequest = requests.find((request) => request.op === 'argon2id' && request.m === 19456);
+    assert.deepEqual([argonRequest.t, argonRequest.p, argonRequest.dkLen, b(argonRequest.pass).toString()], [2, 1, 32, 'hunter2'], 'Argon2id\'s cost reaches the host as core asked it');
+    // A changed byte: core's own SyncCryptoAuthError, so core reads it as a wrong passphrase, never as a transport failure.
+    const first = vectors[0];
+    const material = await pumped(gate.deriveSyncKeyMaterial(first.passphrase, u8(b(first.saltB64)), first.params, gate.prims));
+    const tampered = u8(b(first.encryptedB64));
+    tampered[tampered.length - 1] ^= 1;
+    const authError = await pumped(gate.decryptSyncArtifact(tampered, material.key, gate.prims)).then(() => null, (error) => error);
+    assert(authError instanceof gate.SyncCryptoAuthError, 'a tag mismatch is core\'s SyncCryptoAuthError');
+    const short = await pumped(gate.prims.aesGcmOpen(material.key, u8(new Uint8Array(12)), u8(new Uint8Array(15)), u8(new Uint8Array(0)))).then(() => null, (error) => error);
+    assert(short instanceof gate.SyncCryptoAuthError, 'a body too short for a tag is an auth failure too');
+    // A refused Argon2id cost (fewer than 8 KiB per lane) rejects, and core names it unsupported.
+    const badParams = await pumped(gate.deriveSyncKeyMaterial('x', u8(new Uint8Array(16)), { mKib: 8, t: 1, p: 2 }, gate.prims)).then(() => null, (error) => error);
+    assert(badParams instanceof gate.SyncCryptoUnsupportedError, 'an Argon2id refusal is core\'s SyncCryptoUnsupportedError');
+    assert.equal(gate.prims.randomBytes(12).length, 12, 'random bytes come from the host at the asked length');
+    // No crypto calls: every primitive refuses, so an encrypted location fails closed instead of syncing plaintext.
+    await assert.rejects(gate.refusing.argon2id(u8([1]), u8(new Uint8Array(16)), { mKib: 64, t: 1, p: 1 }, 32), /Sync encryption is not available/);
+    await assert.rejects(gate.refusing.aesGcmSeal(u8(new Uint8Array(32)), u8(new Uint8Array(12)), u8([1]), u8([])), /Sync encryption is not available/);
+    assert.throws(() => gate.refusing.randomBytes(12), /Sync encryption is not available/);
+    // The bridge: started on the engine thread, run on HostIo's crypto thread, its callback guarded; never refused after a deadline.
+    const kotlinCore = (name) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core', name), 'utf8');
+    const coreHostSource = kotlinCore('CoreHost.kt');
+    const hostIoSource = kotlinCore('HostIo.kt');
+    assert.match(coreHostSource, /bridge\.setProperty\("cryptoCall", guarded \{ args -> io\.crypto\(args\[0\] as String\) \}\)/);
+    assert.match(hostIoSource, /private val cryptoThread = Executors\.newSingleThreadExecutor/);
+    assert.match(hostIoSource, /cryptoThread\.execute \{\s+val reply = runCatching \{ cryptoReply\(id, json\) \}\.getOrElse/, 'a crypto failure, an OutOfMemoryError included, is an answer, never a crash');
+    // Review S4b 3 (and its verification): once the host closed, no answer of any kind (a secret's value, a derived key, a
+    // plaintext, a fetch body) is queued or taken, and close drops what waited (HostAnswers, HostAnswersTest). Every answer goes
+    // through the one HostAnswers queue; HostIo keeps no queue or held answer of its own.
+    const hostAnswersSource = kotlinCore('HostAnswers.kt');
+    assert.match(hostIoSource, /private val answers = HostAnswers\(\)/);
+    assert.doesNotMatch(hostIoSource, /LinkedBlockingQueue|private var held|private var taken/);
+    assert.match(hostIoSource, /answers\.close\(\)\s+cryptoThread\.shutdownNow\(\)/);
+    assert.match(hostIoSource, /return HostCrypto\.answer\(\{ answers\.closed \}, compute\)/);
+    assert.match(hostIoSource, /fun next\(\): String \{\s+val answer = answers\.next\(\) \?: return ""/);
+    assert.match(hostIoSource, /fun body\(\): String = answers\.body\(\)/);
+    assert.match(hostAnswersSource, /fun add\(answer: Answer\): Boolean = synchronized\(lock\) \{ if \(closed\) false else queue\.add\(answer\) \}/);
+    assert.match(hostAnswersSource, /fun next\(\): Answer\? = synchronized\(lock\) \{\s+if \(closed\) return null/);
+    assert.match(hostAnswersSource, /fun close\(\) = synchronized\(lock\) \{\s+closed = true\s+queue\.clear\(\)\s+held = null\s+taken = null\s+\}/);
+    // Review S4b 2: Argon2id's cost is read as exact whole numbers (HostCrypto.argon2Params), never getInt's truncation.
+    assert.match(hostIoSource, /val \(m, t, p, dkLen\) = HostCrypto\.argon2Params\(request\)/);
+    assert.doesNotMatch(hostIoSource, /getInt\("(m|t|p|dkLen)"\)/);
+    const polyfillSource = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
+    assert.doesNotMatch(polyfillSource.slice(polyfillSource.indexOf('// --- sync crypto'), polyfillSource.indexOf('// --- localStorage')), /refuseIfCancelled/);
+}
 const coreHost = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
 const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/SqliteBridge.kt'), 'utf8');
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
@@ -377,7 +500,7 @@ assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -518,7 +641,7 @@ assert.match(model, /if \(stale\) acknowledged\(action!!\)\s+else ui \{/);
 assert.match(model, /\(action != null && !refused\) \|\| message\.startsWith\("SAVE_FAILED"\)/);
 // While a failed command's retry is owed, only that exact command runs: no read starts, and the retry
 // keeps the failure on screen. A read's failure never replaces an owed command, in the ViewModel or the process record.
-assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
+assert.match(model, /if \(busy \|\| runtime == null \|\| \(failedAction != null && failedAction != action\)\) return false\s+busy = true\s+if \(action != null\) commandAt = \+\+issued\s+if \(failedAction == null\) error = null/);
 assert.equal(code(model).match(/\berror = null\b/g).length, 4, 'perform and a read\'s success (no retry owed), closeEditor, and an accepted edit clearing only a refused edit\'s message');
 assert.match(model, /if \(error != null && error == editRefusal\) error = null/);
 assert.match(model, /if \(failedAction == null\) error = null\s+\}/, 'a read\'s success never clears an owed retry\'s failure');
@@ -539,14 +662,14 @@ assert.match(model, /fun refreshProjects\(\) \{\s+\/\/[^\n]*\s+if \(projects == 
 assert.match(model, /private fun refreshAll\(\) \{\s+val at = depth\(\)\s+background\(Part\.entries, \{ runtime -> read\(runtime, at\) \}, ::showLists\)/);
 // A command's lists are read again only after it succeeds (or was refused as stale), in the background, once busy is released.
 assert.match(model, /try \{\s+\/\/[^\n]*\s+debugProperty\("delay_action_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+work\(runtime\); done = true\s+\}/);
-assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+\}/);
+assert.match(model, /ui \{\s+busy = false\s+if \(\(done \|\| stale\) && action != null\) refreshAll\(\)\s+finished\?\.invoke\(\)\s+\}/);
 assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('fun openEditor('))), /read\(runtime/);
 // Stale results never overwrite newer state: every list read takes a number; a command outdates every earlier read;
 // a result is shown only if nothing newer was shown first (a background failure too).
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /internal enum class Part \{ Focus, Projects, Project, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
+assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('internal fun readSucceeded(')));
     for (const part of ['Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -608,7 +731,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\), HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
@@ -731,7 +854,7 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 31, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch and secret calls, logFile, the key-value calls, hostEvent, the queue\'s file calls and the attachment file, delete, abort and installer calls: each guarded');
+assert.equal(bridgeCallbacks.length, 40, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls: each guarded');
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -778,13 +901,15 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     }
     assert.doesNotMatch(hostIo + secretStore, /quickjs|JSFunction|JSObject|JSCallFunction/i, 'no host call touches the engine');
     assert.match(hostIo, /calls\[id\] = call\s+call\.enqueue\(object : Callback \{/, 'a request runs on OkHttp\'s dispatcher');
-    assert.doesNotMatch(hostIo, /\.execute\(\)|runBlocking|Thread\.sleep/);
+    // The one wait: a debug build's Argon2id delay on the crypto thread (check-encryption-device.mjs taps during it).
+    assert.doesNotMatch(hostIo.replace('if (argon2DelayMs > 0) Thread.sleep(argon2DelayMs).also { started = System.nanoTime() }', ''), /\.execute\(\)|runBlocking|Thread\.sleep/);
+    assert.match(hostIo, /private val argon2DelayMs = debugProperty\("crypto_delay_ms"\)/);
     // Nothing throws on OkHttp's thread, and (review 3) a call stays cancellable until its body is read: it leaves [calls]
     // only after the read, on a failure, or on an abort, so an abort or close after the headers still cancels it.
     assert.match(hostIo, /override fun onResponse\(call: Call, response: Response\) \{[^{}]*?try \{\s*answers\.add\(runCatching \{ response\.use \{ read\(id, it, redirect\) \} \}\.getOrElse \{ failure\(id, call, it\) \}\)\s*\} finally \{\s*calls\.remove\(id\)\s*\}/);
     assert.equal(hostIo.match(/calls\.remove\(id\)/g).length, 3);
     assert.match(hostIo, /fun close\(\) \{\s*calls\.values\.forEach \{ it\.cancel\(\) \}/);
-    assert.match(hostIo, /secretThread\.execute \{\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
+    assert.match(hostIo, /secretThread\.execute \{\s*\/\/ A read the closed host would never take is not made\.\s*if \(op == "get" && answers\.closed\) return@execute\s*answers\.add\(runCatching \{/, 'a secret call runs on the secrets thread');
     // A file call (the attachment file port, the installer) runs on the files thread, its request read there too.
     // A file call runs off the engine (FileJobs: the files thread, or a picked document's own thread), its request read there too;
     // an aborted call that has not started never runs (review finding 2).
@@ -792,10 +917,11 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const fileJobs = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/FileJobs.kt'), 'utf8');
     assert.match(fileJobs, /if \(aborted\.remove\(id\)\) throw IOException\("Request cancelled"\)/);
     assert.match(fileJobs, /if \(readsDocument\) Thread\(job, "mindwtr-document-\$id"\)\.apply \{ isDaemon = true \}\.start\(\) else queue\.execute\(job\)/);
-    assert.equal(hostIo.match(/answers\.add\(/g).length, 4, 'the answer queue is the only way back');
+    assert.equal(hostIo.match(/answers\.add\(/g).length, 5, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
-    assert.match(hostIo, /taken = answer\.body\s+return answer\.json/);
-    assert.match(hostIo, /fun body\(\): String = \(taken \?: ""\)\.also \{ taken = null \}/);
+    const hostAnswers = core('HostAnswers.kt');
+    assert.match(hostAnswers, /held = null\s+taken = answer\.body\s+answer\s+\}/);
+    assert.match(hostAnswers, /fun body\(\): String = synchronized\(lock\) \{ if \(closed\) "" else \(taken \?: ""\)\.also \{ taken = null \} \}/);
     // The whole body or a throw: the declared length and the running size are refused past the limit, and nothing in the
     // read catches a failure (a cut, a reset, a broken gzip stream) into a short body.
     const read = hostIo.slice(hostIo.indexOf('private fun read('), hostIo.indexOf('private fun failure('));
@@ -804,7 +930,9 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.doesNotMatch(read, /catch|runCatching|getOrNull|getOrDefault|getOrElse|\?: ""|orEmpty/, 'HostIo.read swallows no IOException');
     // The only places HostIo catches: each turns the failure into the call's error answer, so fetch rejects.
     assert.doesNotMatch(hostIo, /catch \(|getOrNull|getOrDefault/);
-    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true]);
+    assert.deepEqual(hostIo.match(/runCatching \{[\s\S]*?\}\.getOrElse \{ [^\n]*/g).map((line) => /getOrElse \{ (failure\(id, call, it\)|(Answer\()?JSONObject\(\)\.put\("id", id\)\.put\("error")/.test(line)), [true, true, false]);
+    // A crypto call's failure (S4b) is its error answer too: `auth` for a tag mismatch, else the failure's own text.
+    assert.match(hostIo, /runCatching \{ cryptoReply\(id, json\) \}\.getOrElse \{ failure ->\s+val answer = JSONObject\(\)\.put\("id", id\)[\s\S]{0,400}?Answer\(answer\.toString\(\)\)\s+\}\s+\/\/[^\n]*\s+if \(reply != null\) answers\.add\(reply\)\s+wake\(\)/);
     // A file call's failure (FileJobs runs it in runCatching and delivers the Result) is its error answer.
     assert.match(fileJobs, /val result = runCatching \{[\s\S]*?compute\(\)\s*\}[\s\S]*?deliver\(result\)/);
     assert.match(hostIo, /\}\) \{ Answer\(JSONObject\(\)\.put\("id", id\)\.put\("error", it\.message \?: it\.javaClass\.simpleName\)\.toString\(\)\) \}\)/);
@@ -902,9 +1030,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
     const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
-    // Core writes no host method calls yet (reminder actions, Settings › Calendar's edits):
+    // Core writes no host method calls yet (Settings › Calendar's edits):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['completeReminderTask', 'snoozeReminder', 'setCalendarSetting', 'addCalendarFeed'];
+    const unwiredWrites = ['setCalendarSetting', 'addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
@@ -931,7 +1059,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Settings › AI (pass C1): a control's change and the screen's open (receipts of their own), a key and a base URL (never journaled).
         'setAISetting', 'openAISettings', 'setAIKey', 'setAIEndpoint', 'ingestPendingCaptures',
         // Attachments (pass A2): Add file and Add photo, the link sheet's Save, Remove (a project's written at once, receipts of their own).
-        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment'];
+        'addAttachmentFile', 'submitAttachmentLinks', 'removeAttachment',
+        // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
+        'completeReminderTask', 'snoozeReminder',
+        // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
+        'runProjectEdit'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -960,7 +1092,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const draftOnly = \(input: never, command: \(\) => Promise<Reply>\): Promise<Reply> => \(\(input as \{ owner\?: \{ kind\?: unknown \} \} \| null\)\?\.owner\?\.kind === 'task'\s*\? command\(\)\s*: Promise\.resolve\(\{ ok: false, error: \{ code: 'INVALID_INPUT', message: 'Only a task draft attachment command runs here' \} \}\)\);/);
     assert.match(source('Attachments.kt'), /if \(owner\.kind == "task"\) \{\s*sendDraft\(owner, kind,/, 'a task draft\'s commands take the draft path');
     assert.match(source('Attachments.kt'), /private fun sendDraft\([\s\S]{0,500}?runtime\.attachmentRequest\(DRAFT_REQUESTS\.getValue\(kind\)/, 'a task draft\'s commands are sent unjournaled');
-    assert.match(host, /attachmentRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = ATTACHMENT_REQUESTS\[name\];/);
+    const attachmentEntry = /attachmentRequest\(name: string, json: string\): string \{([\s\S]*?)\n    \},/.exec(host)[1];
+    assert.match(attachmentEntry, /return submit\(async \(\) => \{\s*requireSaved\(\);/);
+    assert.match(attachmentEntry, /const request = ATTACHMENT_REQUESTS\[name\];/);
+    assert(attachmentEntry.indexOf('requireSaved();') < attachmentEntry.indexOf('const request ='), 'attachment readiness precedes dispatch');
     assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
         'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
     assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(signal\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?const answer = await request\(JSON\.parse\(json\) as never, signal\);\s*if \(signal\.aborted\) throw new Error\('The AI request was cancelled'\);\s*return unwrap\(answer\);/);
@@ -982,7 +1117,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     }
     // Core's AI device binds RN's stores (host-ai.ts): the refused secret calls (an AI key is no sync commit), RN's AsyncStorage.
     assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets\) : null;/);
-    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(nativeSync\?\.attachmentsHost \? \{ attachments: nativeSync\.attachmentsHost \} : \{\}\) \}\)/);
+    assert.match(hostEntry, /const localAttachments = nativeSync \? null : createNativeLocalAttachmentsForHost\(\);/);
+    assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(attachmentsHost \? \{ attachments: attachmentsHost \} : \{\}\) \}\)/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -1069,6 +1206,19 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Review S3 4: each backend choice goes, in tap order; only the same choice still pending is dropped.
         assert.match(source('SyncSettings.kt'), /run\("selectSyncBackend", [^\n]*key = "selectSyncBackend:\$option", ordered = choices\)/);
         assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
+        // S4b: an encryption submit or decline runs with the passphrase fields core holds, so it starts only after every keystroke
+        // sent before it (the light queue); light actions (Show passphrase) keep answering while it runs.
+        assert.match(source('SyncSettings.kt'), /run\("runSyncEncryptionAction", input, light = !heavy, after = if \(heavy\) SyncSettingsModel\.light else null,\s+admit = if \(type == "submit"\) \(\{ passphrases\.admit\(action\) \}\) else null\)/);
+        assert.match(source('SyncSettings.kt'), /val result = runCatching \{\s+after\?\.submit \{\}\?\.get\(\)\s+admit\?\.let \{ check -> onMain\(check\)\?\.let \{ refusal -> throw IllegalStateException\("PASSPHRASE_REFUSED: \$refusal"\) \} \}\s+runtime\.syncCommand\(name, input\.toString\(\)\)/);
+        // Review S4b 1 (and its verification): a passphrase field never holds more than core takes (the row's maxLength), an edit
+        // core's `typed` command refused stands refused, and either blocks the submit instead of running it with the older text
+        // core kept, at the tap and again once the keystrokes before it settled. A flow change (open, cancel, retry) drops the
+        // refusals, and Abandon setup is never blocked (PassphraseFieldsTest).
+        assert.match(source('SyncSettings.kt'), /passphrases\.admit\(action\)\?\.let \{ refusal -> shell\.showToast\(null, refusal, "error"\); return \}/);
+        assert.match(source('SyncSettings.kt'), /sync\.typePassphrase\(field, text, row\.getInt\("maxLength"\), row\.getString\("tooLong"\)\)/);
+        assert.match(source('SyncSettings.kt'), /val edit = passphrases\.type\(field, text, maxLength, tooLongText\) \?: return shell\.showToast\(null, tooLongText, "error"\)/);
+        assert.match(source('SyncSettings.kt'), /failed = \{ message -> passphrases\.settled\(field, edit, message\) \}\) \{ passphrases\.settled\(field, edit, null\) \}/);
+        assert.match(source('SyncSettings.kt'), /failed\(message\.substringAfter\(": "\)\)/);
     }
     // Sync's engine work between host calls: a host-call answer wakes the idle pump, and the next timer schedules it; neither
     // runs after the host stopped or closed.
@@ -1113,13 +1263,14 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
     // Sync (plan block 1): its triggers start only after the validated load, a replay that finished (no entry owed) and the queue
     // drain (ProcessCoreHost.recovered), or once the owed journal retry went through; nothing else starts them.
-    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+    assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
     assert.equal([activity, model, owner, menuModel].join('\n').match(/syncStart\(/g).length, 1, 'one start of the triggers, in startSync');
-    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 2, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
+    assert.equal([activity, model, owner, menuModel].join('\n').match(/startSync\(app, runtime\)/g).length, 1, 'startSync only in recovered, after the drain (at once, or held for the first screen\'s content)');
     // Startup follow-up: the boot's start is held until the first screen shows its content: the Inbox's first rows (contentShown),
     // another tab's boot read, or a 3 s fallback; CoreWork's and the owed retry's start at once. One start at a time.
-    assert.match(owner, /startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},/);
-    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+\}/);
+    // The reminder alarms start with sync (pass R1), held with it.
+    assert.match(owner, /startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},/);
+    assert.match(owner, /fun startDeferredSync\(\) \{\s+deferredSync\.getAndSet\(null\)\?\.let \{ start -> syncThread\.execute \{ start\(\) \} \}\s+deferredWidgets\.getAndSet\(null\)\?\.let\(::refreshWidgets\)\s+\}/, 'the boot\'s widget publication waits with its sync start');
     assert.match(owner, /fun contentShown\(\) \{\s+startDeferredSync\(\)/);
     assert.match(owner, /private fun startSync\(app: Application, runtime: CoreHost\): Unit = synchronized\(syncLock\) \{\s+if \(syncHost != null\) return/);
     assert.match(model, /if \(screen != Screen\.Inbox\) ProcessCoreHost\.startDeferredSync\(\)\s+main\.postDelayed\(ProcessCoreHost::startDeferredSync, SYNC_FALLBACK_MS\)/);
@@ -1297,7 +1448,7 @@ assert.match(editorUi, /clickable\(enabled = !busy && !failed, role = Role\.Butt
 // state (FocusModel) with both, and a control's edit with the first; a read that sends neither keeps the flat Focus.
 assert.match(coreHost, /fun focus\(limit: Int, controls: String = "", controlEdit: String = ""\): JSONObject = callAsync\("focus", limit, controls, controlEdit\)/);
 assert.match(coreHost, /fun focusWindow\(key: String, offset: Int, limit: Int, revision: String, controls: String = ""\): JSONObject =\s*callAsync\("focusWindow", key, offset, limit, revision, controls\)/);
-assert.match(hostEntry, /focus\(limit: number, controls = '', controlEdit = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocus\(\{ limit, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\), \.\.\.\(controlEdit \? \{ controlEdit: JSON\.parse\(controlEdit\) \} : \{\}\) \}\)\);/);
+assert.match(hostEntry, /focus\(limit: number, controls = '', controlEdit = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const focus = unwrap\(contract\.getFocus\(\{ limit, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\), \.\.\.\(controlEdit \? \{ controlEdit: JSON\.parse\(controlEdit\) \} : \{\}\) \}\)\);/);
 assert.match(hostEntry, /focusWindow\(key: string, offset: number, limit: number, revision: string, controls = ''\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*return unwrap\(contract\.getFocusSectionWindow\(\{ key: key as FocusTaskSectionKey, offset, limit, revision, \.\.\.\(controls \? \{ controls: JSON\.parse\(controls\) \} : \{\}\) \}\)\);/);
 assert.equal(model.match(/runtime\.focus\(/g).length, 1);
 assert.equal(model.match(/runtime\.focusWindow\(/g).length, 1);
@@ -1359,16 +1510,17 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.set\(runtime\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
-assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\)\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)?startSync = \{ if \(deferSync\) deferredSync\.set \{ startSync\(app, runtime\) \} else startSync\(app, runtime\) \},\s+\)/);
-assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
+assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\), app\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+val start = \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+if \(deferSync\) deferredSync\.set\(start\) else start\(\)\s+\},\s+refreshWidgets = \{ refreshWidgets\(runtime\) \},\s+\)/);
+assert.match(source('StartOrder.kt'), /Drain\.Done -> \{\s+startSync\(\)\s+return true\s+\}\s+Drain\.Unswept -> \{\s+startSync\(\)\s+(?:\/\/[^\n]*\s+)*refreshWidgets\(\)\s+retryLater\(\)\s+\}\s+Drain\.Waiting -> retryLater\(\)\s+is Drain\.Failed -> \{\s+owe\(result\.message\)\s+retryLater\(\)\s+\}/);
 assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueue\(context, CoreJob\.INGEST, emptyMap\(\), ExistingWorkPolicy\.KEEP\)/, 'a retry never cancels a running drain');
 // The queue drain (RN's startup drain; CoreWork's ingest job too): after the journal replay, before any screen, entry point or
 // sync gets the host; never while a save is owed; a failed save becomes the journal's owed retry, which drains again.
 assert.match(owner, /fun queue\(app: Application\) = File\(app\.filesDir, PendingCaptureWriter\.DIRECTORY\)/, 'the queue is RN\'s writer\'s folder');
-assert.match(owner, /private fun drain\(runtime: CoreHost, queue: File\): StartOrder\.Drain \{\s+if \(failure != null\) return StartOrder\.Drain\.Waiting\s+if \(queue\.list\(\)\.isNullOrEmpty\(\)\) return StartOrder\.Drain\.Done\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/);
+assert.match(owner, /private fun drain\(runtime: CoreHost, queue: File, app: Application\): StartOrder\.Drain \{\s+if \(failure != null\) return StartOrder\.Drain\.Waiting\s+(?:\/\/[^\n]*\s+)*val unswept = runCatching \{ CheckoffStore\.sweep\(app\)\.failed > 0 \}[^\n]*\.getOrDefault\(true\)\s+if \(unswept\) runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "unswept"\)\)\s+val drained = if \(unswept\) StartOrder\.Drain\.Unswept else StartOrder\.Drain\.Done\s+when \(StartOrder\.queueEmpty\(queue\.list\(\), queue\.exists\(\)\)\) \{\s+true -> return drained\s+(?:\/\/[^\n]*\s+)*null -> \{\s+runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "unreadable"\)\)\s+return StartOrder\.Drain\.Unswept\s+\}\s+false -> Unit\s+\}\s+return try \{\s+val ingested = runtime\.ingestPendingCaptures\(UUID\.randomUUID\(\)\.toString\(\)\)/, 'a failed check-off sweep is retried, the queue still drained');
+assert.match(owner, /val ingested = [^\n]+\n[^\n]+"drained"[^\n]+\n\s+drained\n/);
 assert.match(owner, /\.put\("error", message\.substringBefore\(':'\)\)\)\s+StartOrder\.Drain\.Failed\(message\)/);
 // The runner's lines go through core's logger (logcat, and RN's diagnostics log file), their fields in context; a failure's code only.
 assert.match(owner, /runtime\.logLine\("Native Android queue drain", JSONObject\(\)\.put\("outcome", "drained"\)\.put\("ingested", ingested\)\)/);
@@ -1729,8 +1881,57 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     const aiKinds = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Attachments' writes (pass A2), sent by Attachments.kt for the editor's draft and a project's list.
     const attachmentKinds = [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand;`));
+    // Project details' writes, sent by ProjectDetails.kt: core's prepared commits.
+    const projectDetailKinds = [.../val PROJECT_DETAIL_KINDS = setOf\(([^)]*)\)/.exec(source('ProjectDetails.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds, ...projectDetailKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
+    assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
+    assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
+    // A Project details edit is the user's intent, journaled at once before anything else (CoreHost.journalAhead), then sent
+    // in order when the shell is free; core's runProjectEdit reads, prepares (again after a sync) and commits it, so a death
+    // at any step leaves the edit for the boot's replay (review PD 1, 2; WriteJournalTest, ProjectDetailsTest).
+    {
+        const details = code(source('ProjectDetails.kt'));
+        assert.match(details, /private fun edit\(projectId: String\?, kind: String, fields: JSONObject\.\(\) -> Unit\) \{[\s\S]*?journalAhead\("projectEdit", json\)[\s\S]*?writes\.add\(FailedAction\("projectEdit", requestId, json\)\)/, 'an edit is journaled before it is queued');
+        assert.doesNotMatch(details, /menuRead\("[^"]*Prepare"|commitPrepared/, 'Kotlin never prepares or commits an edit itself');
+        assert.match(coreHost, /fun journalAhead\(name: String, json: String\) \{\s*require\(name == "projectEdit"\)[\s\S]{0,160}?\.append\("menuCommand", listOf\(name, json\)\)/);
+        const journalKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/WriteJournal.kt'), 'utf8');
+        for (const fn of ['pending', 'append', 'settle']) assert.match(journalKt, new RegExp(`@Synchronized fun ${fn}\\(`), `the journal's ${fn} is synchronized`);
+    }
+    // A Details reply applies only while it answers the newest read of its kind, in the session it was read in: another
+    // project or leaving the screen closes the session; a values read started before a write ended never clears a draft
+    // (review PD 3; ProjectDetailsTest's ReplyGuard).
+    {
+        const details = code(source('ProjectDetails.kt'));
+        assert.equal((details.match(/replies\.ticket\("/g) ?? []).length, 5, 'every Details read takes a ticket');
+        assert.equal((details.match(/replies\.current\(ticket\)/g) ?? []).length, 5, 'every Details reply checks its ticket');
+        assert.match(details, /shell\.fresh\(mine, InboxViewModel\.Part\.ProjectDetails\)/);
+        assert.match(details, /fun closeOverlays\(\) \{\s*replies\.close\(\)/);
+    }
+    // Back (closeProject) and opening another project store the open project's typed title and notes first (review PD 1;
+    // ProjectDetailsTest's editsOnLeave), as RN's end of editing and blur do on close.
+    assert.match(model, /fun closeProject\(\) \{[\s\S]{0,300}?projectDetails\.follow\(null\)/, 'Back stores the typed edits');
+    assert.match(code(source('ProjectDetails.kt')), /fun follow\(id: String\?\) \{\s*if \(id == projectId\) return\s*projectId\?\.let \{ old ->\s*for \(\(kind, text\) in editsOnLeave\(/, 'leaving a project stores its edits before anything resets');
+    // RN's tag picker field (ProjectTagPickerModal): the keyboard's Done only ends editing; only + changes the tags (review PD 5).
+    const tagField = code(source('ProjectDetails.kt')).split('BasicTextField(tagDraft')[1].split('testTag("project-tag-input")')[0];
+    assert.doesNotMatch(tagField, /onDone = \{[^}]*Tag\(/, 'the tag field\'s Done changes no tag');
+    // The picker's + only adds the typed tag (core's `add` intent; dd 2026-10-04): a tag already there stays. A chip toggles.
+    const detailsKt = code(source('ProjectDetails.kt'));
+    assert.match(detailsKt, /fun addTag\(tag: String\) \{\s*setTag\(tag, present = true\)\s*\}/, 'the picker\'s + only adds');
+    assert.match(detailsKt, /edit\(projectId, "tag"\) \{ put\("tag", tag\)\.put\("present", present\) \}/);
+    assert.match(detailsKt, /testTag\("project-tag-add"\)/);
+    assert.match(detailsKt, /\.clickable\(role = Role\.Button\) \{ addTag\(tagDraft\); tagDraft = "" \}/, '+ adds the typed tag');
+    // RN's Notes Preview shows the unsaved draft (dd 2026-10-04): the preview reads core's blocks for the draft text, and
+    // switching to Preview stores nothing; leaving the field for the preview stores nothing either.
+    assert.match(detailsKt, /menuRead\("projectNotesPreview", /, 'the preview reads core\'s blocks for the draft');
+    assert.doesNotMatch(detailsKt, /projectNotesView/, 'the preview never reads the stored notes in place of the draft');
+    const previewToggles = detailsKt.match(/\{ [^{}]*(notesPreview = !notesPreview|editing = !editing)[^{}]*\}/g) ?? [];
+    assert.equal(previewToggles.length, 2, 'the inline and the full-screen Preview switches parsed');
+    for (const toggle of previewToggles) {
+        assert.doesNotMatch(toggle, /commitNotes/, 'switching to Preview stores nothing');
+    }
+    // RN's field sets autoCorrect={false} and autoCapitalize="none" (review PD 6).
+    assert.match(tagField, /KeyboardOptions\(capitalization = KeyboardCapitalization\.None, autoCorrectEnabled = false,/, 'the tag field neither corrects nor capitalizes');
     assert.match(hostEntry, new RegExp(`type AttachmentCommand = ${attachmentKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${attachmentKinds.join('|')})"`), 'the Menu tab never sends an attachment command itself');
     assert.match(hostEntry, new RegExp(`type SyncScreenCommand = ${syncKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
@@ -2314,7 +2515,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(model, /"resetChecklist" -> sendReset\(action\)/);
     // A link is core's target: a web, mail or phone link opens outside the app; a project, task, context or tag leaves the editor as
     // Close does (asking first while edits are unsaved).
-    assert.match(editorUi, /if \(target\.getString\("kind"\) == "external"\) runCatching \{ context\.startActivity\(Intent\(Intent\.ACTION_VIEW, target\.getString\("href"\)\.toUri\(\)\)\) \}\s+else if \(editor\.readOnly \|\| \(!editor\.dirty && !editsPending\)\) go\(target\)\s+else \{ linkAfterLeave = target\.toString\(\); confirmLeave = true \}/);
+    const followLink = /val follow = \{ target: JSONObject ->([\s\S]*?)\n        Unit\n    \}/.exec(editorUi)?.[1];
+    assert(followLink, 'the editor has an explicit link-follow handler');
+    assert.match(followLink, /^\s*if \(target\.getString\("kind"\) == "external"\) \{\s+val original = target\.getString\("href"\)\s+val upnote = openUpNoteLink\(context, original, ::t\) \{ outcome ->\s+anyTime\(\{ it\.logLinkHandoff\(outcome, "markdown"\) \}, \{\}\)\s+\}\s+if \(upnote == null\) runCatching \{ context\.startActivity\(Intent\(Intent\.ACTION_VIEW, original\.toUri\(\)\)\) \}\s+\}\s+else if \(editor\.readOnly \|\| \(!editor\.dirty && !editsPending\)\) go\(target\)\s+else \{ linkAfterLeave = target\.toString\(\); confirmLeave = true \}\s*$/, 'UpNote has explicit recovery; other external links retain their opener and internal navigation retains the unsaved-edit guard');
     assert.match(taskViewUi, /withLink\(LinkAnnotation\.Clickable\(target\.toString\(\), TextLinkStyles\(SpanStyle\(color = tint, textDecoration = TextDecoration\.Underline\)\)\) \{ follow\(target\) \}\)/);
     // No Kotlin policy in the new files: core's rows, options and words walked as sent; no dates.
     for (const [name, text] of Object.entries(pass10)) {
@@ -2558,7 +2761,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, rnCaptureIntent, rnAttachmentInstaller\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -2622,22 +2825,22 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
         assert.match(gradle, /if \(name == "mergeBenchmarkTraceAssets"\) "--allow-module-trace"/, 'only benchmarkTrace\'s merged assets may carry them');
     }
     // RN's shortcuts from RN's own builder: the same ids, capabilities, labels and links, on the build's scheme; Add task opens
-    // the capture popup through RN's system capture link until the widget pass brings QuickCaptureActivity.
+    // RN's quick capture dialog in the build's package, as RN's does (pass W1 brings it).
+    assert.match(gradle, /urlSchemes\.map \{ \(type, scheme\) -> "\$type=\$scheme@\$\{packages\.getValue\(type\)\}" \}/);
     const { createRequire } = await import('node:module');
     const rnShortcuts = createRequire(import.meta.url)('../../mobile/plugins/android-app-shortcuts.js').__testables;
     const { buildShortcuts } = await import('./build-shortcuts.mjs');
-    const rnXml = rnShortcuts.buildShortcutsXml('tech.dongdongbh.mindwtr');
     const ids = (xml) => [...xml.matchAll(/android:shortcutId="([^"]+)"/g)].map(([, id]) => id);
     const capabilities = (xml) => [...xml.matchAll(/<capability android:name="([^"]+)"/g)].map(([, id]) => id);
-    for (const scheme of ['mindwtr-native-dev', 'mindwtr-upgradetest', 'mindwtr']) {
-        const { xml, strings } = buildShortcuts(scheme);
+    for (const [scheme, applicationId] of [['mindwtr-native-dev', 'tech.dongdongbh.mindwtr.nativeclient.dev'], ['mindwtr-upgradetest', 'tech.dongdongbh.mindwtr.upgradetest'], ['mindwtr', 'tech.dongdongbh.mindwtr']]) {
+        const { xml, strings } = buildShortcuts(scheme, applicationId);
+        const rnXml = rnShortcuts.buildShortcutsXml(applicationId);
         assert.deepEqual(ids(xml), ['capture', 'inbox', 'focus', 'waiting', 'someday', 'projects', 'review', 'calendar', 'add_task_inbox', 'open_focus', 'open_calendar']);
         assert.deepEqual(ids(xml), ids(rnXml));
         assert.deepEqual(capabilities(xml), capabilities(rnXml));
         assert.equal(strings, rnShortcuts.SHORTCUTS_STRINGS_XML);
-        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///').replace(/android:data="mindwtr:\/\/\/capture-quick" \/>/,
-            'android:targetPackage="tech.dongdongbh.mindwtr"\n      android:targetClass="tech.dongdongbh.mindwtr.androidwidget.QuickCaptureActivity" />'), rnXml);
-        assert.doesNotMatch(xml, /QuickCaptureActivity|targetPackage/);
+        assert.equal(xml.replaceAll(`${scheme}:///`, 'mindwtr:///'), rnXml, 'RN\'s shortcuts but for the scheme');
+        assert.match(xml, new RegExp(`android:targetPackage="${applicationId.replace(/\./g, '\\.')}"\\s+android:targetClass="tech\\.dongdongbh\\.mindwtr\\.androidwidget\\.QuickCaptureActivity"`), 'Add task opens RN\'s dialog');
     }
     // Core's buildCreateNoteCapture mirrors RN's MainActivity (the name, else the Assistant's text, else EXTRA_TEXT; the note when
     // it differs): if RN's rule changes, this fails, and core's mirror must change with it.
@@ -2687,7 +2890,10 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(activity, /override fun onNewIntent\(intent: Intent\) \{\s+super\.onNewIntent\(intent\)\s+setIntent\(intent\)\s+model\.entries\.receive\(intent\)/);
     assert.match(activity, /LaunchedEffect\(entries\.head, entries\.blocked\) \{ entries\.pump\(\) \}/);
     assert.match(activity, /LaunchedEffect\(leaveApp\) \{ if \(leaveApp\) \{ leftApp\(\); moveTaskToBack\(true\) \} \}/);
-    assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, contract\.resolveNativeEntryPoint\(input\)\),$/m);
+    assert.match(hostEntry, /^\s+entryPoint: \(input\) => logEntryPoint\(input, isNotificationTap\(input\) \? notificationEntry\(input\) : contract\.resolveNativeEntryPoint\(input\)\),$/m);
+    // A notification tap (pass R1): core routes it (routeNotificationOpen); only this app's notifications carry the extra.
+    assert.match(hostEntry, /const result = contract\.routeNotificationOpen\(payload\);/);
+    assert.match(entryKt, /getStringExtra\(CoreNotifications\.EXTRA_OPEN\)\?\.let \{ data -> return@runCatching JSONObject\(\)\.put\("kind", "notification"\)\.put\("data", JSONObject\(data\)\) \}/);
     assert.match(hostEntry, /^\s+captureImport: \(input\) => contract\.planQuickCaptureImport\(input\),$/m);
     assert.ok(hostEntry.includes("releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome }"));
     // A system capture (RN's origin=system) opens the capture screen, which puts the app behind the previous one; the popup opens
@@ -2728,7 +2934,16 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     // Core's logger writes through the file port; the gate reads the store's setting, as RN's isLoggingEnabled does.
     assert.match(hostEntry, /setLogger\(\(payload\) => \{\s+consoleLogger\(payload\);\s+try \{\s+void diagnosticsLog\.append\(diagnosticsEntryFromLogPayload\(payload\), \{ force: payload\.force \}\);/);
     assert.match(hostEntry, /isEnabled: \(\) => isDiagnosticsLoggingEnabled\(useTaskStore\.getState\(\)\.settings\),\s+files: \[nativeLogFile\],/);
-    assert.match(hostEntry, /logShare\(\): string \{\s+return submit\(async \(\) => \(\{ path: await diagnosticsLog\.ensurePath\(\) \}\)\);/);
+    const shareBody = hostEntry.slice(hostEntry.indexOf('    logShare(): string {'), hostEntry.indexOf('    logClear(): string {'));
+    assert.match(shareBody, /diagnosticsLog\.serialize\(\(\) => diagnosticsLog\.ensurePath\(\)\)/);
+    const markerAt = shareBody.indexOf("logInfo('Native iOS diagnostics share requested'");
+    assert(markerAt >= 0 && markerAt < shareBody.indexOf('diagnosticsLog.serialize'), 'iOS marker queues before the final export barrier');
+    assert.match(shareBody, /__mindwtrHostPlatform === 'ios'/);
+    assert.match(shareBody, /force: true/);
+    assert(shareBody.includes("context: { releaseCheck: 'v1.3.4/ios-diagnostics', operation: 'share' }"));
+    const clearBody = hostEntry.slice(hostEntry.indexOf('    logClear(): string {'), hostEntry.indexOf('    archiveTaskSelection(json: string)'));
+    assert.doesNotMatch(clearBody, /logInfo\(|logWarn\(|diagnosticsLog\.append\(/, 'Clear cannot append a line that recreates its target');
+    assert.match(clearBody, /logClearChecked\(\): string \{\s+return submit\(\(\) => diagnosticsLog\.clearChecked\(\)\);/);
     assert.match(hostEntry, /logClear\(\): string \{\s+return submit\(async \(\) => \{\s+await diagnosticsLog\.clear\(\);/);
     // The host's diagnostic lines put their fields in the payload's context, the part the log file keeps.
     assert.doesNotMatch(hostEntry, /\bextra: \{|, extra \}/);
@@ -2967,13 +3182,19 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 // Pass B2 (E2 native): CoreWork, the queue's ports, RN's capture intent and context automation receivers under RN's class names,
 // RN's capture intent Kotlin compiled as it is, and GTD › Capture's automation card.
 {
-    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // The main manifest and the debug build's widget overlay (RN's plugins' entries, scripts/build-widgets.mjs; pass W1).
+    const { buildManifest } = await import('./build-widgets.mjs');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
     const gradle = readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8');
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
     const rnWidget = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
     const nativeKt = (path) => readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr', path), 'utf8');
-    // Exported: RN's activity alias and RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), nothing else.
+    const widgetKt = (name) => readFileSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    // Exported: RN's activity alias, RN's two automation receivers (plugins/android-widget.js, android-manifest-fixes.js), the
+    // reminders' reschedule receiver in place of RN's exported AlarmBootReceiver (patch-alarm-notification-gradle.js), and RN's
+    // widget components (pass W1's block lists them), nothing else.
     const exported = [...manifest.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(exported, ['${applicationId}.MainActivity', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+    assert.deepEqual(exported.filter((name) => !/Widget|TasksWidget|CaptureTileService/.test(name)), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
         'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver'], 'only RN\'s exported components');
     const receiver = (name) => manifest.match(new RegExp(`<receiver\\s+android:name="${name.replace(/\./g, '\\.')}"[\\s\\S]*?</receiver>`))?.[0] ?? assert.fail(`no ${name}`);
     const rnPlugin = readFileSync(resolve(app, '../mobile/plugins/android-widget.js'), 'utf8');
@@ -2992,16 +3213,16 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(contextFilters[0], /<data /);
     assert.match(contextFilters[1], /<data android:scheme="mindwtr" \/>/);
     assert.match(manifest, /<uses-permission android:name="android\.permission\.POST_NOTIFICATIONS" \/>/);
-    // RN's capture intent Kotlin compiled as it is, with RN's tests; the receiver is RN's but for its lines marked `native`.
-    for (const name of ['CaptureIntentProcessor', 'CaptureIntentConfigStore', 'PendingCaptureWriter', 'QuickCaptureAudioRecorder']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt is compiled in`);
-    for (const name of ['CaptureIntentProcessorTest', 'CaptureIntentConfigStoreTest']) assert(gradle.includes(`"${name}"`), `RN's ${name}.kt runs`);
-    assert.doesNotMatch(gradle.slice(gradle.indexOf('val rnCaptureIntent')), /"CaptureIntentReceiver"/, 'RN\'s receiver is replaced, not compiled in');
-    const nativeReceiver = nativeKt('androidwidget/CaptureIntentReceiver.kt');
-    assert.equal(nativeReceiver.split('\n').filter((line) => !line.endsWith('// native')).join('\n').replace(/\n \*\n \* Native:[\s\S]*?(?=\n \*\/)/, ''),
-        rnWidget('CaptureIntentReceiver.kt'), 'the capture intent receiver is RN\'s but for its native lines');
-    assert.match(nativeReceiver, /if \(queued && ordered\) pendingResult\.resultCode = Activity\.RESULT_OK\n[^\n]*\/\/ native\n\s+if \(queued\) runCatching \{ CoreWork\.enqueue\(appContext, CoreJob\.INGEST\) \} \/\/ native\n/, 'a queued capture starts CoreWork after the sender is told');
-    const undo = (text) => /const val UNDO_WINDOW_MS = ([^\n]+)/.exec(text)[1];
-    assert.equal(undo(nativeKt('androidwidget/CheckoffStore.kt')), undo(rnWidget('CheckoffStore.kt')), 'the writer\'s undo window is RN\'s');
+    // RN's capture intent Kotlin, its receiver included, compiled as it is in the widget module (pass W1), with RN's tests. No
+    // native copy of an RN file: a queued capture wakes CoreWork through the headless task's stand-in, which watches the queue.
+    const allowedExclusions = /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/;
+    assert.match(widgetGradle, allowedExclusions, 'only the Expo bridge and the headless task stay out');
+    assert.deepEqual(readdirSync(resolve(app, 'android/widget/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), ['CaptureSyncHeadlessService.kt'], 'the module\'s one native file is the headless task\'s stand-in');
+    const shim = widgetKt('CaptureSyncHeadlessService.kt');
+    assert.match(shim, /object : FileObserver\(queue\.path, FileObserver\.MOVED_TO\)/, 'the stand-in watches RN\'s queue folder for a published item');
+    assert.match(shim, /CaptureIntentReceiver\.queuedHook = queued\?\.let \{ \{ context: Context -> start\(context\) \} \}/, 'RN\'s receiver waits for the stored job before its broadcast finishes');
+    assert.match(shim, /internal fun queueEvent\(context: Context, event: Int, path: String\?\) \{\s+if \(event and FileObserver\.MOVED_TO != 0 && path\?\.endsWith\("\.json"\) == true\) start\(context\)\s+\}/);
+    assert(!existsSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/androidwidget')), 'RN\'s CheckoffStore.kt is compiled in; no native copy is left');
     // The context receiver reads the intent as RN's does; where RN starts its headless task, CoreWork asks core.
     const rnContext = readFileSync(resolve(app, '../mobile/modules/context-automation/android/src/main/java/tech/dongdongbh/mindwtr/contextautomation/ContextAutomationReceiver.kt'), 'utf8');
     const nativeContext = nativeKt('contextautomation/ContextAutomationReceiver.kt');
@@ -3031,7 +3252,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const coreWork = source('CoreWork.kt');
     assert.match(coreWork, /val delayMs = debugProperty\("core_work_delay_ms"\)\.toLongOrNull\(\) \?: 0L/);
     assert.match(coreWork, /else if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S\) setExpedited\(OutOfQuotaPolicy\.RUN_AS_NON_EXPEDITED_WORK_REQUEST\)/);
-    assert.match(coreWork, /fun enqueue\(context: Context, job: String, input: Map<String, String> = emptyMap\(\)\) = enqueue\(context, job, input, ExistingWorkPolicy\.REPLACE\)/, 'a new drain request never waits behind a back-off');
+    assert.match(coreWork, /fun enqueue\(context: Context, job: String, input: Map<String, String> = emptyMap\(\)\): Operation = enqueue\(context, job, input, ExistingWorkPolicy\.REPLACE\)/, 'a new drain request never waits behind a back-off');
     assert.match(coreWork, /work\.enqueueUniqueWork\(INGEST_WORK, policy, request\)/);
     assert.match(coreWork, /val host = ProcessCoreHost\.get\(app, language\)/, 'the job runs on this process\'s one host');
     // The queue's paths: RN's writer's folder is core's.
@@ -3050,11 +3271,195 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     }
 }
 
+// Pass W1 (widgets native): the engine's widget publisher on real core. The payload Kotlin receives is core's own Android
+// publication for the store, the device's inputs and the device language; an unchanged payload is not sent again; nothing is
+// sent before the boot's validated load; the Focus screen's filter reaches the widget with core's null sortOrder as RN's absent one.
+{
+    const harness = await build({
+        stdin: { contents: `
+            import { createWidgetPublisher } from './bundle/host-widgets.ts';
+            import { buildAndroidWidgetPublication, getFocusWidgetFilter } from '@mindwtr/core';
+            // The store from its own file: core is side-effect free and lazily initializes the modules its own dynamic imports
+            // reach (store.ts among them), so an entry that reaches the store only through index.ts gets no init call from esbuild.
+            import { useTaskStore } from '../../packages/core/src/store';
+            export { buildAndroidWidgetPublication, getFocusWidgetFilter, useTaskStore, createWidgetPublisher };
+        `, resolveDir: app, loader: 'ts' },
+        bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent',
+    });
+    const core = await import(`data:text/javascript;base64,${Buffer.from(harness.outputFiles[0].text).toString('base64')}`);
+    const now = new Date().toISOString();
+    const task = (id, title, extra = {}) => ({ id, title, status: 'next', tags: [], contexts: [], createdAt: now, updatedAt: now, ...extra });
+    const data = {
+        tasks: [task('a', 'Alpha', { contexts: ['@work'], dueDate: now }), task('b', 'Beta'), task('c', 'Gamma', { status: 'inbox' })],
+        projects: [], sections: [], areas: [], settings: { language: 'system' },
+    };
+    core.useTaskStore.setState({ _allTasks: data.tasks, _allProjects: [], _allSections: [], _allAreas: [], settings: data.settings, lastDataChangeAt: 1 });
+    const inputs = { systemColorScheme: 'dark', systemLocale: 'zh-CN', listSelections: ['inbox', 'filter:missing'] };
+    let ready = false;
+    const published = [];
+    const timers = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const pendingTimers = [];
+    let active = false;
+    globalThis.setTimeout = (fn, ms) => { timers.push(ms); pendingTimers.push(fn); return realSetTimeout(() => {}, 0); };
+    const fireTimer = () => pendingTimers.pop()();
+    try {
+        const widgets = core.createWidgetPublisher({ ready: () => ready, inputs: () => inputs, publish: (text) => published.push(text), storedLanguage: () => null, active: () => active });
+        assert.equal(widgets.publish(), false, 'nothing is published before the validated load');
+        ready = true;
+        assert.equal(widgets.publish(), true);
+        // The device language (zh-CN) wins over 'system', as RN's resolveWidgetLanguage(saved, setting, getSystemDefaultLanguage()).
+        const expected = (filter) => JSON.stringify(core.buildAndroidWidgetPublication(data, 'zh', { ...inputs, focusFilter: filter }));
+        assert.equal(published[0], expected(core.getFocusWidgetFilter()), 'the payload is core\'s publication with the device\'s inputs');
+        assert.equal(widgets.publish(), false, 'an unchanged payload is not sent again');
+        assert.equal(published.length, 1);
+        // Kotlin stores and draws off the engine thread; one that failed (or never finished) is sent again, the same payload too.
+        inputs.stale = true;
+        assert.equal(widgets.publish(), true, 'a publication that did not reach the widgets is sent again');
+        assert.equal(published[1], published[0]);
+        delete inputs.stale;
+        assert.equal(widgets.publish(), false, 'once it reached them, it is not sent again');
+        published.pop();
+        widgets.focusFilter({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: null });
+        assert.deepEqual(timers, [1000], 'a new Focus filter republishes');
+        assert.deepEqual(Object.entries(core.getFocusWidgetFilter()), [['criteria', { contexts: ['@work'] }], ['sortBy', 'due'], ['sortOrder', undefined]], 'core\'s null sortOrder is RN\'s absent one');
+        widgets.focusFilter({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: null });
+        assert.equal(timers.length, 1, 'the same filter republishes nothing');
+        assert.equal(widgets.publish(), true);
+        assert.equal(published[1], expected({ criteria: { contexts: ['@work'] }, sortBy: 'due', sortOrder: undefined }));
+        assert.notEqual(published[1], published[0], 'the widget shows the filtered Focus list');
+        widgets.focusFilter(undefined);
+        core.useTaskStore.setState({ lastDataChangeAt: 2 });
+        assert.deepEqual(timers, [1000, 1000], 'a store change republishes after the delay');
+        // RN's storage widget refresh (storage-adapter.ts, #766: a redraw costs seconds): while the app is in front, a store change
+        // republishes at most once per five minutes; leaving the app publishes at once (Kotlin's background refresh). The Focus
+        // screen's filter and the Focus start-date setting publish at once, as RN's direct calls do. Away from the front: one second.
+        active = true;
+        const sent = published.length;
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' })], lastDataChangeAt: 3 });
+        fireTimer();
+        assert.equal(published.length, sent + 1, 'the waiting store change published');
+        core.useTaskStore.setState({ _allTasks: [...data.tasks, task('d', 'Delta', { status: 'inbox' }), task('e', 'Epsilon', { status: 'inbox' })], lastDataChangeAt: 4 });
+        assert(timers.at(-1) > 299_000 && timers.at(-1) <= 300_000, `in front, the next store change waits out five minutes (${timers.at(-1)} ms)`);
+        widgets.focusFilter({ criteria: { contexts: ['@home'] }, sortBy: 'due', sortOrder: null });
+        assert.equal(timers.at(-1), 1000, 'a new Focus filter publishes at once, the waiting change with it');
+        fireTimer();
+        assert.equal(published.length, sent + 2);
+        core.useTaskStore.setState({ settings: { ...data.settings, gtd: { focusIncludeStartDates: false } }, lastDataChangeAt: 5 });
+        assert.equal(timers.at(-1), 1000, 'the Focus start-date setting publishes at once');
+        fireTimer();
+        active = false;
+        core.useTaskStore.setState({ _allTasks: data.tasks, lastDataChangeAt: 6 });
+        assert.equal(timers.at(-1), 1000, 'away from the front, a store change publishes after one second');
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+    // RN's widget components from RN's plugins (build-widgets.mjs): the four providers with their info XML, the dialog, the
+    // configure, tap and peek activities, the list service, the capture receiver and the tile, under RN's names, in the app's one
+    // process. Exported: exactly RN's, plus the debug build's two entries for the device check.
+    const { buildManifest, buildTileSource, TILE_PACKAGE } = await import('./build-widgets.mjs');
+    // The debug build's entries: one more manifest of each variant, so the debug build type's own manifest stays.
+    const overlay = buildManifest('tech.dongdongbh.mindwtr.nativeclient.dev', 'Mindwtr Native Dev');
+    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /onVariants \{ variant ->\s+variant\.sources\.manifests\?\.addStaticManifestFile\(layout\.buildDirectory\.file\("generated\/widgets\/\$\{variant\.buildType\}\/AndroidManifest\.xml"\)/);
+    const merged = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8') + overlay;
+    const exportedNames = (text) => [...text.matchAll(/<(?:activity-alias|activity|receiver|service|provider)\s[^>]*?android:name="([^"]+)"[^>]*?android:exported="true"/g)].map((m) => m[1]).sort();
+    assert.deepEqual(exportedNames(merged), ['${applicationId}.MainActivity', '.ReminderRescheduleReceiver', 'tech.dongdongbh.mindwtr.androidwidget.CaptureIntentReceiver',
+        'tech.dongdongbh.mindwtr.androidwidget.CompactWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.QuickCaptureWidgetProvider',
+        'tech.dongdongbh.mindwtr.androidwidget.TasksWidgetProvider', 'tech.dongdongbh.mindwtr.androidwidget.WidgetConfigureActivity',
+        'tech.dongdongbh.mindwtr.contextautomation.ContextAutomationReceiver', 'tech.dongdongbh.mindwtr.nativeclient.dev.widget.TasksWidget',
+        'tech.dongdongbh.mindwtr.quicksettings.CaptureTileService'], 'only RN\'s exported components');
+    const debugManifest = readFileSync(resolve(app, 'android/app/src/debug/AndroidManifest.xml'), 'utf8');
+    assert.deepEqual(exportedNames(debugManifest), ['${applicationId}.DebugQuickCapture', 'tech.dongdongbh.mindwtr.pilot.WidgetHostActivity'], 'the debug build adds only the check\'s two entries');
+    assert(!existsSync(resolve(app, 'android/app/src/release')) && !existsSync(resolve(app, 'android/app/src/upgradetest')), 'no other build type adds an entry');
+    assert.doesNotMatch(overlay, /android:process=/);
+    for (const info of ['mindwtr_tasks_widget_info', 'mindwtr_compact_widget_info', 'mindwtr_quick_capture_widget_info', 'mindwtr_legacy_tasks_widget_info']) {
+        assert.match(overlay, new RegExp(`android:resource="@xml/${info}"`), `${info} keeps RN's name`);
+    }
+    assert.equal(TILE_PACKAGE, 'tech.dongdongbh.mindwtr', 'the tile keeps RN\'s release class name');
+    assert.equal(buildTileSource().replace('import tech.dongdongbh.mindwtr.pilot.R\n', 'import tech.dongdongbh.mindwtr.R\n'),
+        (await import('node:module')).createRequire(import.meta.url)('../../mobile/plugins/android-quick-settings-tile.js').__testables.buildCaptureTileServiceSource(TILE_PACKAGE), 'the tile is RN\'s but for its R');
+    // RN's check-off request codes and sweep action stay in RN's files, which compile as they are.
+    const rnWidgetKt = (name) => readFileSync(resolve(app, '../mobile/modules/android-widget/android/src/main/java/tech/dongdongbh/mindwtr/androidwidget', name), 'utf8');
+    assert.match(rnWidgetKt('WidgetRenderer.kt'), /REQUEST_CAPTURE = 4612[\s\S]*REQUEST_ROW = 4613/);
+    assert.match(rnWidgetKt('CheckoffStore.kt'), /ACTION_SWEEP = "tech\.dongdongbh\.mindwtr\.androidwidget\.CHECKOFF_SWEEP"[\s\S]*REQUEST_SWEEP = 4614/);
+    const widgetGradle = readFileSync(resolve(app, 'android/widget/build.gradle.kts'), 'utf8');
+    assert.match(widgetGradle, /namespace = "tech\.dongdongbh\.mindwtr\.androidwidget"/, 'RN\'s R and namespace');
+    assert.match(widgetGradle, /val rnExcluded = listOf\("AndroidWidgetModule", "CaptureSyncHeadlessService"\)/, 'only the Expo bridge and the headless task stay out');
+    assert.equal(realpathSync(resolve(app, 'android/widget/src/main/res')), realpathSync(resolve(app, '../mobile/modules/android-widget/android/src/main/res')), 'the module\'s resources are RN\'s');
+    // The widget module's hook is CoreWork's ingest job, set before any component runs.
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/MindwtrApplication.kt'), 'utf8'),
+        /CaptureSyncHeadlessService\.install\(this\) \{ context -> CoreWork\.enqueue\(context, CoreJob\.INGEST\)\.result\.get\(DURABLE_WAIT_SECONDS, TimeUnit\.SECONDS\) \}/, 'the wake returns once WorkManager stored the job');
+    assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android:name="\.MindwtrApplication"/);
+    // The Android bridge's two calls are guarded in CoreHost and published off the engine thread (HostWidgets).
+    const coreHostKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/CoreHost.kt'), 'utf8');
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetInputs", guarded \{ _ -> widgets\.inputs\(\) \}\)/);
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetPublish", guarded \{ args -> widgets\.publish\(args\[0\] as String\); null \}\)/);
+    assert.match(coreHostKt, /bridge\.setProperty\("widgetAppState", guarded \{ _ -> widgets\.appState\(\) \}\)/, 'the publisher reads whether the app is in front');
+    // A boot publishes once it finished (its load, replay and drain), whatever the store's own changes did meanwhile: one that
+    // came before the validated load was not sent. It waits with the boot's sync start for the first screen's content (startup
+    // pass). Resume publishes through the same call, off the engine's callers.
+    const ownerKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/ProcessCoreHost.kt'), 'utf8');
+    assert.match(ownerKt, /private fun refreshWidgets\(runtime: CoreHost\) = widgetThread\.execute \{\s+runCatching \{ runtime\.refreshWidgets\(\) \}\.onFailure \{ Log\.w\(CoreHost\.TAG, "Native Android widget refresh failed", it\) \}\s+\}/);
+    // Coming to the front and leaving it both publish (RN's resume refresh and its flush on leaving).
+    assert.match(ownerKt, /if \(state == appState\) return\s+appState = state\s+(?:\/\/[^\n]*\s+)*boot\?\.takeIf \{ it\.isDone \}\?\.let \{ task -> runCatching \{ task\.get\(\) \}\.getOrNull\(\)\?\.let\(::refreshWidgets\) \}/);
+    // Kotlin says when a publication did not reach the widgets (its store or redraw failed), so the publisher sends it again.
+    const hostWidgetsKt = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/HostWidgets.kt'), 'utf8');
+    assert.match(hostWidgetsKt, /\.put\("stale", stale\)/);
+    assert.match(hostWidgetsKt, /check\(WidgetPayloadStore\.write\(app, payload\)\) \{ "[^"]+" \}/, 'a payload that did not reach the disk keeps the publication stale');
+    assert.match(hostWidgetsKt, /\}\.onSuccess \{ stale = false \}\.onFailure \{\s+stale = true/);
+    // The upgrade check allows the native app's one other file write only as RN's payload store: before, no file or exactly RN's
+    // one `payload` key; after, exactly that key. Any other key added, changed type or removed fails.
+    const { isRnPayloadPrefsWrite, widgetPrefs } = await import('./widget-payload.mjs');
+    const prefs = (...entries) => widgetPrefs(`<map>${entries.join('')}</map>`);
+    const payloadEntry = '<string name="payload">{}</string>';
+    assert.equal(isRnPayloadPrefsWrite(prefs(), prefs(payloadEntry)), true, 'no file before, RN\'s payload after');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry)), true, 'RN\'s payload before and after');
+    assert.equal(isRnPayloadPrefsWrite(prefs('<string name="other">x</string>'), prefs(payloadEntry)), false, 'another key deleted and the payload added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs(payloadEntry, '<int name="other" value="1" />')), false, 'another key added fails');
+    assert.equal(isRnPayloadPrefsWrite(prefs(payloadEntry), prefs()), false, 'the payload removed fails');
+    console.log('Widgets: core\'s Android publication from the engine with the device\'s inputs and language, sent once per change, after the validated load, with the Focus screen\'s filter');
+}
+
 const fakeCore = `
+import { logInfo as realLogInfo, setLogger as setRealLogger } from ${JSON.stringify(resolve(app, '../../packages/core/src/logger.ts'))};
 export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
 export { canSaveTaskListTag } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-list-bulk-actions.ts'))};
 export { formatListItemCount } from ${JSON.stringify(resolve(app, '../../packages/core/src/list-count.ts'))};
-export function setLogger(logger) { globalThis.coreLogger = logger; }
+export { getBulkMoveStatusOptions } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-list-bulk-actions.ts'))};
+export { formatI18nTemplate } from ${JSON.stringify(resolve(app, '../../packages/core/src/i18n/index.ts'))};
+// These service stand-ins test bridge dispatch/admission, not import or receipt policy.
+// Actual shared policy and SQLite receipts have their own core and Swift/JSC suites.
+export function inspectNativeBackupDocument(text, metadata, t, format = 'json') {
+  globalThis.backupInputs.push(JSON.stringify(['inspect', text, metadata, format]));
+  return { valid: true, title: t('settings.mergeBackup'),
+    summary: t('settings.backupMobile.backupPreviewCounts', { taskCount: 2, projectCount: 1 }),
+    confirmLabel: t('settings.mergeBackupAction'), cancelLabel: t('common.cancel'),
+    errorTitle: t('settings.backupMobile.invalidBackup'), errorMessage: '' };
+}
+export async function prepareNativeBackupDocument(adapter, input) {
+  globalThis.backupInputs.push(JSON.stringify(['prepare', adapter === globalThis.adapter, input]));
+  if (globalThis.backupPrepareHold) await globalThis.backupPrepareHold;
+  return globalThis.backupPrepared;
+}
+export async function commitNativeBackupDocument(adapter, reference, planJSON, snapshotName) {
+  globalThis.backupInputs.push(JSON.stringify(['commit', adapter === globalThis.adapter, reference, planJSON, snapshotName]));
+  return globalThis.backupReply;
+}
+export async function readNativeBackupDocumentOutcome(adapter, reference, planJSON, snapshotName) {
+  globalThis.backupInputs.push(JSON.stringify(['outcome', adapter === globalThis.adapter, reference, planJSON, snapshotName]));
+  return globalThis.backupOutcome;
+}
+export function buildNativeBackupDocumentResult(reply, t) {
+  globalThis.backupInputs.push(JSON.stringify(['result', reply]));
+  return { title: t('settings.mergeBackup'), message: t('settings.mergeBackupSummary', { addedCount: reply.added, updatedCount: reply.updated }),
+    undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+}
+export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName, t) {
+  globalThis.backupInputs.push(JSON.stringify(['restoreModel', snapshotName]));
+  return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName }),
+    confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
+}
+export function setLogger(logger) { globalThis.coreLogger = logger; setRealLogger(logger); }
 export function consoleLogger() {}
 export class SqliteAdapter {
   async ensureSchema() { globalThis.events.push('schema'); }
@@ -3107,11 +3512,16 @@ export function getGeneralSettingsDeviceWrites(edit) { return edit.type === 'lan
 export const PENDING_CAPTURES_DIRECTORY = 'pending-captures';
 export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-captures:last-applied:v1';
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
+export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
+export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
+export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
+export function isWorkspaceTransitionActive() { return globalThis.workspaceTransition === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
-export function createNativeHostContract() {
+export function createNativeHostContract(bindings = {}) {
+  globalThis.contractBindings = bindings;
   return {
     async activate() {
       globalThis.events.push('activate');
@@ -3143,8 +3553,13 @@ export function createNativeHostContract() {
     },
     getTaskView(input) {
       globalThis.editorInputs.push(JSON.stringify(['view', input]));
-      return { ok: true, value: { version: 1, id: input.id, readOnly: false, rows: [], checklistBase: [{ id: 'c', title: 'Milk', isCompleted: true }] } };
+      if (globalThis.localTaskViewFailure) return globalThis.localTaskViewFailure;
+      return { ok: true, value: { version: 1, id: input.id, readOnly: globalThis.localTaskReadOnly === true, rows: [], checklistBase: [{ id: 'c', title: 'Milk', isCompleted: true }] } };
     },
+    async addAttachmentFile(input) { globalThis.attachmentInputs.push(['draftAddFile', input]); return globalThis.attachmentReply; },
+    async removeAttachment(input) { globalThis.attachmentInputs.push(['draftRemove', input]); return globalThis.attachmentReply; },
+    async openAttachment(input) { globalThis.attachmentInputs.push(['openAttachment', input]); return globalThis.attachmentReply; },
+    async settleTaskDraftAttachments(input) { globalThis.attachmentInputs.push(['settleTaskDraftAttachments', input]); return globalThis.attachmentReply; },
     editTaskChecklist(input) {
       globalThis.editorInputs.push(JSON.stringify(['checklist', input]));
       return { ok: true, value: { draft: input.draft, checklist: input.checklist, changed: false, focusId: null, field: { items: [] } } };
@@ -3175,8 +3590,45 @@ export function createNativeHostContract() {
       return { ok: true, value: { language: input.storedLanguage ?? 'en' } };
     },
     getStrings(input) {
-      globalThis.languageInputs.push(JSON.stringify(input));
-      return { ok: true, value: { language: 'zh', strings: { 'tab.inbox': '收集箱' }, missing: [] } };
+        globalThis.languageInputs.push(JSON.stringify(input));
+        return { ok: true, value: { language: 'zh', strings: Object.fromEntries(input.keys.map((key) =>
+          [key, key === 'tab.inbox' ? '收集箱' : globalThis.backupStrings[key] ?? key])), missing: [] } };
+    },
+    getDataSettings() {
+        globalThis.backupReadinessChecks++;
+        return globalThis.backupReadinessResult;
+    },
+    async prepareReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedReferenceTasksAddTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async referenceTasksAddTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async prepareReferenceTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagPrepare', input]));
+      return { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } };
+    },
+    validatePreparedReferenceTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagValidate', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async commitPreparedReferenceTasksRemoveTag(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagCommit', input]));
+      return { ok: true, value: input.prepared.result };
+    },
+    async referenceTasksRemoveTagOutcome(input) {
+      globalThis.menuInputs.push(JSON.stringify(['referenceRemoveTagOutcome', input]));
+      return { ok: true, value: input.prepared.result };
     },
     getProjects() {
       globalThis.projectInputs.push('projects');
@@ -3265,16 +3717,53 @@ export const useTaskStore = { getState: () => ({
   _allProjects: [], _allSections: [], _allAreas: [], _allPeople: [],
   persistenceFailure: globalThis.persistenceFailure,
 }) };
-export function logInfo() { throw new Error('diagnostic sink failed'); }
+export function logInfo(message, meta) {
+  if (globalThis.__mindwtrHostPlatform === 'ios') return realLogInfo(message, meta);
+  throw new Error('diagnostic sink failed');
+}
 export function logWarn() { throw new Error('diagnostic sink failed'); }
+// The durable iOS draft owner is exercised by the actual-core Swift host tests.
+// Boot fixtures must never invoke its private projection helpers.
+export function validateNativeAttachmentDraftBegin() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftLineage() { throw new Error('attachment draft owner unbound'); }
+export function prepareNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftBeginV2() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftLineageV2() { throw new Error('attachment draft owner unbound'); }
+export function prepareNativeAttachmentDraftAddV2() { throw new Error('attachment draft owner unbound'); }
+export function completeNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
+// Only the explicit iOS local-capability fixture may construct these. Backends
+// and sync triggers retain the throwing stand-ins below.
+export function createMobileAttachmentFiles(host) {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  globalThis.localFilePorts = host;
+  return { persistAttachmentLocally: async (attachment) => attachment, deleteManagedAttachmentFile: async () => false };
+}
+export function createMobileAttachmentInstaller() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  return { installAttachmentFileGeneration: async () => { throw new Error('no remote installer call'); } };
+}
+export function createMobileAttachmentCommon() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  return {};
+}
+export function setSha256HexProvider() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  globalThis.localShaInstallCount++;
+}
 `;
-// host-sync.ts's core imports: bound only on a host with the key-value bridge, which the stand-in bridge below lacks, so
-// they are bundled and never run here. Each one the fake does not define throws if anything calls it.
-// host-attachments.ts's too: host-sync.ts binds them on the same host only.
-const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8');
-const syncOnly = [...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1]))
+// host-sync.ts's and host-reminders.ts's core imports: bound only on a host with the key-value or the alarm bridges, which the
+// stand-in bridge below lacks, so they are bundled and never run here. Each one the fake does not define throws if anything calls it.
+// host-attachments.ts's too: host-sync.ts binds them on the same host only. host-widgets.ts's are bound only on a host with RN's
+// widget module (Android), which the stand-in bridge lacks too.
+const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8')
+    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-widgets.ts'), 'utf8');
+const syncOnly = [...new Set([...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1])))]
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');
+// S4b final pass: core's partly-encrypted rule runs only when the host gives the sync service the location probe; without it a
+// device with encryption off would upload plain attachments beside ciphertext. The card's "Check this location again" needs recheck.
+assert(/probeLocationCiphertext: \(\) => transitions\.probeSyncLocationCiphertext\(\),/.test(hostSyncTs), 'the native sync service asks whether the location holds ciphertext');
+assert(/recheck: \(\) => transitions\.recheckPartlyEncryptedLocation\(\),/.test(hostSyncTs), 'the native encryption card rechecks a partly encrypted location');
 const fakeCoreWithSync = `${fakeCore}\n${syncOnly.map((name) => `export const ${name} = () => { throw new Error('${name}: sync is not bound in the gates'); };`).join('\n')}\n`;
 const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
@@ -3283,10 +3772,11 @@ const built = await build({
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
-const makeState = (taskCount, fakeDataSequence = []) => {
+const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
+        __mindwtrHostPlatform: hostPlatform,
         events: [], planInputs: [], plan: null, sqliteHasData: true, saveError: null, afterSave: null, lastLoaded: null, commitResult: null,
         createCount: 0, completeCount: 0, persistenceFailure: null, captureInputs: [],
         snapshotResult: { ok: true, value: { fileName: 'data.2026-09-24T10-00-00.000.snapshot.json', contents: '{}' } }, editorInputs: [], updateInputs: [], focusInputs: [],
@@ -3295,6 +3785,15 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         languageInputs: [], projectInputs: [], settings: undefined, persistenceStatus: null, aiInputs: [],
         settingsReadFailure: false, afterLanguage: null, newInputs: [], menuInputs: [],
         fileCalls: [], ingestInputs: [], queueFiles: null, kv: {}, deleteResult: null, sandbox: false,
+        workspaceTransition: false, backupInputs: [], backupReadinessChecks: 0,
+        backupReadinessResult: { ok: true, value: { version: 1 } }, backupPrepareHold: null,
+        backupPrepared: { planJSON: '{"frozen":true}', recoveryJSON: '{"before":true}' },
+        backupReply: { version: 1, operation: 'merge', snapshotName: 'data.2026-10-04T12-00-00.000.snapshot.json', added: 2, updated: 1 },
+        backupOutcome: null,
+        backupStrings: { 'settings.mergeBackup': '合并备份',
+          'settings.backupMobile.backupPreviewCounts': '{{taskCount}} tasks / {{projectCount}} projects',
+          'settings.mergeBackupSummary': '{{addedCount}} added / {{updatedCount}} updated',
+          'settings.undoImportConfirm': 'Restore {{snapshotName}}; later edits are rolled back' },
         menuReadResult: { ok: false, error: { code: 'STALE_REVISION', message: 'Someday changed; restart paging from offset zero' } },
         menuCommandResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         taskFocusResult: { ok: true, value: { blocked: 'Max 5 focus items.', blockedTitle: 'Focus' } },
@@ -3304,6 +3803,8 @@ const makeState = (taskCount, fakeDataSequence = []) => {
         saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
         inboxCommitResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         logText: null, logOps: [], logFailure: null,
+        localAttachmentTest: false, localShaInstallCount: 0, attachmentInputs: [],
+        attachmentReply: { ok: true, value: { kind: 'saved', ids: [], attachments: [] } },
         __mindwtrNative: {
             sqlAll(sql) {
                 if (sql === 'SELECT data FROM settings WHERE id = 1') {
@@ -3327,14 +3828,15 @@ const makeState = (taskCount, fakeDataSequence = []) => {
                 state.logOps.push(operation);
                 if (state.logFailure) return `!MindwtrNativeError:${state.logFailure}`;
                 switch (operation) {
-                    case 'path': return 'files/logs/mindwtr.log';
+                    case 'path': return state.logUnavailable ? '' : 'files/logs/mindwtr.log';
                     case 'ensure': state.logText ??= ''; return 'files/logs/mindwtr.log';
                     case 'exists': return state.logText === null ? '' : '1';
+                    case 'isAbsent': return state.logAbsentError ? '!MindwtrNativeError:absence unknown' : state.logText === null ? '1' : '';
                     case 'read': return state.logText;
                     case 'size': return String(Buffer.byteLength(state.logText ?? ''));
                     case 'append': state.logText += text; return '';
                     case 'write': state.logText = text; return '';
-                    case 'delete': { const had = state.logText !== null; state.logText = null; return had ? '1' : ''; }
+                    case 'delete': { if (state.logDeleteRefused) return ''; const had = state.logText !== null; state.logText = null; return had ? '1' : ''; }
                     default: throw new Error(`unknown log operation ${operation}`);
                 }
             },
@@ -3346,6 +3848,7 @@ const makeState = (taskCount, fakeDataSequence = []) => {
             kvSet(key, value) { state.fileCalls.push(`kvSet ${key} ${value}`); state.kv[key] = value; return null; },
         },
     };
+    configure(state);
     vm.runInNewContext(built.outputFiles[0].text, state);
     return state;
 };
@@ -3353,6 +3856,69 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Production host-entry selects independent local attachment policy only for
+// complete iOS file capabilities. No kvMultiGet, sync settings, AI or backend
+// constructor is supplied; readiness and diagnostic acknowledgments are real.
+{
+    const configureLocal = (state) => {
+        state.localAttachmentTest = true;
+        for (const name of ['fileCall', 'installerCall', 'fileAbort', 'fileDeleteNow', 'ioNext', 'ioBody']) state.__mindwtrNative[name] = () => '';
+        state.__mindwtrNative.fileDirectories = () => JSON.stringify({ document: 'file:///library/documents/', cache: 'file:///library/cache/' });
+        state.__mindwtrFileCall = async () => null;
+        state.__mindwtrInstallerCall = async () => null;
+    };
+    const local = makeState(0, [], 'ios', configureLocal);
+    assert.deepEqual(Object.keys(local.contractBindings), ['attachments'], 'local capability enables neither Sync nor AI');
+    assert.equal(local.localShaInstallCount, 1, 'successful local construction installs native SHA once');
+    assert.equal((await poll(local, local.MindwtrHost.boot())).ok, true);
+    const owner = { kind: 'task', taskId: 'task215', attachments: [] };
+    const markerLines = () => (local.logText ?? '').split('\n').filter((line) => line.includes('v1.3.4/ios-local-attachment-host'));
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).ok, true);
+    assert.equal(markerLines().length, 1, 'one forced marker follows an acknowledged task draft operation');
+    const marker = JSON.parse(markerLines()[0]);
+    assert.deepEqual(marker.context, { releaseCheck: 'v1.3.4/ios-local-attachment-host', operation: 'draftRemove', outcome: 'completed' });
+    assert(!markerLines()[0].includes('task215'), 'diagnostic has no task ID or request body');
+    local.localTaskReadOnly = true;
+    const beforeInputs = local.attachmentInputs.length;
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })))).ok, false);
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).ok, false);
+    assert.equal(local.attachmentInputs.length, beforeInputs, 'read-only task cannot enter copy/remove policy');
+    local.attachmentReply = { ok: true, value: { status: 'available', open: { kind: 'file' } } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner })))).ok, true,
+        'read-only task can still ask shared Open policy');
+    local.attachmentReply = { ok: true, value: { deleted: 0 } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('settleTaskDraftAttachments', '{}'))).ok, true,
+        'stale/read-only draft settlement remains owned by shared latest-keep policy');
+    local.localTaskReadOnly = false;
+    local.localTaskViewFailure = { ok: false, error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })))).ok, false);
+    local.localTaskViewFailure = null;
+    const successfulMarkers = markerLines().length;
+    for (const reply of [{ ok: false, error: { code: 'ACTION_FAILED', message: 'refused' } },
+        { ok: true, value: { kind: 'refused' } }, { ok: true, value: { kind: 'blocked' } }]) {
+        local.attachmentReply = reply;
+        await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })));
+    }
+    local.attachmentReply = { ok: true, value: { status: 'unavailable' } };
+    await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner })));
+    assert.equal(markerLines().length, successfulMarkers, 'refused/blocked/unavailable operations emit no success marker');
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner: { kind: 'project', projectId: 'p' } })))).ok, false);
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('downloadAttachment', JSON.stringify({ owner })))).ok, false);
+    local.persistenceFailure = { message: 'previous save failed' };
+    assert.match((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).error, /SAVE_FAILED/);
+    assert.equal(markerLines().length, successfulMarkers);
+    assert(local.fileCalls.every((call) => !call.startsWith('kv')), 'local requests never touch RN device storage');
+    for (const variant of ['partial', 'refused', 'android']) {
+        const unavailable = makeState(0, [], variant === 'android' ? undefined : 'ios', (state) => {
+            configureLocal(state);
+            if (variant === 'partial') delete state.__mindwtrNative.ioBody;
+            if (variant === 'refused') state.__mindwtrNative.fileDirectories = () => '!MindwtrNativeError:fixed unavailable';
+        });
+        assert.deepEqual(Object.keys(unavailable.contractBindings), [], `${variant} capability offers no local fallback`);
+        assert.equal(unavailable.localShaInstallCount, 0, 'failed optional discovery leaves SHA binding unchanged');
+        assert.equal((await poll(unavailable, unavailable.MindwtrHost.boot())).ok, true, 'optional local failure does not fail boot');
+    }
+}
 const state = makeState(1);
 const result = await poll(state, state.MindwtrHost.boot());
 assert.equal(result.ok, false);
@@ -3376,6 +3942,139 @@ assert.equal(secondRead.saveCount, 0);
 
 const ready = makeState(0);
 assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
+// Task202: all six bridge callbacks settle through submit's Promise slots. The
+// service's persistence/policy is tested separately; these gates pin transport,
+// localized interpolation, normal admission and recovery-safe admission.
+{
+    const backup = makeState(0, [], 'ios');
+    const metadata = { fileName: 'owned.json', lastModified: 1791115200000, appVersion: '1.3.4' };
+    const metadataJSON = JSON.stringify(metadata);
+    const reference = { id: '11111111-1111-4111-8111-111111111111', sha256: 'a'.repeat(64), byteCount: 420 };
+    const referenceJSON = JSON.stringify(reference);
+    const snapshotName = backup.backupReply.snapshotName;
+    const planJSON = backup.backupPrepared.planJSON;
+    const input = { requestId: reference.id, mode: 'merge', snapshotName, text: 'owned 日本語 🦉', metadata };
+    const gatedCalls = () => [
+        () => backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON),
+        () => backup.MindwtrHost.backupDocumentPrepare(JSON.stringify(input)),
+        () => backup.MindwtrHost.backupDocumentCommit(referenceJSON, planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName),
+    ];
+    for (const call of gatedCalls()) assert.match((await poll(backup, call())).error, /^NOT_READY:/, 'no adapter-bound backup work before boot');
+    assert.deepEqual(backup.backupInputs, []);
+    assert.equal((await poll(backup, backup.MindwtrHost.boot())).ok, true);
+    assert(backup.receiptScope.includes('backupDocument'), 'iOS bootstrap retains complete-document receipts');
+    const domainBefore = JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData });
+    const inspected = await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON));
+    assert.deepEqual(inspected, { ok: true, value: { valid: true, title: '合并备份', summary: '2 tasks / 1 projects',
+        confirmLabel: 'settings.mergeBackupAction', cancelLabel: 'common.cancel', errorTitle: 'settings.backupMobile.invalidBackup', errorMessage: '' } });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata, 'json']), 'owned text and parsed metadata pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('UEsDBA==', metadataJSON, 'csv'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'csv']), 'CSV binary transport and format pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'json-restore'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', input.text, metadata, 'json-restore']), 'selected JSON replacement action passes unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('UEsDBA==', metadataJSON, 'todoist'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'todoist']), 'Todoist binary transport and action pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('UEsDBA==', metadataJSON, 'ticktick'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'UEsDBA==', metadata, 'ticktick']), 'TickTick binary transport and action pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('eyJUQVNL', metadataJSON, 'dgt'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'eyJUQVNL', metadata, 'dgt']), 'DGT binary JSON transport and action pass unchanged');
+    assert.equal((await poll(backup, backup.MindwtrHost.backupDocumentInspect('VHlwZSxOYW1l', metadataJSON, 'omnifocus'))).ok, true);
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['inspect', 'VHlwZSxOYW1l', metadata, 'omnifocus']), 'OmniFocus binary transport and action pass unchanged');
+    const beforeInvalidFormat = backup.backupInputs.length;
+    assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON, 'other'))).error, /^INVALID_INPUT:/);
+    assert.equal(backup.backupInputs.length, beforeInvalidFormat, 'unsupported format never reaches service');
+    assert.deepEqual((await poll(backup, backup.MindwtrHost.backupDocumentResultModel(JSON.stringify(backup.backupReply)))).value,
+        { title: '合并备份', message: '2 added / 1 updated', undoLabel: 'settings.undoImport', doneLabel: 'common.done' });
+    assert.equal((await poll(backup, backup.MindwtrHost.backupSnapshotRestoreModel(snapshotName))).value.message,
+        `Restore ${snapshotName}; later edits are rolled back`);
+    assert.equal(JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData }), domainBefore,
+        'inspection and localized result/confirmation reads neither flush nor mutate domain state');
+    let release;
+    backup.backupPrepareHold = new Promise((resolveHeld) => { release = resolveHeld; });
+    const preparedID = backup.MindwtrHost.backupDocumentPrepare(JSON.stringify(input));
+    await new Promise((resolveTick) => setImmediate(resolveTick));
+    assert.equal(backup.MindwtrHost.poll(preparedID), null, 'held service Promise cannot become a false acknowledgment');
+    release();
+    assert.deepEqual(await poll(backup, preparedID), { ok: true, value: backup.backupPrepared });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['prepare', true, input]));
+    backup.backupPrepareHold = null;
+    backup.backupReadinessResult = { ok: false, error: { code: 'NOT_READY', message: 'presentation reload unavailable' } };
+    const inputsBeforeRefusal = backup.backupInputs.length;
+    for (const call of gatedCalls().slice(0, 2)) assert.match((await poll(backup, call())).error, /^NOT_READY:/);
+    assert.equal(backup.backupInputs.length, inputsBeforeRefusal, 'normal readiness failure reaches neither inspection nor preparation');
+    const readsBeforeRecovery = backup.backupReadinessChecks;
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentCommit(referenceJSON, planJSON, snapshotName)),
+        { ok: true, value: backup.backupReply });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['commit', true, reference, planJSON, snapshotName]));
+    backup.persistenceFailure = { message: 'owed save' };
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName)), { ok: true, value: null });
+    backup.backupOutcome = backup.backupReply;
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupDocumentOutcome(referenceJSON, planJSON, snapshotName)), { ok: true, value: backup.backupReply });
+    assert.equal(backup.backupInputs.at(-1), JSON.stringify(['outcome', true, reference, planJSON, snapshotName]));
+    assert.equal(backup.backupReadinessChecks, readsBeforeRecovery, 'recovery dispatch is independent of mutable presentation readiness');
+    assert.equal(JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData }), domainBefore,
+        'terminal outcome dispatch adds no flush or document work');
+    backup.persistenceFailure = null;
+    backup.backupReadinessResult = { ok: true, value: { version: 1 } };
+    backup.persistenceStatus = { queued: true };
+    assert.match((await poll(backup, backup.MindwtrHost.backupDocumentInspect(input.text, metadataJSON))).error, /^NOT_READY:/);
+    backup.persistenceStatus = null;
+    for (const field of ['sandbox', 'workspaceTransition']) {
+        backup[field] = true;
+        const before = backup.backupInputs.length;
+        for (const call of gatedCalls()) assert.match((await poll(backup, call())).error, /^NOT_READY:/, `${field} blocks adapter-bound backups`);
+        assert.equal(backup.backupInputs.length, before);
+        backup[field] = false;
+    }
+    for (const call of [() => backup.MindwtrHost.backupDocumentInspect(input.text, '{private-text'),
+        () => backup.MindwtrHost.backupDocumentPrepare('{private-text'),
+        () => backup.MindwtrHost.backupDocumentCommit('{private-text', planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentOutcome('{private-text', planJSON, snapshotName),
+        () => backup.MindwtrHost.backupDocumentResultModel('{private-text')]) {
+        assert.deepEqual(await poll(backup, call()), { ok: false, error: 'INVALID_INPUT: Invalid backup document input' });
+    }
+}
+// Task195: real shared tag-input policy, bounded wrappers and exact raw payload
+// transport. Store/receipt/CAS behavior runs in core and real Swift/JSC tests.
+{
+    const tag195 = makeState('auto');
+    assert.equal((await poll(tag195, tag195.MindwtrHost.boot())).ok, true);
+    for (const [text, count] of [['', 0], [' \n\t', 0], ['###', 0], ['  ###café 🧭  ', 3], ['x'.repeat(2000), 0]]) {
+        assert.deepEqual(await poll(tag195, tag195.MindwtrHost.referenceBulkTagInput(text, count)),
+            await poll(tag195, tag195.MindwtrHost.doneBulkTagInput(text, count)));
+    }
+    for (const [text, count] of [['x'.repeat(2001), 0], ['x', -1], ['x', 0.5], ['x', true], ['x', 10001]]) {
+        assert.equal((await poll(tag195, tag195.MindwtrHost.referenceBulkTagInput(text, count))).ok, false);
+    }
+    const request = { requestId: '19500000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision195' }, tag: '  ###café 🧭  ', params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(tag195, tag195.MindwtrHost.referenceTasksAddTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    for (const [method, phase] of [['referenceTasksAddTagValidate', 'Validate'], ['referenceTasksAddTagCommit', 'Commit'], ['referenceTasksAddTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(tag195, tag195.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(tag195.menuInputs.at(-1)), ['referenceTag' + phase, envelope]);
+        assert.equal((await poll(tag195, tag195.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
+// Task196: Remove tag uses its own exact envelope family and whole-payload bound.
+{
+    const remove196 = makeState('auto');
+    assert.equal((await poll(remove196, remove196.MindwtrHost.boot())).ok, true);
+    const tags = ['  ###café 🧭  ', 'cafe\u0301', 'x'.repeat(2001), ...Array.from({length: 101}, (_, i) => 'pick196-' + i)];
+    const request = { requestId: '19600000-0000-4000-8000-000000000001', taskIds: ['task-cafe\u0301'],
+        taskRevisions: { ['task-cafe\u0301']: 'revision196' }, tags, params: { groupBy: 'none' } };
+    const envelope = { request, prepared: { version: 1, request, result: { count: 1, changed: true } } };
+    assert.deepEqual(await poll(remove196, remove196.MindwtrHost.referenceTasksRemoveTagPrepare(JSON.stringify(request))),
+        { ok: true, value: { kind: 'noop', result: { count: 0, changed: false } } });
+    assert.deepEqual(JSON.parse(remove196.menuInputs.at(-1)), ['referenceRemoveTagPrepare', request]);
+    for (const [method, phase] of [['referenceTasksRemoveTagValidate', 'Validate'], ['referenceTasksRemoveTagCommit', 'Commit'], ['referenceTasksRemoveTagOutcome', 'Outcome']]) {
+        assert.deepEqual(await poll(remove196, remove196.MindwtrHost[method](JSON.stringify(envelope))), { ok: true, value: envelope.prepared.result });
+        assert.deepEqual(JSON.parse(remove196.menuInputs.at(-1)), ['referenceRemoveTag' + phase, envelope]);
+        assert.equal((await poll(remove196, remove196.MindwtrHost[method]('x'.repeat(2000001)))).ok, false);
+    }
+}
 assert.equal(ready.activationCount, 1);
 // Startup #4: a non-legacy boot sets the schema up, and the activation's validated read is its first full read. Activation may
 // write (core backfills a person per assignee): the store is checked against the database after its save, by id, from core's
@@ -3420,7 +4119,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
@@ -3967,6 +4666,42 @@ assert.equal(brokenStorage.activationCount, 0);
     await tick();
     assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: null } });
 }
+// iOS uses the real shared logger/queue and strict native probe, including while a domain retry is owed.
+{
+    const log = makeState(0, [], 'ios');
+    assert.equal((await poll(log, log.MindwtrHost.boot())).ok, true);
+    assert(log.receiptScope.includes('data'), 'Apple scoped bootstrap durably acknowledges Data toggles');
+    log.persistenceStatus = { generation: 1, queued: true, inFlight: false, immediate: false, retrying: false, failed: true };
+    log.persistenceFailure = { kind: 'save_failed', message: 'owed domain write' };
+    const domainBefore = JSON.stringify({ events: log.events, fakeData: log.fakeData, saves: log.saveCount, menuInputs: log.menuInputs });
+    log.logOps.length = 0;
+    log.coreLogger({ level: 'info', message: 'earlier diagnostic', force: true });
+    assert.deepEqual(await poll(log, log.MindwtrHost.logShare()), { ok: true, value: { path: 'files/logs/mindwtr.log' } });
+    const lines = log.logText.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    assert.deepEqual(lines.map(({ ts: _ts, ...line }) => line), [
+        { level: 'info', scope: 'core', message: 'earlier diagnostic' },
+        { level: 'info', scope: 'native-ios', message: 'Native iOS diagnostics share requested', context: { releaseCheck: 'v1.3.4/ios-diagnostics', operation: 'share' } },
+    ], 'the forced iOS aggregate marker reaches actual file bytes before the live path is returned');
+    assert.equal(log.logOps.at(-1), 'ensure', 'the final export barrier follows every earlier append');
+    assert.equal(log.logOps.filter((op) => op === 'append').length, 2);
+    log.logOps.length = 0;
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClearChecked()), { ok: true, value: { outcome: 'cleared' } });
+    assert.equal(log.logText, null);
+    assert.deepEqual(log.logOps, ['delete', 'path', 'isAbsent'], 'checked Clear writes no success line');
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClearChecked()), { ok: true, value: { outcome: 'alreadyAbsent' } });
+    assert.equal(log.logText, null);
+    assert.equal(JSON.stringify({ events: log.events, fakeData: log.fakeData, saves: log.saveCount, menuInputs: log.menuInputs }), domainBefore, 'file-only calls do not retry or mutate domain work');
+    log.logText = 'retained';
+    log.logDeleteRefused = true;
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClearChecked()), { ok: true, value: { outcome: 'unconfirmed' } });
+    assert.equal(log.logText, 'retained');
+    log.logDeleteRefused = false;
+    log.logAbsentError = true;
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClearChecked()), { ok: true, value: { outcome: 'unconfirmed' } });
+    log.logAbsentError = false;
+    log.logUnavailable = true;
+    assert.deepEqual(await poll(log, log.MindwtrHost.logClearChecked()), { ok: true, value: { outcome: 'unavailable' } });
+}
 console.log('Storage exception rethrown in JS;', 'lifecycle ownership and debug-only fault hooks checked');
 console.log('RN legacy guard runs before the RN database opens and reads RKStorage and the database only as byte copies');
 console.log('Editor: core\'s model and suggestions in, saveTaskDraft out through perform with an exact retry, changed fields only, no Kotlin date parsing');
@@ -3992,6 +4727,240 @@ for (const file of ['device.mjs', 'check-net-device.mjs']) {
     assert.match(readFileSync(resolve(app, `scripts/${file}`), 'utf8'), /^import '\.\/device-lock\.mjs';$/m, `${file} waits for the phone's lock first`);
 }
 console.log('Entry points: RN\'s alias, links on the build\'s scheme, text shares and Assistant notes read as strings into core\'s resolveNativeEntryPoint, RN\'s shortcuts from RN\'s builder, Import .txt through core');
+// Pass B3 (R1 native): core's reminder planner and timers in the engine (host-reminders.ts); Kotlin applies each plan in core's
+// order (ReminderPlanTest), posts what a fired alarm carries, sends Done and Snooze to CoreWork as journaled core commands, plans
+// again after a reboot, a clock change or an update, and cancels RN's alarms once.
+{
+    const remindersKt = source('Reminders.kt');
+    const notificationsKt = source('CoreNotifications.kt');
+    const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+    // Alarms and the buttons come only from this app's PendingIntents; the reschedule receiver takes only actions the system sends.
+    assert.match(manifest, /<receiver\s+android:name="\.ReminderAlarmReceiver"\s+android:exported="false" \/>/);
+    assert.match(manifest, /<receiver\s+android:name="\.ReminderActionReceiver"\s+android:exported="false" \/>/);
+    const reschedule = manifest.match(/<receiver\s+android:name="\.ReminderRescheduleReceiver"[\s\S]*?<\/receiver>/)[0];
+    assert.deepEqual([...reschedule.matchAll(/<action android:name="([^"]+)"/g)].map((m) => m[1]), ['android.intent.action.BOOT_COMPLETED',
+        'android.intent.action.TIME_SET', 'android.intent.action.TIMEZONE_CHANGED', 'android.intent.action.MY_PACKAGE_REPLACED',
+        'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED']);
+    assert.doesNotMatch(manifest, /android:process=/, 'one process: two hosts on one database reject each other\'s writes');
+    assert.match(remindersKt, /action == DEBUG_RESCHEDULE && BuildConfig\.DEBUG\)\) return/, 'the debug reschedule only in a debug build');
+    // Kotlin decides no alarm: no timer, no reason and no id of its own (core's id is the request code and the notification's id).
+    assert.doesNotMatch(code(remindersKt + notificationsKt), /postDelayed|Handler\(|Timer\(|"expired"|hashCode\(\)|Random\(/);
+    assert.match(remindersKt, /PendingIntent\.getBroadcast\(context, alarm\.getInt\("id"\), fireIntent\(context\)/);
+    assert.match(notificationsKt, /val id = alarm\.getInt\("id"\)/);
+    for (const text of [remindersKt, notificationsKt]) {
+        for (const call of code(text).matchAll(/PendingIntent\.get(?:Broadcast|Activity)\([\s\S]{0,240}/g)) assert.match(call[0], /^[^]*?FLAG_IMMUTABLE/, 'every PendingIntent is immutable');
+    }
+    // Exact when Android allows it, else allowed while idle, as RN's patched library sets an alarm.
+    assert.match(remindersKt, /if \(Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.S \|\| manager\.canScheduleExactAlarms\(\)\) \{\s+manager\.setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)\s+\} else \{\s+manager\.setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, at, intent\)/);
+    // RN's alarms through RN's receiver's name and its request codes (the row's alarmId), before the maps go, then the table.
+    assert.match(remindersKt, /RN_RECEIVER = "com\.emekalites\.react\.alarm\.notification\.AlarmReceiver"/);
+    // RN's release builds shrink AlarmModel's field names: every whole number in a row is a candidate request code.
+    assert.match(remindersKt, /data\.optInt\("alarmId", Int\.MIN_VALUE\)/);
+    assert.match(remindersKt, /PendingIntent\.getBroadcast\(context, id, intent, PendingIntent\.FLAG_NO_CREATE or PendingIntent\.FLAG_IMMUTABLE\)/, 'a candidate that names no RN alarm cancels nothing');
+    // Done and Snooze: CoreWork jobs, unique per request, journaled host methods (WriteJournal.SHAPES), the tap's time with Snooze.
+    assert.match(source('CoreWork.kt'), /requestId != null -> work\.enqueueUniqueWork\("mindwtr-core-\$job-\$requestId", ExistingWorkPolicy\.KEEP, request\)/);
+    assert.match(remindersKt, /"requestedAt" to System\.currentTimeMillis\(\)\.toString\(\)/);
+    // A receiver's job is stored before its notification goes and before its process may end (goAsync until WorkManager answered).
+    assert.doesNotMatch(code(remindersKt), /CoreWork\.enqueue\(/, 'every reminder receiver queues durably');
+    assert.equal([...code(remindersKt).matchAll(/CoreWork\.enqueueDurably\(this, context,/g)].length, 4, 'Done, Snooze, the reschedule and a repeat that fired');
+    // A daily or weekly alarm that fired is made again by core's plan, never at a time Kotlin works out; a delivery checks, under the
+    // lock each plan's apply holds, that no plan cancelled or moved its alarm meanwhile.
+    assert.doesNotMatch(code(remindersKt), /Calendar|TimeZone|nextRepeat/);
+    assert.match(remindersKt, /CoreJob\.REMINDERS, mapOf\("mode" to "fired", "key" to alarm\.getString\("key"\)\)/);
+    assert.match(remindersKt, /synchronized\(ReminderAlarms\.LOCK\) \{\s+ReminderLedger\.of\(context\)\.deliver\(/);
+    // The ledger is on disk and written before any alarm changes, so a cancel holds across a process death.
+    assert.match(remindersKt, /port\.record\(cancelled = [\s\S]{0,260}\)\s+for \(index in 0 until cancel\.length\(\)\)/);
+    assert.match(remindersKt, /synchronized\(LOCK\) \{ applyLocked\(parsed\) \}/);
+    assert.match(hostEntry, /reminderDone\(requestId: string, taskId: string\): string \{\s+return submit\(async \(\) => taskResult\('reminderDone', await contract\.completeReminderTask\(\{ requestId, taskId \}\)\)\);/);
+    // Snooze's alarm is made in the engine against the native state (core's planReminderSnooze), before the journaled reply.
+    assert.match(hostEntry, /reminderSnooze\(json: string\): string \{\s+return submit\(async \(\) => \{\s+const result = await contract\.snoozeReminder\(JSON\.parse\(json\)\);\s+if \(result\.ok\) await requireReminders\(\)\.snooze\(result\.value\);\s+return taskResult\('reminderSnooze', result\);/);
+    // RN's look (react-native-alarm-notification's sendNotification and channel, patched): private on the lock screen (#823), a
+    // reminder at default priority with the notification sound; the channel at default importance, lights, no vibration, no DnD
+    // bypass. Only reminder notifications are cleared without permission (the quick-capture one is not, #819). Snooze and Done
+    // take the notification away once their job is stored (RN's snooze dismissal).
+    assert.match(notificationsKt, /\.setPriority\(NotificationCompat\.PRIORITY_DEFAULT\)/);
+    assert.match(notificationsKt, /\.setVisibility\(NotificationCompat\.VISIBILITY_PRIVATE\)/);
+    assert.match(notificationsKt, /\.setCategory\(NotificationCompat\.CATEGORY_REMINDER\)/);
+    assert.match(notificationsKt, /if \(details\.optBoolean\("play_sound", true\)\) Settings\.System\.DEFAULT_NOTIFICATION_URI else null/);
+    assert.match(notificationsKt, /NotificationChannel\(id, name, NotificationManager\.IMPORTANCE_DEFAULT\)\.apply \{\s+description = name\s+enableLights\(true\)\s+color\?\.let \{ lightColor = it \}\s+enableVibration\(false\)\s+setSound\(Settings\.System\.DEFAULT_NOTIFICATION_URI, AudioAttributes\.Builder\(\)\s+\.setUsage\(AudioAttributes\.USAGE_NOTIFICATION\)/);
+    assert.doesNotMatch(code(notificationsKt), /setBypassDnd|setOngoing|FLAG_INSISTENT/);
+    assert.match(remindersKt, /override fun clearDelivered\(\) \{\s+for \(shown in notifications\.activeNotifications\) \{\s+if \(NotificationCompat\.getChannelId\(shown\.notification\) == CoreNotifications\.REMINDER_CHANNEL\)/);
+    assert.doesNotMatch(code(remindersKt + notificationsKt), /cancelAll\(\)/, 'nothing clears the whole tray');
+    assert.equal([...code(remindersKt).matchAll(/\), done = dismiss\)/g)].length, 2, 'Done and Snooze dismiss once stored');
+    // RN's start-time permission question waits for the reminder alarms' start (they start with sync, after first content).
+    assert.match(source('InboxViewModel.kt'), /suspend fun askNotifications\(\): Boolean \{\s+ProcessCoreHost\.remindersStarted\.await\(\)/);
+    assert.equal([...source('ProcessCoreHost.kt').matchAll(/remindersStarted\.complete\(Unit\)/g)].length, 2, 'a start, or a resume\'s start after a failed one');
+    // The debug-only stops and the short snooze read a debug property (empty in a release build).
+    assert.match(remindersKt, /if \(debugProperty\("reminder_stop"\) == point\)/);
+    assert.match(remindersKt, /debugProperty\("snooze_minutes"\)\.toDoubleOrNull\(\)/);
+}
+// host-reminders.ts with a stand-in core and bridge: RN's alarms cancelled once before the first plan (a failed cleanup plans
+// nothing), cycles one at a time, the plan applied with the channel's name, the store timer after the last change, the top-up, the
+// exact rebuild's pending mark, the tap's re-plan, and nothing at all in sandbox mode.
+{
+    const stand = `
+export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
+export const REMINDER_NOTIFICATION_EVENT_RESCHEDULE_DELAY_MS = 5;
+export const REMINDER_STORE_RESCHEDULE_DELAY_MS = 30;
+export const hasActiveMobileNotificationFeature = (settings) => settings.on === true;
+export const isSandboxMode = () => globalThis.reminderSandbox === true;
+export const logInfo = () => {}; export const logWarn = () => {};
+export const nameNotifyListener = (_name, listener) => listener;
+export const shouldRescheduleReminderAlarms = (state, previous) => state.tasks !== previous.tasks;
+const listeners = [];
+let state = { tasks: [], settings: { on: true } };
+export const useTaskStore = { getState: () => state, subscribe: (listener) => { listeners.push(listener); return () => {}; },
+  setState: (next) => { const previous = state; state = { ...state, ...next }; listeners.forEach((listener) => listener(state, previous)); } };
+globalThis.standStore = useTaskStore;
+`;
+    const out = await build({ entryPoints: [resolve(app, 'bundle/host-reminders.ts')], bundle: true, write: false, format: 'esm',
+        plugins: [{ name: 'stand-core', setup(plugin) {
+            plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'stand' }));
+            plugin.onLoad({ filter: /.*/, namespace: 'stand' }, () => ({ contents: stand, loader: 'js' }));
+        } }] });
+    const mod = await import(`data:text/javascript,${encodeURIComponent(out.outputFiles[0].text)}`);
+    const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+    const calls = [];
+    let stored = '{"task:a":{"id":7,"signature":"s"}}';
+    let cleanupFailure = true;
+    let topUp = null;
+    let storedState = null;
+    let planState = '{}';
+    let lastPlan = null;
+    const applied = [];
+    const reminders = mod.createNativeReminders({
+        plan: async (input) => {
+            calls.push(`plan ${input.storedAlarms} ${input.permissionGranted}${input.remake ? ` remake ${input.remake}` : ''}`);
+            lastPlan = input;
+            await sleep(5);
+            return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: planState, topUpDelayMs: topUp } };
+        },
+        readStored: async () => ({ alarms: stored, state: storedState }),
+        planSnooze: (input) => { calls.push(`snooze ${input.storedState} ${input.alarm.key} ${input.permissionGranted}`); return { ok: true, value: { schedule: [input.alarm], stateAhead: '{"ahead":1}', state: '{"after":1}' } }; },
+        permissionGranted: () => false,
+        apply: (json) => { calls.push(`apply ${JSON.parse(json).channelName}`); applied.push(JSON.parse(json)); },
+        cleanupRn: () => { calls.push('cleanup'); if (cleanupFailure) throw new Error('rnandb locked'); return 2; },
+    });
+    await assert.rejects(reminders.start(), /rnandb locked/);
+    assert.deepEqual(calls, ['cleanup'], 'a failed cleanup plans nothing');
+    cleanupFailure = false;
+    calls.length = 0;
+    const started = await reminders.start();
+    assert.equal(started.rnCancelled, 2);
+    assert.equal(started.ask, true, 'a feature on and no permission: RN asks at start');
+    // The process's first plan remakes every held alarm: Android dropped them if exact-alarm access was revoked (it stops the app)
+    // or the app was force-stopped, and the stored map still says each is held.
+    assert.deepEqual(calls, ['cleanup', `plan ${stored} false remake all`, 'apply Mindwtr reminders']);
+    // Cycles run one at a time; the cleanup ran once.
+    calls.length = 0;
+    await Promise.all([reminders.cycle(false), reminders.cycle(false)]);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders']);
+    // The rebuild (a reboot, a clock change, exact alarms allowed) marks every held alarm pending.
+    calls.length = 0;
+    await reminders.cycle(true);
+    assert.deepEqual(calls, [`plan ${stored} false remake all`, 'apply Mindwtr reminders']);
+    // Store changes: one plan, REMINDER_STORE_RESCHEDULE_DELAY_MS after the last accepted change; other changes plan nothing.
+    calls.length = 0;
+    globalThis.standStore.setState({ tasks: [] });
+    await sleep(10);
+    globalThis.standStore.setState({ tasks: [] });
+    globalThis.standStore.setState({ settings: { on: true } });
+    await sleep(15);
+    assert.deepEqual(calls, [], 'no plan before the delay after the last change');
+    await sleep(40);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders'], 'one plan after the last accepted change');
+    globalThis.standStore.setState({ settings: { on: true } });
+    await sleep(50);
+    assert.equal(calls.length, 2, 'a change the rule does not accept plans nothing');
+    // The tap's re-plan and the top-up, each one plan.
+    calls.length = 0;
+    reminders.event();
+    await sleep(40);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders'], 'a tap plans again shortly after');
+    calls.length = 0;
+    topUp = 10;
+    await reminders.cycle(false);
+    topUp = null;
+    await sleep(60);
+    assert.deepEqual(calls, [`plan ${stored} false`, 'apply Mindwtr reminders', `plan ${stored} false`, 'apply Mindwtr reminders'], 'the top-up plans once more');
+    // A daily or weekly alarm that fired: core makes that one again (its next time, or cancels it when turned off).
+    calls.length = 0;
+    await reminders.fired('digest:morning');
+    assert.deepEqual(calls, [`plan ${stored} false remake digest:morning`, 'apply Mindwtr reminders']);
+    // A Snooze: core's answer against the stored state, applied in the queue as a plan that only stores that state and makes it.
+    applied.length = 0;
+    calls.length = 0;
+    storedState = '{"x":1}';
+    const snoozeAlarm = { key: 'snooze:u', id: 1073741900, fireAtMs: 5, repeat: 'once', details: { title: 'Pay rent' }, replacing: null };
+    await reminders.snooze(snoozeAlarm);
+    assert.deepEqual(calls, ['snooze {"x":1} snooze:u false', 'apply Mindwtr reminders'], 'the Snooze is judged with the permission');
+    assert.deepEqual(applied, [{ mode: 'active', cancel: [], schedule: [snoozeAlarm], writeAhead: null, stateAhead: '{"ahead":1}', alarms: stored,
+        unchanged: true, state: '{"after":1}', topUpDelayMs: null, clearDelivered: false, channelName: 'Mindwtr reminders' }]);
+    storedState = null;
+    // The native state goes in and comes back; stored again only when it changed (none stored reads as an empty state).
+    applied.length = 0;
+    await reminders.cycle(false);
+    storedState = '{"task:b":{"kind":"delivered","id":8,"firedAtMs":1}}';
+    await reminders.cycle(false);
+    assert.equal(lastPlan.storedState, storedState);
+    planState = storedState;
+    await reminders.cycle(false);
+    assert.deepEqual(applied.map((plan) => plan.state), [null, '{}', null], 'the state is stored only when it changed');
+    storedState = null;
+    planState = '{}';
+    // Sandbox mode: no plan at all.
+    calls.length = 0;
+    globalThis.reminderSandbox = true;
+    // (A fresh controller further below: a store change during the first cycle plans again.)
+    assert.deepEqual(await reminders.start(), { mode: 'sandbox', ask: false });
+    await reminders.cycle(false);
+    reminders.event();
+    await sleep(20);
+    assert.deepEqual(calls, []);
+    globalThis.reminderSandbox = false;
+    // The store subscription is armed before the first cycle: a change while it plans (a sync, a Done) plans again after it.
+    const early = [];
+    const fresh = mod.createNativeReminders({
+        plan: async () => { early.push('plan'); await sleep(20); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }; },
+        planSnooze: () => { throw new Error('no snooze here'); },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => early.push('apply'),
+        cleanupRn: () => 0,
+    });
+    // What a receiver dropped or could not queue since the last plan goes in that plan's summary line.
+    const counted = mod.createNativeReminders({
+        plan: async () => ({ ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }),
+        planSnooze: () => { throw new Error('no snooze here'); },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => {},
+        cleanupRn: () => 0,
+        receiverCounts: () => ({ dropped: 2, notQueued: 1 }),
+    });
+    assert.deepEqual(await counted.cycle(false), { mode: 'active', rebuild: true, scheduled: 0, withdrawn: 0, expired: 0, held: 0, dropped: 2, notQueued: 1 });
+    // The ledger (Kotlin): what showed and what is still in the tray go into every plan and every Snooze.
+    const ledgerInputs = [];
+    const withLedger = mod.createNativeReminders({
+        plan: async (input) => { ledgerInputs.push(['plan', input.fired, input.shown]); return { ok: true, value: { mode: 'active', cancel: [], schedule: [], alarms: '{}', state: '{}', topUpDelayMs: null } }; },
+        planSnooze: (input) => { ledgerInputs.push(['snooze', input.fired]); return { ok: true, value: { schedule: [], stateAhead: null, state: null } }; },
+        readStored: async () => ({ alarms: null, state: null }),
+        permissionGranted: () => true,
+        apply: () => {},
+        cleanupRn: () => 0,
+        ledger: () => ({ fired: [7], shown: [7, 9] }),
+    });
+    await withLedger.cycle(false);
+    await withLedger.snooze({ key: 'snooze:u', id: 1073741900, fireAtMs: 5, repeat: 'once', details: {}, replacing: null });
+    assert.deepEqual(ledgerInputs, [['plan', [7], [7, 9]], ['snooze', [7]]]);
+    const starting = fresh.start();
+    await sleep(5);
+    globalThis.standStore.setState({ tasks: [] });
+    await starting;
+    await sleep(80);
+    assert.deepEqual(early, ['plan', 'apply', 'plan', 'apply'], 'a change during the first cycle plans again');
+}
+console.log('Reminders: core plans and times every alarm in the engine, Kotlin applies each plan in core\'s order, the buttons and the reschedule go through CoreWork as core\'s commands, RN\'s alarms cancelled once before the first plan');
 console.log('Runner: CoreWork on the one host after the app\'s boot order, the queue drain after the journal replay, the queue\'s file and RKStorage ports, RN\'s capture intent and context receivers under RN\'s names, RN\'s capture intent Kotlin compiled in, the token only in Kotlin');
 // Review finding 3 (A2): a failure on a path that can carry a URI (attachments, links, sync, the shared log, core actions) is logged
 // by its class and core's code (failureForLog, attachmentLaunchLog), never with its message or stack, which can hold a credential URI.

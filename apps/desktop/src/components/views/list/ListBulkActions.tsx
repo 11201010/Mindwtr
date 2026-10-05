@@ -1,13 +1,15 @@
 import { ClipboardCheck, Download } from 'lucide-react';
-import { tFallback, type TaskEnergyLevel, type TaskStatus } from '@mindwtr/core';
+import { tFallback, type Area, type Project, type TaskEnergyLevel, type TaskMoveDestination, type TaskStatus } from '@mindwtr/core';
+import { DestinationSelector } from '../../ui/DestinationSelector';
 
 type ListBulkActionsProps = {
     selectionCount: number;
     currentStatus?: TaskStatus | 'all';
     onMoveToStatus: (status: TaskStatus) => void;
     onMoveToSomedaySection?: () => void;
-    onAssignArea?: (areaId: string | null) => void;
-    areaOptions?: Array<{ id: string; name: string }>;
+    onMoveToDestination?: (destination: TaskMoveDestination) => void;
+    projects?: Project[];
+    areas?: Area[];
     onAssignEnergyLevel?: (energyLevel: TaskEnergyLevel) => void;
     onBulkOrganize?: () => void;
     onAddTag: () => void;
@@ -36,8 +38,9 @@ export function ListBulkActions({
     currentStatus,
     onMoveToStatus,
     onMoveToSomedaySection,
-    onAssignArea,
-    areaOptions,
+    onMoveToDestination,
+    projects = [],
+    areas = [],
     onAssignEnergyLevel,
     onBulkOrganize,
     onAddTag,
@@ -53,17 +56,11 @@ export function ListBulkActions({
     t,
 }: ListBulkActionsProps) {
     if (selectionCount === 0) return null;
-    const areaLabelRaw = t('projects.areaLabel');
-    const areaLabel = areaLabelRaw === 'projects.areaLabel' ? 'Area' : areaLabelRaw;
-    const noAreaLabelRaw = t('taskEdit.noAreaOption');
-    const noAreaLabel = noAreaLabelRaw === 'taskEdit.noAreaOption' ? 'No area' : noAreaLabelRaw;
-    const moveToLabelRaw = t('bulk.moveTo');
-    const moveToLabel = moveToLabelRaw === 'bulk.moveTo' ? 'Move to' : moveToLabelRaw;
+    const statusLabel = tFallback(t, 'bulk.organizeStatus', 'Status');
     const energyLabelRaw = t('taskEdit.energyLevel');
     const energyLabel = energyLabelRaw === 'taskEdit.energyLevel' ? 'Energy Level' : energyLabelRaw;
     const removeTagLabelRaw = t('bulk.removeTag');
     const removeTagLabel = removeTagLabelRaw === 'bulk.removeTag' ? 'Remove tag' : removeTagLabelRaw;
-    const hasAreaAssignment = Boolean(onAssignArea) && (areaOptions?.length ?? 0) > 0;
     const bulkStatusOptions = getListBulkMoveStatusOptions(currentStatus);
 
     return (
@@ -90,9 +87,9 @@ export function ListBulkActions({
                     event.currentTarget.value = '';
                 }}
                 className="text-xs px-2 py-1 rounded bg-muted/50 border border-border hover:bg-muted transition-colors"
-                aria-label={moveToLabel}
+                aria-label={statusLabel}
             >
-                <option value="">{moveToLabel}</option>
+                <option value="">{statusLabel}</option>
                 {bulkStatusOptions.map((status) => (
                     <option key={status} value={status}>
                         {t(`status.${status}`)}
@@ -108,26 +105,22 @@ export function ListBulkActions({
                     {tFallback(t, 'viewSections.moveToSection', 'Move to section…')}
                 </button>
             )}
-            {hasAreaAssignment && (
-                <select
-                    defaultValue=""
-                    onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        if (!value || !onAssignArea) return;
-                        onAssignArea(value === '__NO_AREA__' ? null : value);
-                        event.currentTarget.value = '';
-                    }}
-                    className="text-xs px-2 py-1 rounded bg-muted/50 border border-border hover:bg-muted transition-colors"
-                    aria-label={areaLabel}
-                >
-                    <option value="">{areaLabel}</option>
-                    <option value="__NO_AREA__">{noAreaLabel}</option>
-                    {(areaOptions ?? []).map((area) => (
-                        <option key={area.id} value={area.id}>
-                            {area.name}
-                        </option>
-                    ))}
-                </select>
+            {onMoveToDestination && (
+                <DestinationSelector
+                    projects={projects}
+                    areas={areas}
+                    value={null}
+                    onChange={onMoveToDestination}
+                    destinationLabel={tFallback(t, 'task.destination', 'Destination')}
+                    projectsLabel={tFallback(t, 'projects.title', 'Projects')}
+                    areasLabel={tFallback(t, 'areas.manage', 'Areas')}
+                    noneLabel={tFallback(t, 'common.none', 'None')}
+                    searchPlaceholder={tFallback(t, 'common.search', 'Search')}
+                    noMatchesLabel={tFallback(t, 'common.noMatches', 'No matches')}
+                    createProjectLabel={tFallback(t, 'projects.new', 'New project')}
+                    createAreaLabel={tFallback(t, 'areas.new', 'New area')}
+                    controlClassName="hover:bg-muted transition-colors gap-2"
+                />
             )}
             {onAssignEnergyLevel && (
                 <select

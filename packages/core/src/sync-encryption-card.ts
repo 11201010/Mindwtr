@@ -13,6 +13,7 @@
 import { generateDicewarePassphrase } from './diceware';
 import type { AppData } from './types';
 import {
+    SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE,
     isSyncEncryptionRemoteVersionUnavailableError,
     type SyncEncryptionState,
     type SyncEncryptionStatus,
@@ -29,10 +30,11 @@ export type SyncEncryptionCardError =
     | 'wrong-passphrase'
     | 'rotation-first'
     | 'backend-required'
+    | 'backend-incompatible'
     | 'transition-incomplete'
     | 'generic';
 
-export type SyncEncryptionCardFlow = 'none' | 'enable' | 'change' | 'disable' | 'unlock';
+export type SyncEncryptionCardFlow = 'none' | 'enable' | 'change' | 'disable' | 'unlock' | 'abandon';
 export type SyncEncryptionCardWarning = 'cleanup-deferred' | 'file-cleanup-deferred' | 'no-encrypted-remote';
 export type SyncEncryptionPassphraseField = 'current' | 'next' | 'confirm';
 
@@ -47,6 +49,10 @@ export type SyncEncryptionCardHost = {
     disable(options: TransitionOptions): Promise<void>;
     provide(passphrase: string): Promise<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'>;
     decline(): Promise<void>;
+    /** "Abandon setup": this device drops an unfinished change, locally (sync-encryption-service.ts). */
+    abandon(): Promise<unknown>;
+    /** "Check this location again" for a partly encrypted location (sync-encryption-service.ts recheckPartlyEncryptedLocation). */
+    recheck(): Promise<unknown>;
     isCleanupDeferredError(error: unknown): error is Error & { cleanupKind?: string; outcome?: unknown };
     randomBytes(length: number): Uint8Array;
     /** Supplies the attachment worklist; phase 2 leaves attachments plaintext without it. */
@@ -57,6 +63,11 @@ export type SyncEncryptionCardHost = {
 export type SyncEncryptionCardState = {
     state: SyncEncryptionState | null;
     stateUnavailable: boolean;
+    /** A change (enable, change, disable) is unfinished on this device: "Abandon setup" is offered. */
+    incompleteTransition: boolean;
+    /** This device holds the location as partly encrypted (an encryption change cut off there): it syncs nothing there
+     *  until "Check this location again" finds it whole. */
+    partlyEncrypted: boolean;
     flow: SyncEncryptionCardFlow;
     busy: boolean;
     progress: SyncEncryptionTransitionProgress | null;
@@ -75,6 +86,8 @@ export type SyncEncryptionCardState = {
 const INITIAL_STATE: SyncEncryptionCardState = {
     state: null,
     stateUnavailable: false,
+    incompleteTransition: false,
+    partlyEncrypted: false,
     flow: 'none',
     busy: false,
     progress: null,
@@ -92,27 +105,26 @@ export const classifySyncEncryptionCardFailure = (error: unknown, terminal: Sync
     const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
     if (message.includes('SYNC_ENCRYPTION_BACKEND_REQUIRED')) return 'backend-required';
     if (message.includes('SYNC_ENCRYPTION_TRANSITION_INCOMPLETE')) return 'transition-incomplete';
+    if (message.includes(SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE)) return 'backend-incompatible';
     if (isSyncEncryptionRemoteVersionUnavailableError(error)) return 'transition-incomplete';
     if (/MWENC1|SYNC_ENCRYPTION|passphrase/i.test(message)) return terminal;
     return 'generic';
 };
 
+const SYNC_ENCRYPTION_CARD_ERROR_KEYS: Record<SyncEncryptionCardError, string> = {
+    mismatch: 'settings.syncEncryptionErrorMismatch',
+    'wrong-passphrase': 'settings.syncEncryptionErrorWrongPassphrase',
+    'rotation-first': 'settings.syncEncryptionErrorRotationFirst',
+    'backend-required': 'settings.syncEncryptionErrorBackendRequired',
+    'backend-incompatible': 'settings.syncEncryptionErrorBackendIncompatible',
+    'transition-incomplete': 'settings.syncEncryptionErrorTransitionIncomplete',
+    generic: 'settings.syncEncryptionErrorGeneric',
+};
+
 /** The card's error, progress and warning lines for its state. */
 export const getSyncEncryptionCardMessages = (card: Pick<SyncEncryptionCardState, 'error' | 'progress' | 'warning'>, t: Translate) => {
     const { error, progress, warning } = card;
-    const errorMessage = error === 'mismatch'
-        ? t('settings.syncEncryptionErrorMismatch')
-        : error === 'wrong-passphrase'
-            ? t('settings.syncEncryptionErrorWrongPassphrase')
-            : error === 'rotation-first'
-                ? t('settings.syncEncryptionErrorRotationFirst')
-                : error === 'backend-required'
-                    ? t('settings.syncEncryptionErrorBackendRequired')
-                    : error === 'transition-incomplete'
-                        ? t('settings.syncEncryptionErrorTransitionIncomplete')
-                        : error === 'generic'
-                            ? t('settings.syncEncryptionErrorGeneric')
-                            : null;
+    const errorMessage = error ? t(SYNC_ENCRYPTION_CARD_ERROR_KEYS[error]) : null;
     const progressLabel = progress
         ? `${progress.phase === 'attachments'
             ? t('settings.syncEncryptionProgressAttachments')
@@ -144,6 +156,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         state: SyncEncryptionState | null;
         unavailable: boolean;
         incomplete: boolean;
+        partly: boolean;
     }> => {
         try {
             const status = await host.getStatus();
@@ -151,10 +164,11 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
                 state: status.state,
                 unavailable: false,
                 incomplete: Boolean(status.incompleteTransition),
+                partly: Boolean(status.partlyEncrypted),
             };
         } catch (failure) {
             host.logSettingsError(failure);
-            return { state: null, unavailable: true, incomplete: false };
+            return { state: null, unavailable: true, incomplete: false, partly: false };
         }
     };
 
@@ -170,7 +184,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         let cancelled = false;
         const read = readState().then((next) => {
             if (!cancelled) {
-                set({ state: next.state, stateUnavailable: next.unavailable });
+                set({ state: next.state, stateUnavailable: next.unavailable, incompleteTransition: next.incomplete, partlyEncrypted: next.partly });
                 if (next.incomplete) set({ error: 'transition-incomplete' });
             }
         });
@@ -242,7 +256,7 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         }
         // Transitions are resumable, so a half-finished run still moved the state.
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly });
         if (nextState.incomplete) set({ error: 'transition-incomplete' });
         set({ pendingFirstSync: await host.isBackendPending().catch(() => false) });
         set({ progress: null, busy: false });
@@ -314,12 +328,18 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             }
         }
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly, busy: false });
         if (accepted) {
             closeFlow();
             if (cleanupDeferred) set({ warning: cleanupDeferred });
         }
     };
+
+    /** "Abandon setup": the unfinished change is dropped on this device only; the card reads off again. */
+    const submitAbandon = () => run(async () => { await host.abandon(); }, 'generic');
+
+    /** "Check this location again": a whole location clears the mark (the card reads it again either way). */
+    const recheckLocation = () => run(async () => { await host.recheck(); }, 'generic');
 
     /** "Not now": keeps the persisted no-key state; sync stays paused. */
     const decline = () => {
@@ -328,14 +348,14 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
             .catch((error) => host.logSettingsError(error))
             .then(async () => {
                 const nextState = await readState();
-                set({ state: nextState.state, stateUnavailable: nextState.unavailable });
+                set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly });
             });
     };
 
     const retryState = async () => {
         set({ busy: true });
         const nextState = await readState();
-        set({ state: nextState.state, stateUnavailable: nextState.unavailable, busy: false });
+        set({ state: nextState.state, stateUnavailable: nextState.unavailable, incompleteTransition: nextState.incomplete, partlyEncrypted: nextState.partly, busy: false });
     };
 
     return {
@@ -356,6 +376,8 @@ export function createSyncEncryptionCard(host: SyncEncryptionCardHost) {
         submitChange,
         submitDisable,
         submitUnlock,
+        submitAbandon,
+        recheckLocation,
         decline,
         retryState,
     };

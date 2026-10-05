@@ -14,6 +14,9 @@ on:
     paths:
       - ".github/workflows/native-platform-ci.yml"
       - "apps/desktop/src-tauri/**"
+      - "apps/mcp-server/**"
+      - "scripts/build-mcp-sidecar*"
+      - ".bun-version"
       - "apps/desktop/widgets-macos/**"
       - "scripts/build-macos-widget.sh"
       - "scripts/ci/test-build-macos-widget.sh"
@@ -67,6 +70,9 @@ on:
     paths:
       - ".github/workflows/native-platform-ci.yml"
       - "apps/desktop/src-tauri/**"
+      - "apps/mcp-server/**"
+      - "scripts/build-mcp-sidecar*"
+      - ".bun-version"
       - "apps/desktop/widgets-macos/**"
       - "scripts/build-macos-widget.sh"
       - "scripts/ci/test-build-macos-widget.sh"
@@ -256,12 +262,12 @@ jobs:
           windows=false
           while IFS= read -r path; do
             case "$path" in
-              apps/desktop/src-tauri/*|apps/desktop/widgets-macos/*|scripts/build-macos-widget.sh|scripts/ci/test-build-macos-widget.sh|packages/core/src/*|scripts/check-synced-field-parity.ts|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
+              apps/desktop/src-tauri/*|apps/mcp-server/*|scripts/build-mcp-sidecar*|.bun-version|apps/desktop/widgets-macos/*|scripts/build-macos-widget.sh|scripts/ci/test-build-macos-widget.sh|packages/core/src/*|scripts/check-synced-field-parity.ts|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 macos=true
                 ;;
             esac
             case "$path" in
-              apps/desktop/src-tauri/*|.github/workflows/native-platform-ci.yml)
+              apps/desktop/src-tauri/*|apps/mcp-server/*|scripts/build-mcp-sidecar*|.bun-version|packages/core/src/*|packages/core/package.json|package.json|bun.lock|.github/workflows/native-platform-ci.yml)
                 windows=true
                 ;;
             esac
@@ -311,6 +317,17 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: apps/desktop/src-tauri
+
+      - name: Setup Bun for bundled MCP
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install bundled MCP build dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build bundled MCP before native compilation
+        run: bun scripts/build-mcp-sidecar.mjs
 
       - name: Check macOS Rust and Objective-C bridge
         run: cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
@@ -388,6 +405,37 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: apps/desktop/src-tauri
+
+      - name: Setup Bun for bundled MCP
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install bundled MCP build dependencies
+        shell: pwsh
+        run: |
+          node scripts/ci/prepare-windows-bun-install.js
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 8
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "bun install failed, retrying from clean project and cache directories..."
+            if (Test-Path node_modules) {
+              Remove-Item node_modules -Recurse -Force
+            }
+            $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'
+            if (Test-Path $cacheDir) {
+              Remove-Item $cacheDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+            bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 1 --concurrent-scripts 1
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
+
+      - name: Build bundled MCP before native compilation
+        run: bun scripts/build-mcp-sidecar.mjs
 
       - name: Check Windows Rust
         run: cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
@@ -586,8 +634,9 @@ jobs:
       matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: ${{ matrix.runner }}
     name: iOS SwiftUI client and JavaScriptCore host (${{ matrix.label }})
-    # The full Swift host suite runs before the isolated SwiftUI client build.
-    timeout-minutes: 45
+    # The full Swift host suite takes about 42 minutes before the isolated app build.
+    # Keep the job allowance separate from individual test and performance limits.
+    timeout-minutes: 75
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -600,6 +649,7 @@ jobs:
         if: runner.environment != 'self-hosted'
         run: bash scripts/ci/select-apple-sdk.sh 27
       - name: Prepare persistent Apple build caches
+        id: apple_cache
         run: bash scripts/ci/prepare-apple-cache.sh
       - name: Setup Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -612,7 +662,24 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Test the embedded core and build the isolated SwiftUI client
-        run: bash apps/ios-native/scripts/validate.sh
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ios-swiftui-artifacts"
+          bash apps/ios-native/scripts/validate.sh 2>&1 | tee "$RUNNER_TEMP/ios-swiftui-artifacts/validation.log"
+      - name: Upload SwiftUI validation evidence
+        id: swiftui_evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ios-swiftui-validation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.lane }}
+          path: ${{ runner.temp }}/ios-swiftui-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Retire completed SwiftUI build outputs
+        if: ${{ always() && runner.environment == 'self-hosted' && steps.apple_cache.outcome == 'success' && steps.swiftui_evidence.outcome == 'success' && steps.swiftui_evidence.outputs.artifact-id != '' }}
+        env:
+          MINDWTR_EVIDENCE_UPLOADED: "true"
+        run: python3 scripts/ci/cleanup-apple-outputs.py swiftui
 
   ios-native:
     if: needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini != 'true'
@@ -637,6 +704,7 @@ jobs:
         run: bash scripts/ci/select-apple-sdk.sh 27
 
       - name: Prepare persistent Apple build caches
+        id: apple_cache
         run: bash scripts/ci/prepare-apple-cache.sh
 
       - name: Setup Node.js
@@ -791,6 +859,8 @@ jobs:
             -jobs 4 \
             -configuration Debug \
             -sdk watchsimulator \
+            SYMROOT="$MINDWTR_NATIVE_CACHE/watch/products" \
+            OBJROOT="$MINDWTR_NATIVE_CACHE/watch/intermediates" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
@@ -849,6 +919,10 @@ jobs:
             '${{ steps.ios27_release_simulator.outputs.app_path }}' \
             "$RUNNER_TEMP/ios27-artifacts"
 
+      - name: Ensure disk headroom before the device archive
+        if: success() && runner.environment == 'self-hosted' && matrix.lane == 'xcode27'
+        run: bash scripts/ci/prepare-apple-cache.sh before-archive
+
       - name: Create unsigned Release device archive with Xcode 27
         if: matrix.lane == 'xcode27'
         env:
@@ -896,6 +970,7 @@ jobs:
           echo "Created unsigned validation archive at $ARCHIVE_PATH"
 
       - name: Upload Xcode 27 validation evidence
+        id: ios27_evidence
         if: ${{ always() && matrix.lane == 'xcode27' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -912,6 +987,12 @@ jobs:
           xcrun simctl shutdown "$SIMULATOR_UDID" >/dev/null 2>&1 || true
           xcrun simctl delete "$SIMULATOR_UDID"
 
+      - name: Retire completed iOS build outputs
+        if: ${{ always() && runner.environment == 'self-hosted' && steps.apple_cache.outcome == 'success' && steps.ios27_evidence.outcome == 'success' && steps.ios27_evidence.outputs.artifact-id != '' }}
+        env:
+          MINDWTR_EVIDENCE_UPLOADED: "true"
+        run: python3 scripts/ci/cleanup-apple-outputs.py ios
+
       - name: Record archive validation limits
         if: matrix.lane == 'xcode27'
         run: |
@@ -922,7 +1003,8 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     name: iOS Swift compile (Mac mini Xcode 27)
-    timeout-minutes: 90
+    # One Mac runs both 75-minute Apple jobs serially; allow discovery and evidence transfer too.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:

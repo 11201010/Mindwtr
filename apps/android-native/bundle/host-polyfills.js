@@ -756,6 +756,31 @@
         global.__mindwtrInstallerCall = fileChannel('installerCall');
     }
 
+    // --- sync crypto --------------------------------------------------------
+    // Sync encryption's Argon2id and AES-256-GCM (HostCrypto.kt, through host-sync.ts): each call runs on the host's crypto
+    // thread, never the engine's, and settles where a timer fires. `request` is `{ op, ... }` with its bytes as Uint8Arrays;
+    // it answers the result's bytes. A GCM tag or AAD mismatch rejects with `code: 'auth'`. Never refused once the host's
+    // deadline passed: it does no IO and always answers, so the timed-out call still drains.
+    if (global.__mindwtrNative && typeof global.__mindwtrNative.cryptoCall === 'function') {
+        global.__mindwtrCryptoCall = function (request) {
+            return new Promise(function (resolve, reject) {
+                mark('crypto');
+                var payload = {};
+                for (var key in request) {
+                    if (!Object.prototype.hasOwnProperty.call(request, key)) continue;
+                    var value = request[key];
+                    payload[key] = ArrayBuffer.isView(value) ? toBase64(bytesOf(value)) : value;
+                }
+                startIo(hostCall(native().cryptoCall(JSON.stringify(payload))), function (answer) {
+                    if (answer.error === undefined) { resolve(fromBase64(answer.base64)); return; }
+                    var error = new Error(answer.error);
+                    if (answer.auth) error.code = 'auth';
+                    reject(error);
+                });
+            });
+        };
+    }
+
     // --- localStorage -------------------------------------------------------
     // In-memory only. The core stores the chosen language here; the experiment
     // never relies on it surviving a restart.

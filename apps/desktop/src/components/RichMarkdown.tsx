@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { normalizeMarkdownInternalLinks, tFallback } from '@mindwtr/core';
+import { isSafeMarkdownExternalHref, normalizeMarkdownInternalLinks, tFallback } from '@mindwtr/core';
 import { Copy } from 'lucide-react';
 
 import { useLanguage } from '../contexts/language-context';
@@ -14,12 +14,9 @@ const BLANK_LINE_CLASS = 'mindwtr-markdown-blank-line';
 function transformMarkdownUrl(url: string) {
     const normalized = url.trim().toLowerCase();
     if (
-        normalized.startsWith('mindwtr://')
-        || normalized.startsWith('http://')
-        || normalized.startsWith('https://')
-        || normalized.startsWith('mailto:')
-        || normalized.startsWith('tel:')
-        || normalized.startsWith('mid:')
+        isSafeMarkdownExternalHref(url)
+        || normalized.startsWith('mindwtr://')
+        || /^mid:[^\s]+$/i.test(url)
         || normalized.startsWith('#')
     ) {
         return url;

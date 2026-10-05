@@ -1,14 +1,26 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import ts from "typescript";
 
 import { validateMobileAuditReport } from "./validate-mobile-npm-audit.js";
+import { validateBunAuditTopology, validateNpmAuditTopology, validateNpmAuditReport } from "./validate-npm-audit.js";
 
 const rootRequire = createRequire(import.meta.url);
 
 const IMAGE_SIZE_ADVISORIES = ["GHSA-5p2g-fcmc-qvqq", "GHSA-w3rx-r6r6-pgpr"];
+const BRACES_ADVISORY = "GHSA-vfj7-8cjw-p6xm";
+const FORGE_ADVISORY = "GHSA-86w9-cpqp-85rv";
+const BUN_ADVISORIES = [...IMAGE_SIZE_ADVISORIES, BRACES_ADVISORY, FORGE_ADVISORY];
+const profiles = {desktop: "apps/desktop", mobile: "apps/mobile", eas: "tools/eas-cli"};
+const npmLock = (profile) => JSON.parse(readFileSync(`${profiles[profile]}/package-lock.json`, "utf8"));
+const bunLock = () => {
+  const parsed = ts.parseConfigFileTextToJson("bun.lock", readFileSync("bun.lock", "utf8"));
+  expect(parsed.error).toBeUndefined();
+  return parsed.config;
+};
 
 const REQUIRED_PULL_REQUEST_PATHS = [
   ".github/workflows/dependency-audit.yml",
@@ -21,6 +33,8 @@ const REQUIRED_PULL_REQUEST_PATHS = [
   "packages/*/package.json",
   "scripts/ci/validate-dependency-audit.test.js",
   "scripts/ci/validate-mobile-npm-audit.js",
+  "scripts/ci/validate-npm-audit.js",
+  "scripts/ci/audit-build-tool-topology.json",
   "tools/eas-cli/package.json",
 ];
 
@@ -30,14 +44,15 @@ const TRACKED_NPM_LOCKFILES = execFileSync(
   { encoding: "utf8" },
 ).trim().split("\n").filter(Boolean).sort();
 
-test("Bun audit exceptions stay limited to Metro's unpatched build dependency", () => {
+test("Bun audit exceptions stay limited to exact reviewed build-tool advisories and topology", () => {
   const workflow = readFileSync(".github/workflows/dependency-audit.yml", "utf8");
   const lockfile = readFileSync("bun.lock", "utf8");
 
-  for (const advisory of IMAGE_SIZE_ADVISORIES) {
+  for (const advisory of BUN_ADVISORIES) {
     expect(workflow.match(new RegExp(`--ignore=${advisory}`, "g"))).toHaveLength(1);
   }
-  expect(workflow.match(/--ignore=/g)).toHaveLength(IMAGE_SIZE_ADVISORIES.length);
+  expect(workflow.match(/--ignore=/g)).toHaveLength(BUN_ADVISORIES.length);
+  expect(() => validateBunAuditTopology(bunLock())).not.toThrow();
 
   const imageSizeReferences = lockfile.match(/"image-size": "[^"]+"/g) ?? [];
   expect(imageSizeReferences).toEqual([
@@ -166,54 +181,166 @@ test("every tracked npm package lock triggers and runs its own audit", () => {
   );
 });
 
-const advisory = (id) => ({
-  url: `https://github.com/advisories/${id}`,
+const advisory = (name, id, range) => ({
+  name, dependency: name, range, url: `https://github.com/advisories/${id}`,
 });
 
-const allowedMobileAuditReport = () => ({
-  vulnerabilities: {
-    "image-size": {
-      name: "image-size",
-      via: IMAGE_SIZE_ADVISORIES.map(advisory),
-    },
-    metro: {
-      name: "metro",
-      via: ["image-size", "metro-config"],
-    },
-    "metro-config": {
-      name: "metro-config",
-      via: ["metro", "image-size"],
-    },
-  },
+const allowedReport = (profile) => {
+  const vulnerabilities = {
+    braces: {name: "braces", severity: "high", via: [advisory("braces", BRACES_ADVISORY, "<=3.0.3")], nodes: ["node_modules/braces"]},
+  };
+  if (profile !== "desktop") vulnerabilities["node-forge"] = {
+    name: "node-forge", severity: "high", via: [advisory("node-forge", FORGE_ADVISORY, "<=1.4.0")], nodes: ["node_modules/node-forge"],
+  };
+  if (profile === "mobile") vulnerabilities["image-size"] = {
+    name: "image-size", severity: "high", via: [
+      advisory("image-size", IMAGE_SIZE_ADVISORIES[0], ">=1.2.0 <=2.0.2"),
+      advisory("image-size", IMAGE_SIZE_ADVISORIES[1], ">=0.6.3 <=2.0.2"),
+    ], nodes: ["node_modules/image-size"],
+  };
+  return {auditReportVersion: 2, vulnerabilities, metadata: {vulnerabilities: {
+    info: 0, low: 0, moderate: 0, high: Object.keys(vulnerabilities).length, critical: 0, total: Object.keys(vulnerabilities).length,
+  }}};
+};
+
+for (const profile of Object.keys(profiles)) {
+  test(`${profile} npm audit accepts only the exact reviewed advisory set`, () => {
+    expect(() => validateNpmAuditReport(allowedReport(profile), profile, npmLock(profile))).not.toThrow();
+    if (profile === "mobile") expect(() => validateMobileAuditReport(allowedReport(profile))).not.toThrow();
+    const unexpected = allowedReport(profile);
+    unexpected.vulnerabilities.braces.via.push(advisory("braces", "GHSA-unexpected-advisory", "<=3.0.3"));
+    expect(() => validateNpmAuditReport(unexpected, profile, npmLock(profile))).toThrow(/unexpected direct advisories/);
+    const missing = allowedReport(profile);
+    missing.vulnerabilities.braces.via = [];
+    expect(() => validateNpmAuditReport(missing, profile, npmLock(profile))).toThrow(/invalid dependency record/);
+  });
+
+  test(`${profile} exceptions fail on version, topology, or runtime exposure drift`, () => {
+    for (const mutate of [
+      (lock) => { lock.packages["node_modules/braces"].version = "3.0.4"; },
+      (lock) => { lock.packages["node_modules/new-runtime"] = {version: "1.0.0", dependencies: {braces: "3.0.3"}}; },
+      (lock) => { lock.packages["node_modules/nested/node_modules/braces"] = {version: "3.0.3"}; },
+      (lock) => { lock.packages[""].dependencies.braces = "3.0.3"; },
+      (lock) => { lock.packages["node_modules/micromatch"].dependencies.braces = "^2.0.0"; },
+    ]) {
+      const lock = npmLock(profile);
+      mutate(lock);
+      expect(() => validateNpmAuditTopology(lock, profile)).toThrow(/unreviewed/);
+    }
+    if (profile === "desktop") {
+      const lock = npmLock(profile);
+      lock.packages["node_modules/braces"].dev = false;
+      expect(() => validateNpmAuditTopology(lock, profile)).toThrow(/unreviewed/);
+    }
+  });
+}
+
+test("npm exceptions reject malformed reports, API errors, unknown records, and altered IDs or ranges", () => {
+  for (const mutate of [
+    (r) => { r.error = {code: "EAUDITNETWORK"}; },
+    (r) => { r.auditReportVersion = 1; },
+    (r) => { r.vulnerabilities = []; },
+    (r) => { delete r.metadata; },
+    (r) => { r.metadata.vulnerabilities.total = 999; },
+    (r) => { r.metadata.vulnerabilities.high = -1; },
+    (r) => { r.vulnerabilities.braces.name = "unrelated"; },
+    (r) => { r.vulnerabilities.braces.severity = "unknown"; },
+    (r) => { r.vulnerabilities.braces.nodes = ["node_modules/unknown"]; },
+    (r) => { r.vulnerabilities.braces.via[0].dependency = "unrelated"; },
+    (r) => { r.vulnerabilities.braces.via[0].url = `https://evil.example/advisories/${BRACES_ADVISORY}`; },
+    (r) => { r.vulnerabilities.braces.via[0].range = "*"; },
+    (r) => { r.vulnerabilities.braces.via.push(null); },
+    (r) => { r.vulnerabilities.braces.via.push("unrelated"); },
+    (r) => { r.vulnerabilities.braces.via.push(r.vulnerabilities.braces.via[0]); },
+  ]) {
+    const report = allowedReport("mobile");
+    mutate(report);
+    expect(() => validateMobileAuditReport(report)).toThrow();
+  }
 });
 
-test("mobile npm audit accepts only the exact Metro image-size advisory closure", () => {
-  expect(() => validateMobileAuditReport(allowedMobileAuditReport())).not.toThrow();
+test("npm advisory closure rejects missing dependencies and unrelated cycles", () => {
+  const missing = allowedReport("mobile");
+  missing.vulnerabilities.micromatch = {name: "micromatch", severity: "high", via: ["braces"], nodes: ["node_modules/micromatch"]};
+  missing.metadata.vulnerabilities.high += 1;
+  missing.metadata.vulnerabilities.total += 1;
+  expect(() => validateMobileAuditReport(missing)).not.toThrow();
+  delete missing.vulnerabilities.braces;
+  missing.metadata.vulnerabilities.high -= 1;
+  missing.metadata.vulnerabilities.total -= 1;
+  expect(() => validateMobileAuditReport(missing)).toThrow(/unexpected direct advisories/);
+  const unrelated = allowedReport("mobile");
+  unrelated.vulnerabilities["metro-config"] = {name: "metro-config", severity: "high", via: ["metro"], nodes: ["node_modules/metro-config"]};
+  unrelated.vulnerabilities.metro = {name: "metro", severity: "high", via: ["metro-config"], nodes: ["node_modules/metro"]};
+  unrelated.metadata.vulnerabilities.high += 2;
+  unrelated.metadata.vulnerabilities.total += 2;
+  expect(() => validateMobileAuditReport(unrelated)).toThrow(/not caused by a reviewed build-tool advisory/);
+});
 
-  const unexpectedAdvisory = allowedMobileAuditReport();
-  unexpectedAdvisory.vulnerabilities["image-size"].via.push(
-    advisory("GHSA-unexpected-advisory"),
-  );
-  expect(() => validateMobileAuditReport(unexpectedAdvisory)).toThrow(
-    /unexpected direct advisories/,
-  );
+test("Bun exceptions reject new runtime consumers, nested copies, and changed versions", () => {
+  for (const mutate of [
+    (lock) => { lock.packages.braces[0] = "braces@3.0.4"; },
+    (lock) => { lock.packages["unexpected-runtime"] = ["unexpected-runtime@1.0.0", "", {dependencies: {braces: "3.0.3"}}]; },
+    (lock) => { lock.packages["nested/braces"] = structuredClone(lock.packages.braces); },
+    (lock) => { lock.workspaces["apps/cloud"].dependencies.braces = "3.0.3"; },
+  ]) {
+    const lock = bunLock();
+    mutate(lock);
+    expect(() => validateBunAuditTopology(lock)).toThrow(/unreviewed/);
+  }
+});
 
-  const missingAdvisory = allowedMobileAuditReport();
-  missingAdvisory.vulnerabilities["image-size"].via.pop();
-  expect(() => validateMobileAuditReport(missingAdvisory)).toThrow(
-    /unexpected direct advisories/,
-  );
+test("Hono is pinned to the patched version throughout the Bun lock", () => {
+  const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+  expect(manifest.overrides.hono).toBe("4.13.7");
+  expect(manifest.resolutions.hono).toBe("4.13.7");
+  const versions = Object.values(bunLock().packages).filter((metadata) => metadata[0].startsWith("hono@"));
+  expect(versions.map((metadata) => metadata[0])).toEqual(["hono@4.13.7"]);
+});
 
-  const unrelatedCycle = allowedMobileAuditReport();
-  unrelatedCycle.vulnerabilities.unrelated = {
-    name: "unrelated",
-    via: ["unrelated-helper"],
+const buildToolImportNames = [
+  "braces", "node-forge", "image-size", "micromatch", "chokidar", "fast-glob", "tailwindcss", "metro", "metro-config",
+  "@expo/cli", "@expo/code-signing-certificates", "@expo/pkcs12", "jks-js", "nativewind/metro",
+];
+const buildToolImports = (source, path = "runtime.ts") => {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const matches = [];
+  const visit = (node) => {
+    let literal;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) literal = node.moduleSpecifier;
+    else if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+      || (ts.isIdentifier(node.expression) && node.expression.text === "require"))) literal = node.arguments[0];
+    if (literal && ts.isStringLiteralLike(literal)
+      && buildToolImportNames.some((name) => literal.text === name || literal.text.startsWith(`${name}/`))) matches.push(literal.text);
+    ts.forEachChild(node, visit);
   };
-  unrelatedCycle.vulnerabilities["unrelated-helper"] = {
-    name: "unrelated-helper",
-    via: ["unrelated"],
-  };
-  expect(() => validateMobileAuditReport(unrelatedCycle)).toThrow(
-    /not transitively caused by image-size/,
-  );
+  visit(file);
+  return matches;
+};
+
+test("runtime exposure guard catches static, side-effect, dynamic, and template-literal imports", () => {
+  for (const source of [
+    'import {expand} from "braces";',
+    'import "node-forge";',
+    'export * from "micromatch";',
+    'require ("@expo/cli/build");',
+    'import(`node-forge`);',
+  ]) expect(buildToolImports(source)).toHaveLength(1);
+  expect(buildToolImports('import {Text} from "react-native"; const label = "braces";')).toEqual([]);
+});
+
+test("shipped runtime sources never import the excepted Node build-tool chains", () => {
+  const files = (path) => readdirSync(path, {withFileTypes: true}).flatMap((entry) => {
+    if (["node_modules", "__tests__", ".expo", "dist"].includes(entry.name)) return [];
+    const child = join(path, entry.name);
+    return entry.isDirectory() ? files(child) : /\.[cm]?[jt]sx?$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name) ? [child] : [];
+  });
+  const roots = [
+    "apps/desktop/src", "apps/mobile/app", "apps/mobile/lib", "apps/mobile/components", "apps/mobile/hooks",
+    "apps/mobile/contexts", "apps/mobile/constants", "apps/mobile/utils", "apps/mobile/modules", "apps/mobile/shims",
+    "packages/core/src", "apps/cloud/src", "apps/mcp-server/src",
+  ];
+  const sources = [...roots.flatMap(files), "apps/mobile/index.js", "apps/mobile/polyfills.js"];
+  const imports = sources.flatMap((path) => buildToolImports(readFileSync(path, "utf8"), path).map((name) => `${path}: ${name}`));
+  expect(imports).toEqual([]);
 });

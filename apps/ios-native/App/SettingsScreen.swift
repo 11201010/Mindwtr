@@ -1,4 +1,7 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+import MindwtrNativeCore
 
 struct SettingsScreen: View {
     @ObservedObject var model: CoreModel
@@ -24,7 +27,8 @@ struct SettingsScreen: View {
             HStack(spacing: 12) {
                 Button {
                     renameFocused = false
-                    if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+                    if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
+                    else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
                     else if model.settingsGeneralPresented { model.closeGeneralSettings() }
                     else if model.settingsManagePresented { model.closeManageSettings() }
                     else { Task { await model.closeSettings() } }
@@ -34,22 +38,25 @@ struct SettingsScreen: View {
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(model.busy || model.retryNeeded || model.somedaySectionRenamePending
+                .disabled(!model.settingsDataPresented && (model.busy || model.retryNeeded || model.somedaySectionRenamePending
                           || model.somedaySectionRenameAwaitingRefresh
                           || model.somedaySectionDeletePending || model.somedaySectionDeleteAwaitingRefresh
                           || model.somedaySectionOrderActive || model.unassignedAreaColorActive
                           || (model.settingsGtdPresented ? model.gtdWorkflowPending : model.generalPreferenceActive) || model.settingsTaxonomyActive || model.settingsPersonDeleteActive || model.settingsAreaDeleteActive || model.settingsAreaEditActive
-                          || model.settingsPersonCreatePresented || model.settingsPersonEditPresented)
+                          || model.settingsPersonCreatePresented || model.settingsPersonEditPresented))
                 .accessibilityLabel(model.label("common.back"))
-                .accessibilityIdentifier(model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
-                Text(model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
+                .accessibilityIdentifier(model.settingsDataPresented ? "diagnostics-back" : model.settingsGtdArchivePresented ? "gtd-archive-back" : model.settingsGtdTaskEditorPresented ? "gtd-taskEditor-back" : model.settingsGtdCapturePresented ? "gtd-capture-back" : model.settingsGtdInboxPresented ? "gtd-inbox-back" : model.settingsGtdReviewPresented ? "gtd-review-back" : model.settingsGtdPresented ? "gtd-back" : model.settingsGeneralPresented ? "general-back" : model.settingsManagePresented ? "manage-back" : "settings-back")
+                Text(model.settingsDataPresented ? model.dataSettings.text("title") : model.settingsGtdArchivePresented ? (model.gtdArchive.text("title").isEmpty ? model.label("settings.autoArchive") : model.gtdArchive.text("title")) : model.settingsGtdTaskEditorPresented ? model.gtdTaskEditor.text("title") : model.settingsGtdCapturePresented ? (model.gtdCapture.text("title").isEmpty ? model.label("settings.captureSettings") : model.gtdCapture.text("title")) : model.settingsGtdInboxPresented ? (model.gtdInbox.text("title").isEmpty ? model.label("settings.inboxProcessing") : model.gtdInbox.text("title")) : model.settingsGtdReviewPresented ? (model.gtdReview.text("title").isEmpty ? model.label("settings.reviewSettings") : model.gtdReview.text("title")) : model.settingsGtdPresented ? (model.gtdWorkflow.text("title").isEmpty ? model.label("settings.gtd") : model.gtdWorkflow.text("title")) : model.settingsGeneralPresented ? (model.generalSettings.text("title").isEmpty ? model.label("settings.general") : model.generalSettings.text("title")) : model.settingsManagePresented ? model.manageSettings.text("title") : model.settingsMenu.text("title"))
                     .rnFont(20, .bold).foregroundStyle(palette.text)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(palette.card)
-            if model.settingsGtdArchivePresented { gtdArchiveContent }
+            if model.settingsDataPresented {
+                DiagnosticsCard(model: model, palette: palette, owner: model.settingsDiagnosticsOwner)
+            }
+            else if model.settingsGtdArchivePresented { gtdArchiveContent }
             else if model.settingsGtdTaskEditorPresented { gtdTaskEditorContent }
             else if model.settingsGtdCapturePresented { gtdCaptureContent }
             else if model.settingsGtdInboxPresented { gtdInboxContent }
@@ -183,7 +190,8 @@ struct SettingsScreen: View {
             set: { if !$0 && !model.appLock.concealed { model.closeGtdTaskEditorField() } }
         )) { gtdTaskEditorFieldSheet }
         .accessibilityAction(.escape) {
-            if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
+            if model.settingsDataPresented { model.closeDiagnostics(owner: model.settingsDiagnosticsOwner) }
+            else if model.settingsGtdPresented { Task { await model.closeGtdSettings(); gtdTimeFocused = false } }
             else if model.settingsGeneralPresented { model.closeGeneralSettings() }
             else if model.settingsManagePresented { model.closeManageSettings() }
             else { Task { await model.closeSettings() } }
@@ -834,6 +842,7 @@ struct SettingsScreen: View {
                                 Button {
                                     if row.text("id") == "manage" { Task { await model.openManageSettings() } }
                                     else if row.text("id") == "general" { Task { await model.openGeneralSettings() } }
+                                    else if row.text("id") == "data" { Task { await model.openDataSettings() } }
                                     else if row.text("id") == "gtd" { Task { await model.openGtdSettings() } }
                                 } label: {
                                     HStack(spacing: 12) {
@@ -854,8 +863,8 @@ struct SettingsScreen: View {
                                     }
                                     .padding(.horizontal, 14).frame(minHeight: 60).contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain).disabled(!["manage", "general", "gtd"].contains(row.text("id")) || model.busy || model.retryNeeded)
-                                .opacity(["manage", "general", "gtd"].contains(row.text("id")) ? 1 : 0.55)
+                                .buttonStyle(.plain).disabled(!["manage", "general", "gtd", "data"].contains(row.text("id")) || model.busy || model.retryNeeded)
+                                .opacity(["manage", "general", "gtd", "data"].contains(row.text("id")) ? 1 : 0.55)
                                 .accessibilityLabel(row.text("accessibilityLabel").isEmpty ? row.text("title") : row.text("accessibilityLabel"))
                                 .accessibilityIdentifier("settings-" + row.text("id"))
                                 if rowIndex < groups[groupIndex].count - 1 { palette.border.frame(height: 0.5) }
@@ -1851,4 +1860,348 @@ struct SettingsScreen: View {
         default: return "gearshape"
         }
     }
+}
+
+/// One shared card for Settings and the locally owned pending-task sheet.
+struct DiagnosticsCard: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    let owner: UUID
+    @State private var backupOpen = false
+    @State private var backupPreviewPresented = false
+    @State private var backupPreviewAnswered = false
+    @State private var backupRestorePresented = false
+    @State private var backupRestoreAnswered = false
+
+    var body: some View {
+        let pickerID = model.backupImportPickerID
+        let pickerAction = model.backupImportPickerAction
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if owner == model.settingsDiagnosticsOwner {
+                    let backup = model.dataSettings.object("backup")
+                    Button { backupOpen.toggle() } label: {
+                        HStack {
+                            Text(backup.text("title")).rnFont(18, .bold)
+                            Spacer()
+                            Image(systemName: backupOpen ? "chevron.down" : "chevron.forward")
+                                .foregroundStyle(palette.secondary).accessibilityHidden(true)
+                        }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("backup-disclosure")
+                    if backupOpen {
+                        Button { Task { await model.exportDataBackup() } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(backup.text("exportLabel")).rnFont(15, .semibold)
+                                Text(backup.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .disabled(!model.backupExportEnabled)
+                        .accessibilityIdentifier("data-transfer-export")
+                        Button { Task { await model.exportDataBackup(format: .csv) } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(backup.text("csvLabel")).rnFont(15, .semibold)
+                                Text(backup.text("csvDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .disabled(!model.backupExportEnabled)
+                        .accessibilityIdentifier("data-transfer-export-csv")
+                        Button { Task { await model.exportDataBackup(format: .tasknotes) } } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(backup.text("tasknotesLabel")).rnFont(15, .semibold)
+                                Text(backup.text("tasknotesDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }.multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .disabled(!model.backupExportEnabled)
+                        .accessibilityIdentifier("data-transfer-export-tasknotes")
+                        if model.backupExportBusy { ProgressView().accessibilityIdentifier("backup-export-progress") }
+                        if let failure = model.backupExportError {
+                            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                                .accessibilityIdentifier("backup-export-error")
+                        }
+                        backupTransferContent(backup)
+                    }
+                }
+                Text(model.diagnosticsLabels.text("title")).rnFont(18, .bold)
+                    .accessibilityAddTraits(.isHeader).accessibilityIdentifier("diagnostics-title")
+                let logging = model.diagnosticsLabels.object("debugLogging")
+                Toggle(isOn: Binding(get: { logging.flag("value") }, set: { value in
+                    Task { await model.setDiagnosticsDebugLogging(value) }
+                })) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(logging.text("label")).rnFont(15, .semibold)
+                        Text(logging.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(!model.diagnosticsToggleEnabled || owner != model.settingsDiagnosticsOwner)
+                .accessibilityIdentifier("diagnostics-debug-logging")
+                if let share = model.diagnosticsLabels["shareLog"] as? CoreObject {
+                    Button { Task { await model.shareDiagnostics(owner: owner) } } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(share.text("label")).rnFont(15, .semibold)
+                            Text(share.text("description")).rnFont(13).foregroundStyle(palette.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .disabled(!model.diagnosticsFileActionsEnabled(owner: owner))
+                    .accessibilityIdentifier("diagnostics-share")
+                }
+                if let clear = model.diagnosticsLabels["clearLog"] as? CoreObject {
+                    Button { Task { await model.clearDiagnostics(owner: owner) } } label: {
+                        Text(clear.text("label")).rnFont(15, .semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .disabled(!model.diagnosticsFileActionsEnabled(owner: owner))
+                    .accessibilityIdentifier("diagnostics-clear")
+                }
+                if let message = model.diagnosticsMessage {
+                    Text(message).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("diagnostics-message").accessibilityAddTraits(.updatesFrequently)
+                }
+                if let failure = model.diagnosticsReadError {
+                    Text(failure).rnFont(13).foregroundStyle(palette.danger)
+                        .accessibilityIdentifier("diagnostics-read-error")
+                    if owner == model.settingsDiagnosticsOwner {
+                        Button(model.label("common.retry")) { Task { await model.retryDataSettingsRead() } }
+                            .disabled(model.busy).frame(minHeight: 44).accessibilityIdentifier("diagnostics-retry")
+                    }
+                }
+                #if DEBUG && targetEnvironment(simulator)
+                if !model.backupExportTestState.isEmpty {
+                    Text(model.backupExportTestState).font(.caption)
+                        .accessibilityIdentifier("backup-export-test-state")
+                }
+                if !model.diagnosticsShareTestState.isEmpty {
+                    Text(model.diagnosticsShareTestState).font(.caption)
+                        .accessibilityIdentifier("diagnostics-test-share-state")
+                }
+                #endif
+                if model.diagnosticsFileBusy { ProgressView().accessibilityIdentifier("diagnostics-file-progress") }
+            }
+            .foregroundStyle(palette.text).padding(16)
+        }
+        .background(palette.bg).accessibilityIdentifier("diagnostics-scroll")
+        .sheet(item: Binding(get: {
+            guard let payload = model.diagnosticsShare, payload.owner == owner,
+                  model.diagnosticsCurrent(owner: owner, session: payload.id) else { return nil }
+            return payload
+        }, set: { (_: DiagnosticsSharePayload?) in model.dismissDiagnosticsShare(owner: owner) })) { payload in
+            DiagnosticsActivitySheet(url: payload.url)
+        }
+        .sheet(item: Binding(get: { owner == model.settingsDiagnosticsOwner ? model.backupShare : nil },
+                             set: { (_: NativeBackupExport?) in model.dismissBackupShare() })) { payload in
+            DiagnosticsActivitySheet(url: payload.url)
+        }
+        .fileImporter(isPresented: Binding(
+            get: { owner == model.settingsDiagnosticsOwner && model.backupImportPickerPresented },
+            set: { if owner == model.settingsDiagnosticsOwner { model.setBackupImportPickerPresented($0) } }
+        ), allowedContentTypes: pickerAction == .dgt ? [.json, .zip, .data]
+            : pickerAction == .omnifocus ? [.commaSeparatedText, .json, .zip, .data]
+            : pickerAction.usesBinarySource ? [.commaSeparatedText, .zip, .data] : [.json],
+           allowsMultipleSelection: false) { result in
+            Task { await model.receiveBackupImportSelection(result, pickerID: pickerID, action: pickerAction) }
+        }
+        .alert(model.backupImportPreview.text(model.backupImportPreview.flag("valid") ? "title" : "errorTitle"),
+               isPresented: $backupPreviewPresented) {
+            Button(model.backupImportPreview.text("cancelLabel"), role: .cancel) {
+                backupPreviewAnswered = true
+                model.cancelBackupImportPreview()
+            }.accessibilityIdentifier("backup-import-cancel")
+            if model.backupImportPreview.flag("valid") {
+                Button(model.backupImportPreview.text("confirmLabel"), role: model.backupImportIsReplacement ? .destructive : nil) {
+                    backupPreviewAnswered = true
+                    Task { await model.confirmBackupImport() }
+                }.accessibilityIdentifier("backup-import-confirm")
+            }
+        } message: {
+            Text(model.backupImportPreview.text(model.backupImportPreview.flag("valid") ? "summary" : "errorMessage"))
+        }
+        .alert(model.backupRestoreConfirmation.text("title"), isPresented: $backupRestorePresented) {
+            Button(model.backupRestoreConfirmation.text("cancelLabel"), role: .cancel) {
+                backupRestoreAnswered = true
+                model.cancelBackupRestore()
+            }.accessibilityIdentifier("backup-restore-cancel")
+            Button(model.backupRestoreConfirmation.text("confirmLabel"), role: .destructive) {
+                backupRestoreAnswered = true
+                Task { await model.confirmBackupRestore() }
+            }.accessibilityIdentifier("backup-restore-confirm")
+        } message: {
+            Text(model.backupRestoreConfirmation.text("message"))
+        }
+        .onChange(of: model.backupImportPreview.isEmpty) { empty in
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupPreviewAnswered = false
+            backupPreviewPresented = !empty
+        }
+        .onChange(of: backupPreviewPresented) { presented in
+            guard !presented, owner == model.settingsDiagnosticsOwner else { return }
+            DispatchQueue.main.async {
+                if !backupPreviewAnswered && !backupPreviewPresented { model.cancelBackupImportPreview() }
+            }
+        }
+        .onChange(of: model.backupRestoreConfirmation.isEmpty) { empty in
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupRestoreAnswered = false
+            backupRestorePresented = !empty
+        }
+        .onChange(of: backupRestorePresented) { presented in
+            guard !presented, owner == model.settingsDiagnosticsOwner else { return }
+            DispatchQueue.main.async {
+                if !backupRestoreAnswered && !backupRestorePresented { model.cancelBackupRestore() }
+            }
+        }
+        .onChange(of: model.backupDocumentResult.isEmpty) { empty in
+            if owner == model.settingsDiagnosticsOwner && !empty { backupOpen = true }
+        }
+        .onChange(of: model.backupDocumentPending) { pending in
+            if owner == model.settingsDiagnosticsOwner && pending { backupOpen = true }
+        }
+        .onAppear {
+            guard owner == model.settingsDiagnosticsOwner else { return }
+            backupOpen = !model.backupDocumentResult.isEmpty || model.backupDocumentPending || model.backupResultReadRetryNeeded
+            backupPreviewPresented = !model.backupImportPreview.isEmpty
+            backupRestorePresented = !model.backupRestoreConfirmation.isEmpty
+        }
+    }
+
+    @ViewBuilder
+    private func backupTransferContent(_ backup: CoreObject) -> some View {
+        Button { model.openBackupImportPicker(action: .replace) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("restoreFileLabel")).rnFont(15, .semibold)
+                Text(backup.text("restoreFileDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-restore")
+        Button { model.openBackupImportPicker() } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("mergeLabel")).rnFont(15, .semibold)
+                Text(backup.text("mergeDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-merge")
+        Button { model.openBackupImportPicker(action: .csv) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("csvImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("csvImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-csv")
+        Button { model.openBackupImportPicker(action: .todoist) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("todoistImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("todoistImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-todoist")
+        Button { model.openBackupImportPicker(action: .ticktick) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("ticktickImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("ticktickImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-ticktick")
+        Button { model.openBackupImportPicker(action: .dgt) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("dgtImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("dgtImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-dgt")
+        Button { model.openBackupImportPicker(action: .omnifocus) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(backup.text("omnifocusImportLabel")).rnFont(15, .semibold)
+                Text(backup.text("omnifocusImportDescription")).rnFont(13).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .disabled(!model.backupImportEnabled)
+        .accessibilityIdentifier("data-transfer-import-omnifocus")
+        if model.backupImportBusy {
+            ProgressView().accessibilityIdentifier("backup-import-progress")
+        }
+        if let failure = model.backupImportError {
+            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-import-error")
+        }
+        if model.backupDocumentPending || model.backupResultReadRetryNeeded {
+            Button(model.label("common.retry")) { Task { await model.retryBackupTransferRead() } }
+                .disabled(model.busy).frame(minHeight: 44).accessibilityIdentifier("backup-document-retry")
+        }
+        if !model.backupDocumentResult.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(model.backupDocumentResult.text("title")).rnFont(16, .semibold)
+                    .accessibilityAddTraits(.isHeader).accessibilityIdentifier("backup-document-result")
+                Text(model.backupDocumentResult.text("message")).rnFont(14)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-document-message")
+                if !model.backupDocumentResult.text("undoLabel").isEmpty {
+                    Button(model.backupDocumentResult.text("undoLabel")) { Task { await model.requestBackupUndo() } }
+                        .disabled(!model.backupUndoEnabled).frame(minHeight: 44)
+                        .accessibilityIdentifier("backup-result-undo")
+                }
+                Button(model.backupDocumentResult.text("doneLabel")) { model.dismissBackupDocumentResult() }
+                    .disabled(model.busy || model.backupDocumentPending).frame(minHeight: 44)
+                    .accessibilityIdentifier("backup-result-done")
+            }
+        }
+        Text(backup.text("snapshotsLabel")).rnFont(16, .semibold)
+            .accessibilityAddTraits(.isHeader).accessibilityIdentifier("backup-snapshots-title")
+        if let failure = model.backupSnapshotReadError {
+            Text(failure).rnFont(14).foregroundStyle(palette.danger)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("backup-snapshots-error")
+            Button(model.label("common.retry")) { Task { await model.retryBackupTransferRead() } }
+                .disabled(model.busy || model.retryNeeded).frame(minHeight: 44)
+                .accessibilityIdentifier("backup-snapshots-retry")
+        } else if model.backupSnapshots.isEmpty {
+            Text(model.label("settings.recoverySnapshotsEmpty")).rnFont(14).foregroundStyle(palette.secondary)
+                .accessibilityIdentifier("backup-snapshots-empty")
+        } else {
+            ForEach(model.backupSnapshots) { snapshot in
+                Button { Task { await model.requestBackupRestore(snapshot) } } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(snapshot.name).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                        Text(backup.text("restoreLabel")).rnFont(14, .semibold)
+                    }.multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .disabled(!model.backupImportEnabled)
+                .accessibilityIdentifier("backup-snapshot-restore-\(snapshot.id)")
+            }
+        }
+    }
+}
+
+private struct DiagnosticsActivitySheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

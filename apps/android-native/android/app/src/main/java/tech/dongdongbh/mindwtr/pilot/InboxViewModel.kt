@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -84,7 +85,7 @@ internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_N
  */
 private val STALE_SHOWN = setOf("saveDraft", "update", "calendarCreate", "manageEditor")
 /** Commands core can refuse before writing: an update, an editor save, a saved search, a Process Inbox answer, and the Menu tab's commands. */
-private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS + ATTACHMENT_KINDS
+private val REFUSABLE = setOf("update", "saveDraft", "resetChecklist", "saveSearch", "inboxCommit", "inboxSkip", "capture", "captureLines", "capturePicker") + MENU_KINDS + CAPTURE_MODAL_KINDS + ATTACHMENT_KINDS + PROJECT_DETAIL_KINDS
 
 private fun JSONObject.metaPart(): MetaPart = MetaPart(
     getString("kind"), getString("text"), getBoolean("detail"), text("dotColor"), text("tone"),
@@ -242,6 +243,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     val ai = AIActionsModel(this)
     /** The editor's and the project screen's attachments (Attachments.kt): rows, pickers, links, downloads, opening. */
     val attachments = AttachmentsModel(this)
+    /** The open project's Details (ProjectDetails.kt): its pickers and core's prepared commits. */
+    val projectDetails = ProjectDetailsModel(this)
     /** A link, share or assistant note waiting to open (EntryPoints.kt). */
     val entries = EntryRouter(this, File(app.noBackupFilesDir, "entries"))
     /** A system capture's screen closed: MainActivity puts the app behind the previous one, as RN's returnToPreviousApp (#1169). */
@@ -282,8 +285,23 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
     }
 
-    /** RN's AppState for core's sync triggers: "active" on resume, "background" on leaving (MainActivity). */
-    fun appState(state: String) = ProcessCoreHost.appState(state)
+    /** Each resume (MainActivity), for screens that read a system state again then (the exact-alarm notice). */
+    var resumes by mutableIntStateOf(0); private set
+
+    /** RN's AppState for core's sync triggers and the reminder alarms: "active" on resume, "background" on leaving (MainActivity). */
+    fun appState(state: String) {
+        if (state == "active") resumes += 1
+        ProcessCoreHost.appState(state)
+    }
+
+    /**
+     * Whether to ask for the notification permission now, as RN asks at start (once per process; ProcessCoreHost.askNotifications),
+     * once the reminder alarms started: they start with sync, after the first screen's content.
+     */
+    suspend fun askNotifications(): Boolean {
+        ProcessCoreHost.remindersStarted.await()
+        return ProcessCoreHost.askNotifications()
+    }
 
     override fun onCleared() {
         ProcessCoreHost.unlistenSync(syncListener)
@@ -1014,6 +1032,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             }
             // A project's attachment command (Attachments.kt) with its exact request.
             in ATTACHMENT_KINDS -> attachments.retry(action)
+            // A Project details commit (ProjectDetails.kt) with its exact request and preparation.
+            in PROJECT_DETAIL_KINDS -> projectDetails.retry(action)
             // The Menu tab's commands (MENU_KINDS) keep their exact request in MenuModel.
             else -> menu.retry(action)
         }
@@ -1645,6 +1665,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun closeProject() {
         keepProject(null)
         project = null
+        // RN's project modal starts folded with every picker shut each time it opens.
+        projectDetails.follow(null)
     }
 
     /** The open project's next window at the loaded revision. */
@@ -1777,8 +1799,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private var commandAt = 0L
     private val shownAt = HashMap<Part, Long>()
 
-    /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices. */
-    internal enum class Part { Focus, Projects, Project, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
+    /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices, ProjectDetails the open project's Details values. */
+    internal enum class Part { Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
 
     /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
     internal fun issue(): Long = ++issued
@@ -1840,6 +1862,11 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
      * command succeeds, its lists are read again in the background.
      */
     internal fun perform(action: FailedAction? = null, work: (CoreHost) -> Unit) {
+        tryPerform(action, work = work)
+    }
+
+    /** [perform], answering whether it started; [finished] runs once it ended and [busy] is clear. */
+    internal fun tryPerform(action: FailedAction? = null, finished: (() -> Unit)? = null, work: (CoreHost) -> Unit): Boolean {
         val runtime = host
         // A journal retry owed by work no screen sent (a CoreWork queue drain that stored an item but could not save or record
         // it) holds newer edits back too: until its replay, a reopen would be undone by that item's retry.
@@ -1847,7 +1874,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             failedAction = owed.action
             error = owed.error
         }
-        if (busy || runtime == null || (failedAction != null && failedAction != action)) return
+        if (busy || runtime == null || (failedAction != null && failedAction != action)) return false
         busy = true
         if (action != null) commandAt = ++issued
         if (failedAction == null) error = null
@@ -1889,8 +1916,10 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 ui {
                     busy = false
                     if ((done || stale) && action != null) refreshAll()
+                    finished?.invoke()
                 }
             }
         }, "mindwtr-action").start()
+        return true
     }
 }

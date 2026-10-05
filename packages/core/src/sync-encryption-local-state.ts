@@ -146,7 +146,7 @@ const parseLocalState = (raw: string | null): SyncEncryptionLocalState | null =>
         if (parsed?.state !== 'enabled'
             && parsed?.state !== 'remote-encrypted-no-key'
             && parsed?.state !== 'remote-plaintext'
-            && !(parsed?.state === 'off' && incompleteTransition)) {
+            && !(parsed?.state === 'off' && (incompleteTransition || typeof parsed?.partlyEncryptedScope === 'string'))) {
             throw new SyncEncryptionStateUnavailableError();
         }
         return {
@@ -157,6 +157,7 @@ const parseLocalState = (raw: string | null): SyncEncryptionLocalState | null =>
             // block rule reads a missing scope as "re-check this location" (#1138).
             discoveredScope: typeof parsed.discoveredScope === 'string' ? parsed.discoveredScope : undefined,
             incompleteTransition,
+            ...(typeof parsed.partlyEncryptedScope === 'string' ? { partlyEncryptedScope: parsed.partlyEncryptedScope } : {}),
         };
     } catch (error) {
         if (error instanceof SyncEncryptionStateUnavailableError) throw error;
@@ -431,7 +432,13 @@ export const createSyncEncryptionStateStore = ({
         getSyncEncryptionStatus: async () => {
             const state = await loadSyncEncryptionLocalState();
             if (!state || state.state === 'off') {
-                return { state: 'off', incompleteTransition: state?.incompleteTransition };
+                // The mark belongs to one location (the block rule's own test): another folder is whole and offers Enable.
+                const partly = state?.partlyEncryptedScope
+                    && isSyncEncryptionStateBlocked({ state: 'off', partlyEncryptedScope: state.partlyEncryptedScope }, await readActiveScope().catch(() => null));
+                return {
+                    state: 'off', incompleteTransition: state?.incompleteTransition,
+                    ...(partly ? { partlyEncrypted: true } : {}),
+                };
             }
             return {
                 state: state.state,

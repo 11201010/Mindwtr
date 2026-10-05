@@ -3,6 +3,9 @@ import {
     NativeReceiptSqliteAdapter,
     PENDING_CAPTURES_DIRECTORY,
     PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY,
+    NATIVE_HOST_CONTRACT_VERSION,
+    NATIVE_REMINDER_STATE_STORAGE_KEY,
+    REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     STATUS_COLORS_BY_THEME,
     type SqliteAdapter,
@@ -10,6 +13,20 @@ import {
     consoleLogger,
     createDiagnosticsLog,
     buildImmediateNotificationDetails,
+    buildNativeBackupDocumentResult,
+    buildNativeBackupSnapshotRestoreConfirmation,
+    commitNativeBackupDocument,
+    inspectNativeBackupDocument,
+    prepareNativeBackupDocument,
+    readNativeBackupDocumentOutcome,
+    validateNativeAttachmentDraftBegin,
+    validateNativeAttachmentDraftLineage,
+    prepareNativeAttachmentDraftAdd,
+    validateNativeAttachmentDraftBeginV2,
+    validateNativeAttachmentDraftLineageV2,
+    prepareNativeAttachmentDraftAddV2,
+    completeNativeAttachmentDraftAdd,
+    formatI18nTemplate,
     canSaveTaskListTag,
     createNativeHostContract,
     diagnosticsEntryFromLogPayload,
@@ -18,6 +35,7 @@ import {
     isSupportedLanguage,
     isDiagnosticsLoggingEnabled,
     isSandboxMode,
+    isWorkspaceTransitionActive,
     legacyImportMismatch,
     assertNativeLegacyBackupSafe,
     loadNativeRequestReceipts,
@@ -39,6 +57,8 @@ import {
     useTaskStore,
     flushPendingSave,
     formatListItemCount,
+    getBulkMoveStatusOptions,
+    type TaskStatus,
     webdavDeleteFile,
     webdavGetFile,
     webdavGetJson,
@@ -50,7 +70,10 @@ import {
     webdavPutJson,
 } from '@mindwtr/core';
 import { createNativeAI } from './host-ai';
+import { createNativeLocalAttachmentsForHost } from './host-attachments';
+import { createNativeReminders } from './host-reminders';
 import { createNativeSync, type NativeSync } from './host-sync';
+import { createWidgetPublisher, type WidgetInputs } from './host-widgets';
 
 type NativeBridge = {
     sqlRun(sql: string, params: string): string | null;
@@ -76,6 +99,16 @@ type NativeBridge = {
     hostEvent(json: string): string | null;
     /** Android only: opens an android.os.Trace section named `name`, or closes the open one for "". */
     trace?(name: string): void;
+    /** Reminder alarms (Reminders.kt): core's plan applied in core's order; the notification permission; RN's alarms cancelled once. */
+    alarmApply?(planJson: string): string | null;
+    notificationsAllowed?(): boolean | string;
+    rnAlarmCleanup?(): number | string;
+    reminderReceiverCounts?(): string;
+    reminderLedger?(): string;
+    /** RN's widget module on Android (HostWidgets.kt): the publication's device inputs as JSON, and the payload to write and draw. */
+    widgetInputs?(): string;
+    widgetPublish?(payload: string): string | null;
+    widgetAppState?(): string;
 };
 
 declare const globalThis: Record<string, unknown> & { MindwtrHost?: unknown };
@@ -147,6 +180,9 @@ const nativeLogFile: DiagnosticsLogFile = {
     append: async (line) => { logFile('append', line); return true; },
     size: async () => Number(logFile('size')),
     moveAside: async () => { logFile('moveAside'); },
+    ...(globalThis.__mindwtrHostPlatform === 'ios' ? {
+        isAbsent: async () => logFile('isAbsent') === '1',
+    } : {}),
 };
 const diagnosticsLog = createDiagnosticsLog({
     isEnabled: () => isDiagnosticsLoggingEnabled(useTaskStore.getState().settings),
@@ -304,11 +340,47 @@ const requireSync = (): NativeSync => {
     return nativeSync;
 };
 
+/** The language Kotlin last passed to setLanguage (RN's `mindwtr-language`), which the widgets' language falls back on as RN's does. */
+let storedLanguage: string | null = null;
+/** The home-screen widgets (host-widgets.ts), on a host with RN's widget module (Android); none on iOS or the gates' bridge. */
+const widgets = typeof (globalThis.__mindwtrNative as { widgetPublish?: unknown } | undefined)?.widgetPublish === 'function'
+    ? createWidgetPublisher({
+        ready: () => bootAdapter !== null,
+        inputs: () => JSON.parse(checked(native().widgetInputs!())) as WidgetInputs,
+        publish: (payload) => { checked(native().widgetPublish!(payload)); },
+        storedLanguage: () => storedLanguage,
+        active: () => checked(native().widgetAppState!()) === 'active',
+    })
+    : null;
+
 /** Settings › AI and the AI actions (host-ai.ts), on the same host: RN's AsyncStorage and SecureStore hold what RN's do. */
 const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwtrSecrets as HostSecrets) : null;
 
+const localAttachments = nativeSync ? null : createNativeLocalAttachmentsForHost();
+const attachmentsHost = nativeSync?.attachmentsHost ?? localAttachments?.contractHost;
 const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}),
-    ...(nativeSync?.attachmentsHost ? { attachments: nativeSync.attachmentsHost } : {}) });
+    ...(attachmentsHost ? { attachments: attachmentsHost } : {}) });
+
+/**
+ * Reminder alarms (host-reminders.ts), on a host with the alarm bridges (Android). The iOS host and the gates' stand-in bridge have
+ * none, so they plan no alarms, as before.
+ */
+const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown } | undefined)?.alarmApply === 'function'
+    ? createNativeReminders({
+        plan: (input) => contract.planReminderAlarms(input),
+        planSnooze: (input) => contract.planReminderSnooze(input),
+        readStored: async () => ({ alarms: await keyValue.get(REMINDER_ALARM_MAP_STORAGE_KEY), state: await keyValue.get(NATIVE_REMINDER_STATE_STORAGE_KEY) }),
+        permissionGranted: () => checked(native().notificationsAllowed!()) === true,
+        apply: (planJson) => { checked(native().alarmApply!(planJson)); },
+        cleanupRn: () => Number(checked(native().rnAlarmCleanup!())),
+        receiverCounts: () => JSON.parse(String(checked(native().reminderReceiverCounts!()))) as { dropped: number; notQueued: number },
+        ledger: () => JSON.parse(String(checked(native().reminderLedger!()))) as { fired: number[]; shown: number[] },
+    })
+    : null;
+const requireReminders = () => {
+    if (!reminders) throw new Error('Reminder alarms are not available on this host');
+    return reminders;
+};
 const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } }): T => {
     if ('error' in result) throw new Error(`${result.error.code}: ${result.error.message}`);
     return result.value;
@@ -355,7 +427,7 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand;
+    | 'syncPreference' | 'setAISetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand | ProjectDetailCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
@@ -366,8 +438,10 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
 /** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
 type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
+/** Project details' edit, sent by ProjectDetails.kt (journaled ahead): core's runProjectEdit. */
+type ProjectDetailCommand = 'projectEdit';
 type Command = 'create' | 'complete' | 'update' | 'saveTaskDraft' | 'resetChecklist' | 'taskFocus' | 'projectFocus' | 'createProject' | 'areaFilter'
-    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | MenuCommand;
+    | 'saveSearch' | 'inboxCommit' | 'inboxSkip' | 'quickCapture' | 'quickCaptureLines' | 'quickCapturePicker' | 'captureModal' | 'captureModalLines' | 'ingest' | 'reminderDone' | 'reminderSnooze' | MenuCommand;
 const taskResult = <T>(operation: Command, result: Parameters<typeof unwrap<T>>[0]): T => {
     const ios = globalThis.__mindwtrHostPlatform === 'ios';
     const meta = {
@@ -591,12 +665,40 @@ const runIntlCheck = () => {
 };
 
 type Reply = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } };
+/**
+ * A tap on one of this app's notifications (CoreNotifications.kt sends the notification's data): RN's payload as its notification
+ * event reads it (notification-service-local.ts), routed by core's routeNotificationOpen, then opened as RN's open handler pushes
+ * each route (use-root-layout-notification-open-handler.ts), in the entry point's shape. A task's or project's tap plans the alarms
+ * again shortly after, as RN's event does.
+ */
+const isNotificationTap = (input: unknown): input is { kind: 'notification'; data?: unknown } => (input as { kind?: unknown } | null)?.kind === 'notification';
+const notificationEntry = (input: { data?: unknown }): Reply => {
+    const data = (input?.data && typeof input.data === 'object' ? input.data : {}) as Record<string, unknown>;
+    const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
+    const payload = {
+        notificationId: text(data.alarmKey) ?? text(data.id), actionIdentifier: 'open', taskId: text(data.taskId), projectId: text(data.projectId),
+        context: text(data.context), kind: text(data.kind),
+    };
+    if (payload.taskId || payload.projectId) reminders?.event();
+    const result = contract.routeNotificationOpen(payload);
+    if (!result.ok) return result;
+    const route = result.value;
+    const entry = { version: NATIVE_HOST_CONTRACT_VERSION, route: null as string | null, taskId: null as string | null, projectId: null as string | null,
+        search: null, capture: null, captureModal: null, notice: null, contextToken: null as string | null };
+    if (route.type === 'review') entry.route = '/review-tab';
+    else if (route.type === 'task') Object.assign(entry, { route: '/focus', taskId: route.taskId });
+    else if (route.type === 'project') Object.assign(entry, { route: '/projects-screen', projectId: route.projectId });
+    else if (route.type === 'contexts') Object.assign(entry, { route: '/contexts', contextToken: route.token });
+    else if (route.type === 'daily-review') entry.route = '/daily-review';
+    else if (route.type === 'weekly-review') entry.route = '/weekly-review';
+    return { ok: true, value: entry };
+};
 /** What an entry point opened, by kind only: never its URL, route text, or shared text. */
 const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
     const entry = result.ok ? result.value as { route: string | null; taskId: string | null; projectId: string | null; search: unknown; capture: unknown; captureModal: unknown; notice: unknown } : null;
     const outcome = !entry ? 'refused' : entry.captureModal ? 'captureModal' : entry.capture ? 'capture' : entry.notice ? 'notice' : entry.taskId ? 'task' : entry.projectId ? 'project'
         : entry.search ? 'search' : entry.route ? 'screen' : 'nothing';
-    const kind = ['link', 'share', 'createNote'].includes(input?.kind as string) ? input.kind as string : 'other';
+    const kind = ['link', 'share', 'createNote', 'notification'].includes(input?.kind as string) ? input.kind as string : 'other';
     try {
         logInfo('Native Android entry point', { scope: 'native-android', context: { releaseCheck: 'v1.3.3/native-android-entry-point', kind, outcome } });
     } catch { /* a diagnostic sink must not change what the entry opens */ }
@@ -668,13 +770,16 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     },
     somedaySections: (input) => contract.getSomedaySections(input),
     dataSettings: () => contract.getDataSettings(),
+    dataBackup: () => contract.getDataBackup(),
+    dataCsvExport: () => contract.getDataBackup('csv'),
+    dataTaskNotesExport: () => contract.getDataBackup('tasknotes'),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
     // A link, text share or assistant note (native-host-contract-entry-points.ts), and the capture popup's Import .txt.
-    entryPoint: (input) => logEntryPoint(input, contract.resolveNativeEntryPoint(input)),
+    entryPoint: (input) => logEntryPoint(input, isNotificationTap(input) ? notificationEntry(input) : contract.resolveNativeEntryPoint(input)),
     captureImport: (input) => contract.planQuickCaptureImport(input),
     // The capture screen an entry opens (native-host-contract-capture-modal.ts): its open, its edits and its Cancel write nothing.
     captureModalOpen: (input) => contract.openCaptureModal(input),
@@ -693,6 +798,16 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
         const applied = contract.applyAttachmentUpdate(input);
         return applied.ok ? { ok: true, value: { attachments: applied.value } } : applied;
     },
+    // Project details (ProjectDetails.kt): the values its panel and pickers show (a project's options; none writes), and core's
+    // blocks for the notes as typed.
+    projectStatusOptions: (input) => contract.getProjectStatusOptions(input),
+    projectFlowOptions: (input) => contract.getProjectFlowOptions(input),
+    projectNotesOptions: (input) => contract.getProjectNotesEditOptions(input),
+    projectAreaOptions: (input) => contract.getProjectAreaOptions(input),
+    projectTagsOptions: (input) => contract.getProjectTagsEditOptions(input),
+    projectDateOptions: (input) => contract.getProjectDateOptions(input),
+    projectSectionOrderOptions: (input) => contract.getProjectSectionOrderOptions(input),
+    projectNotesPreview: (input) => contract.getProjectNotesPreview(input),
 };
 /**
  * The attachments' long calls (native-host-contract-attachments.ts): Download and Open wait on the network (a synced file's bytes),
@@ -713,6 +828,7 @@ const ATTACHMENT_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
     openAttachment: (input) => contract.openAttachment(input),
     settleTaskDraftAttachments: (input) => contract.settleTaskDraftAttachments(input),
 };
+const LOCAL_ATTACHMENT_REQUESTS = new Set(['draftAddFile', 'draftRemove', 'openAttachment', 'settleTaskDraftAttachments']);
 /**
  * The AI's requests (native-host-contract-ai.ts): each waits on the provider (up to RN's 5 min request timeout), so
  * CoreHost.aiRequest waits for it without holding the engine. None writes: an answer is a dialog whose buttons apply through the
@@ -789,6 +905,8 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Promise<Reply>> = {
     attachmentAddFile: (input) => contract.addAttachmentFile(input),
     attachmentLinks: (input) => contract.submitAttachmentLinks(input),
     attachmentRemove: (input) => contract.removeAttachment(input),
+    // Project details (ProjectDetails.kt): the user's edit, journaled ahead of its send; core reads, prepares and commits it.
+    projectEdit: (input) => contract.runProjectEdit(input),
 };
 
 let bootAdapter: ValidatedSqliteAdapter | null = null;
@@ -833,7 +951,7 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     // a journal keeps its receipts in memory, as before.
     traceStep('js:receipts');
     if (journaled) await loadNativeRequestReceipts(sqlite);
-    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'doneTaskCompletedAt', 'archiveTaskCompletedAt'] });
+    else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] });
     // The legacy import plans from a validated full read. Any other boot needs only the schema here: the activation's own read
     // is validated before anything saves.
     traceStep('js:schema');
@@ -844,6 +962,58 @@ const boot = (legacyState: string, legacyBackup: string, recoveryLoad = false, j
     bootAdapter = adapter;
     return result;
 });
+
+// Reference and Done use the RN list's single tag-input and count policy.
+const taskListBulkTagInput = (tag: string, changedCount: number): string => submit(async () => {
+    requireSaved();
+    if (typeof tag !== 'string' || tag.length > 2_000 || !Number.isInteger(changedCount) || changedCount < 0 || changedCount > 10_000) {
+        throw new Error('INVALID_INPUT: List tag input must be bounded text and a count from 0 to 10000');
+    }
+    const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+    return { canSave: canSaveTaskListTag(tag), notice: changedCount === 0 ? null
+        : { title: t('common.done'), message: formatListItemCount(changedCount, 'task', t) } };
+});
+
+// New work uses contract readiness; recovery uses the validated boot adapter so an
+// acknowledged save whose reload failed can still prove/reload its durable receipt.
+const backupAdapter = (newWork = false) => {
+    if (!bootAdapter || isSandboxMode() || isWorkspaceTransitionActive()) {
+        throw new Error('NOT_READY: Backup requires validated storage in a stable personal workspace');
+    }
+    if (newWork) { requireSaved(); unwrap(contract.getDataSettings()); }
+    return bootAdapter;
+};
+const backupJson = (json: string): unknown => {
+    try { return JSON.parse(json) as unknown; }
+    catch { throw new Error('INVALID_INPUT: Invalid backup document input'); }
+};
+const backupTranslate = (key: string, values?: Record<string, number | string>): string => {
+    const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
+    if (typeof template !== 'string') throw new Error('INVALID_INPUT: Backup translation is unavailable');
+    return values ? formatI18nTemplate(template, values) : template;
+};
+
+// Only the native owner supplies these frozen checkpoints and preparations,
+// after reading its private evidence. They never enter the raw attachment API.
+const attachmentDraftJson = (json: string): unknown => {
+    try {
+        if (typeof json === 'string' && json.length <= 8 * 1024 * 1024
+            && new TextEncoder().encode(json).byteLength <= 8 * 1024 * 1024) return JSON.parse(json);
+    } catch { /* A parser excerpt could expose draft content or a picked path. */ }
+    throw new Error('INVALID_INPUT');
+};
+const attachmentDraftDependencies = {
+    assertEditable(taskID: string): void {
+        if (globalThis.__mindwtrHostPlatform !== 'ios' || !localAttachments
+            || isSandboxMode() || isWorkspaceTransitionActive()) {
+            throw new Error('NOT_READY: Attachment draft capability is unavailable');
+        }
+        requireSaved();
+        const result = contract.getTaskView({ id: taskID });
+        if (!result.ok || result.value.readOnly) throw new Error('INVALID_INPUT: Task draft attachments cannot be edited');
+    },
+    t(key: string): string { return unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key; },
+};
 
 globalThis.MindwtrHost = {
     /** Read-only upgrade preflight, before the native host opens SQLite. */
@@ -901,7 +1071,10 @@ globalThis.MindwtrHost = {
     focus(limit: number, controls = '', controlEdit = ''): string {
         return submit(async () => {
             requireSaved();
-            return unwrap(contract.getFocus({ limit, ...(controls ? { controls: JSON.parse(controls) } : {}), ...(controlEdit ? { controlEdit: JSON.parse(controlEdit) } : {}) }));
+            const focus = unwrap(contract.getFocus({ limit, ...(controls ? { controls: JSON.parse(controls) } : {}), ...(controlEdit ? { controlEdit: JSON.parse(controlEdit) } : {}) }));
+            // The Focus screen's filter and sort, handed to the widget's Focus list as RN's Focus screen hands it (setFocusWidgetFilter).
+            widgets?.focusFilter(focus.controls?.widgetFilter);
+            return focus;
         });
     },
     /** Core checks `key` and refuses a stale `revision`; Kotlin then reads Focus again from offset 0. `controls` as for focus. */
@@ -1040,7 +1213,15 @@ globalThis.MindwtrHost = {
     },
     /** Core's setLanguage. "" is no stored language. Labels are not stored data, so no failed save blocks them. */
     language(stored: string, system: string): string {
+        storedLanguage = stored || null;
         return submit(async () => unwrap(await contract.setLanguage({ storedLanguage: stored || null, systemLocale: system || null })));
+    },
+    /**
+     * Publishes the home-screen widgets now when what they show changed: after a CoreWork job and when the app comes to the
+     * front (host-widgets.ts). `{ published }`.
+     */
+    widgetsRefresh(): string {
+        return submit(async () => ({ published: widgets?.publish() ?? false }));
     },
     /** Opt-in iOS read: a settled synced language wins; the legacy device-key route above is unchanged. */
     languageSaved(stored: string, system: string): string {
@@ -2201,6 +2382,27 @@ globalThis.MindwtrHost = {
     doneTaskStatusOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getDoneTaskStatusOptions(completionJson(json, 4_096) as Parameters<typeof contract.getDoneTaskStatusOptions>[0])); });
     },
+    referenceProjectNextActionOptions(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.getReferenceProjectNextActionOptions(completionJson(json, 2_100_000) as Parameters<typeof contract.getReferenceProjectNextActionOptions>[0])); });
+    },
+    referenceProjectNextActionInput(text: string): string {
+        return submit(async () => {
+            if (typeof text !== 'string' || text.length > 100_000) throw new Error('INVALID_INPUT: Next action text is too large');
+            return unwrap(contract.referenceProjectNextActionInput(text));
+        });
+    },
+    referenceProjectNextActionPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.prepareReferenceProjectNextAction>[0])); });
+    },
+    referenceProjectNextActionValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.validatePreparedReferenceProjectNextAction>[0])));
+    },
+    referenceProjectNextActionCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceProjectNextAction(completionJson(json, 2_100_000) as Parameters<typeof contract.commitPreparedReferenceProjectNextAction>[0])));
+    },
+    referenceProjectNextActionOutcome(json: string): string {
+        return submit(async () => unwrap(contract.referenceProjectNextActionOutcome(completionJson(json, 2_100_000) as Parameters<typeof contract.referenceProjectNextActionOutcome>[0])));
+    },
     referenceTaskDestinationOptions(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getReferenceTaskDestinationOptions(completionJson(json, 4_096) as Parameters<typeof contract.getReferenceTaskDestinationOptions>[0])); });
     },
@@ -2329,6 +2531,57 @@ globalThis.MindwtrHost = {
     },
     archivedTasksDeleteUndoOutcome(json: string): string {
         return submit(async () => unwrap(contract.archivedTasksDeleteUndoOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.archivedTasksDeleteUndoOutcome>[0])));
+    },
+    referenceTasksMoveNotice(json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const result = completionJson(json, 2_000) as { count?: unknown; status?: unknown };
+            if (!result || typeof result !== 'object' || Array.isArray(result)
+                || Object.keys(result).sort().join(',') !== 'count,status'
+                || typeof result.count !== 'number' || !Number.isInteger(result.count)
+                || result.count < 1 || result.count > 10_000
+                || !getBulkMoveStatusOptions('reference').includes(result.status as TaskStatus)) {
+                throw new Error('INVALID_INPUT: Reference move notice requires a bounded result');
+            }
+            const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
+            return { message: formatListItemCount(result.count, 'task', t) };
+        });
+    },
+    referenceTasksMovePrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksMove>[0])); });
+    },
+    referenceTasksMoveValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksMove>[0])));
+    },
+    referenceTasksMoveCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksMove(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksMove>[0])));
+    },
+    referenceTasksMoveOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksMoveOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksMoveOutcome>[0])));
+    },
+    referenceTasksAddTagPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksAddTag>[0])); });
+    },
+    referenceTasksAddTagValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksAddTag>[0])));
+    },
+    referenceTasksAddTagCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksAddTag(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksAddTag>[0])));
+    },
+    referenceTasksAddTagOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksAddTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksAddTagOutcome>[0])));
+    },
+    referenceTasksRemoveTagPrepare(json: string): string {
+        return submit(async () => { requireSaved(); return unwrap(await contract.prepareReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareReferenceTasksRemoveTag>[0])); });
+    },
+    referenceTasksRemoveTagValidate(json: string): string {
+        return submit(async () => unwrap(contract.validatePreparedReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.validatePreparedReferenceTasksRemoveTag>[0])));
+    },
+    referenceTasksRemoveTagCommit(json: string): string {
+        return submit(async () => unwrap(await contract.commitPreparedReferenceTasksRemoveTag(completionJson(json, 2_000_000) as Parameters<typeof contract.commitPreparedReferenceTasksRemoveTag>[0])));
+    },
+    referenceTasksRemoveTagOutcome(json: string): string {
+        return submit(async () => unwrap(await contract.referenceTasksRemoveTagOutcome(completionJson(json, 2_000_000) as Parameters<typeof contract.referenceTasksRemoveTagOutcome>[0])));
     },
     archivedTasksRestorePrepare(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(await contract.prepareArchivedTasksRestore(completionJson(json, 2_000_000) as Parameters<typeof contract.prepareArchivedTasksRestore>[0])); });
@@ -2615,9 +2868,59 @@ globalThis.MindwtrHost = {
             return {};
         });
     },
+    backupDocumentInspect(text: string, metadataJSON: string, format = 'json'): string {
+        return submit(async () => {
+            backupAdapter(true);
+            const pending = getPersistenceStatus();
+            if (pending.queued || pending.inFlight || pending.immediate || pending.retrying || pending.failed) {
+                throw new Error('NOT_READY: Backup inspection is unavailable while saving is pending');
+            }
+            if (format !== 'json' && format !== 'json-restore' && format !== 'csv' && format !== 'todoist' && format !== 'ticktick' && format !== 'dgt' && format !== 'omnifocus') throw new Error('INVALID_INPUT: Invalid backup document input');
+            return inspectNativeBackupDocument(text, backupJson(metadataJSON) as Parameters<typeof inspectNativeBackupDocument>[1], backupTranslate, format);
+        });
+    },
+    backupDocumentPrepare(inputJSON: string): string {
+        return submit(async () => prepareNativeBackupDocument(backupAdapter(true), backupJson(inputJSON) as Parameters<typeof prepareNativeBackupDocument>[1]));
+    },
+    backupDocumentCommit(referenceJSON: string, planJSON: string, snapshotName: string): string {
+        return submit(async () => commitNativeBackupDocument(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof commitNativeBackupDocument>[1], planJSON, snapshotName));
+    },
+    backupDocumentOutcome(referenceJSON: string, planJSON: string, snapshotName: string): string {
+        return submit(async () => readNativeBackupDocumentOutcome(backupAdapter(), backupJson(referenceJSON) as Parameters<typeof readNativeBackupDocumentOutcome>[1], planJSON, snapshotName));
+    },
+    backupDocumentResultModel(replyJSON: string): string {
+        return submit(async () => buildNativeBackupDocumentResult(backupJson(replyJSON) as Parameters<typeof buildNativeBackupDocumentResult>[0], backupTranslate));
+    },
+    backupSnapshotRestoreModel(snapshotName: string): string {
+        return submit(async () => buildNativeBackupSnapshotRestoreConfirmation(snapshotName, backupTranslate));
+    },
+    /** Called by iOS only after the immutable JSON file has been written and closed. */
+    backupExportPrepared(format: string): string {
+        return submit(() => {
+            if (globalThis.__mindwtrHostPlatform === 'ios' && (format === 'json' || format === 'csv' || format === 'tasknotes')) {
+                try {
+                    logInfo('Native iOS backup file prepared', {
+                        scope: 'native-ios', force: true,
+                        context: { releaseCheck: 'v1.3.4/ios-backup-export', outcome: 'prepared', format },
+                    });
+                } catch { /* Optional diagnostics cannot prevent sharing a completed file. */ }
+            }
+            return {};
+        });
+    },
     /** Settings › Data's Share log: the log file's path, made when missing (null when it cannot be made). Nothing is sent. */
     logShare(): string {
-        return submit(async () => ({ path: await diagnosticsLog.ensurePath() }));
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform === 'ios') {
+                try {
+                    logInfo('Native iOS diagnostics share requested', {
+                        scope: 'native-ios', force: true,
+                        context: { releaseCheck: 'v1.3.4/ios-diagnostics', operation: 'share' },
+                    });
+                } catch { /* diagnostics must not stop sharing */ }
+            }
+            return { path: await diagnosticsLog.serialize(() => diagnosticsLog.ensurePath()) };
+        });
     },
     /** Settings › Data's Clear log: deletes the log file. */
     logClear(): string {
@@ -2626,20 +2929,19 @@ globalThis.MindwtrHost = {
             return {};
         });
     },
+    /** Checked Clear: no appended success line may recreate the target after absence is proven. */
+    logClearChecked(): string {
+        return submit(() => diagnosticsLog.clearChecked());
+    },
     /** `name` is one of MENU_READS; `json` is that method's input. A read waits for an owed save, as every read does. */
     archiveTaskSelection(json: string): string {
         return submit(async () => { requireSaved(); return unwrap(contract.getArchiveTaskSelection(completionJson(json, 2_000_000) as Parameters<typeof contract.getArchiveTaskSelection>[0])); });
     },
     doneBulkTagInput(tag: string, changedCount: number): string {
-        return submit(async () => {
-            requireSaved();
-            if (typeof tag !== 'string' || tag.length > 2_000 || !Number.isInteger(changedCount) || changedCount < 0 || changedCount > 10_000) {
-                throw new Error('INVALID_INPUT: Done tag input must be bounded text and a count from 0 to 10000');
-            }
-            const t = (key: string): string => unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key;
-            return { canSave: canSaveTaskListTag(tag), notice: changedCount === 0 ? null
-                : { title: t('common.done'), message: formatListItemCount(changedCount, 'task', t) } };
-        });
+        return taskListBulkTagInput(tag, changedCount);
+    },
+    referenceBulkTagInput(tag: string, changedCount: number): string {
+        return taskListBulkTagInput(tag, changedCount);
     },
     menuRead(name: string, json: string): string {
         return submit(async () => {
@@ -2697,7 +2999,45 @@ globalThis.MindwtrHost = {
             return { notification: { ...buildImmediateNotificationDetails(notification.title, notification.message, notification.data), channelName: REMINDER_NOTIFICATION_CHANNEL_NAME } };
         });
     },
+    /**
+     * Reminder alarms (host-reminders.ts), after the boot's validated load, journal replay and queue drain: RN's alarms cancelled
+     * once, the first plan applied, core's timers armed. `ask`: RN would ask for the notification permission now.
+     */
+    remindersStart(): string {
+        return submit(async () => requireReminders().start());
+    },
+    /**
+     * One plan applied now: `mode` "rebuild" remakes every alarm (a reboot dropped them, exact alarms were just allowed), "fired" makes
+     * the daily or weekly alarm `key` that fired again at its next time, else "cycle".
+     */
+    remindersCycle(mode: string, key: string): string {
+        return submit(async () => (mode === 'fired' && key ? requireReminders().fired(key) : requireReminders().cycle(mode === 'rebuild')));
+    },
+    /** A reminder's Done (core's completeReminderTask): a journaled write under the request UUID its notification was posted with. */
+    reminderDone(requestId: string, taskId: string): string {
+        return submit(async () => taskResult('reminderDone', await contract.completeReminderTask({ requestId, taskId })));
+    },
+    /**
+     * A reminder's Snooze (core's snoozeReminder, `json`: `{ requestId, requestedAt, details }`): a journaled write whose alarm the
+     * engine makes once (host-reminders.ts); its reply is that alarm, the same one on every retry of the request.
+     */
+    reminderSnooze(json: string): string {
+        return submit(async () => {
+            const result = await contract.snoozeReminder(JSON.parse(json));
+            if (result.ok) await requireReminders().snooze(result.value);
+            return taskResult('reminderSnooze', result);
+        });
+    },
     /** A line of Kotlin's runner (CoreWork, the queue drain) through core's logger, its fields in `context`. */
+    logLinkHandoff(outcome: string, surface: string): string {
+        return submit(async () => {
+            if (!['opened', 'failed'].includes(outcome) || !['markdown', 'attachment'].includes(surface)) return {};
+            const meta = { scope: 'links', force: true, context: { releaseCheck: 'v1.3.4/upnote-links', outcome, surface, scheme: 'upnote' } };
+            if (outcome === 'failed') logWarn('Native UpNote handoff failed', meta);
+            else logInfo('Native UpNote handoff accepted', meta);
+            return {};
+        });
+    },
     logLine(message: string, contextJson: string): string {
         return submit(async () => {
             try {
@@ -2721,13 +3061,70 @@ globalThis.MindwtrHost = {
             return unwrap(answer);
         });
     },
+    attachmentDraftBegin(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftBegin(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftValidateLineage(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftLineage(attachmentDraftJson(json)));
+    },
+    attachmentDraftPrepare(json: string): string {
+        return submit(async () => prepareNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftBeginV2(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftBeginV2(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftValidateLineageV2(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftLineageV2(attachmentDraftJson(json)));
+    },
+    attachmentDraftPrepareV2(json: string): string {
+        return submit(async () => prepareNativeAttachmentDraftAddV2(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftResult(json: string): string {
+        return submit(async () => completeNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    /** Called only after the native private record and exact checkpoint are durable. */
+    attachmentDraftAcknowledged(operation: string, outcome: string): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios' || !localAttachments
+                || !(['add', 'checkpoint'].includes(operation) && ['confirmed', 'replayed'].includes(outcome)
+                    || operation === 'discard' && outcome === 'retained')) return {};
+            try {
+                await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
+                    message: 'Native iOS attachment draft acknowledged',
+                    context: { releaseCheck: 'v1.3.4/ios-attachment-draft-owned', operation, outcome } }, { force: true });
+            } catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return {};
+        });
+    },
     /** `name` is one of ATTACHMENT_REQUESTS; `json` is that call's input. It writes no journaled command. */
     attachmentRequest(name: string, json: string): string {
         return submit(async () => {
             requireSaved();
+            if (localAttachments && !LOCAL_ATTACHMENT_REQUESTS.has(name)) {
+                throw new Error('INVALID_INPUT: Only task local attachment operations run here');
+            }
             const request = ATTACHMENT_REQUESTS[name];
             if (!request) throw new Error(`INVALID_INPUT: no attachment request ${name}`);
-            return unwrap(await request(JSON.parse(json) as never));
+            const input = JSON.parse(json) as never;
+            if (localAttachments && (!LOCAL_ATTACHMENT_REQUESTS.has(name)
+                || (name !== 'settleTaskDraftAttachments' && (input as { owner?: { kind?: unknown } } | null)?.owner?.kind !== 'task'))) {
+                throw new Error('INVALID_INPUT: Only task local attachment operations run here');
+            }
+            if (localAttachments && (name === 'draftAddFile' || name === 'draftRemove')) {
+                const owner = (input as { owner: { taskId: string } }).owner;
+                const view = unwrap(contract.getTaskView({ id: owner.taskId }));
+                if (view.readOnly) throw new Error('INVALID_INPUT: Task draft attachments cannot be edited');
+            }
+            const answer = unwrap(await request(input));
+            if (localAttachments && LOCAL_ATTACHMENT_REQUESTS.has(name)
+                && (answer as { kind?: string })?.kind !== 'refused' && (answer as { kind?: string })?.kind !== 'blocked'
+                && (name !== 'openAttachment' || (answer as { status?: string })?.status === 'available')) {
+                try {
+                    await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios', message: 'Native iOS local attachment operation completed',
+                        context: { releaseCheck: 'v1.3.4/ios-local-attachment-host', operation: name, outcome: 'completed' } }, { force: true });
+                } catch { /* an acknowledged local operation cannot fail on its diagnostic */ }
+            }
+            return answer;
         });
     },
     /**

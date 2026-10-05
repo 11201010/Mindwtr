@@ -15,6 +15,7 @@ type QuickDateChipsProps = {
   t: (key: string) => string;
   tc: Pick<ThemeColors, 'tint' | 'onTint' | 'filterBg' | 'border' | 'secondaryText'>;
   disabled?: boolean;
+  allowClear?: boolean;
   accessibilityLabelPrefix?: string;
   selectedDate?: Date | null;
   selectedPreset?: QuickDatePreset | null;
@@ -32,6 +33,7 @@ export function QuickDateChips({
   t,
   tc,
   disabled = false,
+  allowClear = true,
   accessibilityLabelPrefix,
   selectedDate,
   selectedPreset,
@@ -49,7 +51,7 @@ export function QuickDateChips({
       testID="quick-date-chips-row"
       style={[styles.content, style, contentContainerStyle]}
     >
-      {presets.map((preset) => {
+      {presets.filter((preset) => allowClear || preset !== 'no_date').map((preset) => {
         const label = getQuickDateLabel(preset, t);
         const active = selectedPreset === preset || isQuickDatePresetSelected(preset, selectedDate, now);
 
@@ -60,8 +62,8 @@ export function QuickDateChips({
             accessibilityState={{ selected: active, disabled }}
             disabled={disabled}
             accessibilityLabel={accessibilityLabelPrefix ? `${accessibilityLabelPrefix}: ${label}` : label}
-            // Tapping the active chip clears the date (replaces the standalone "No date" chip).
-            onPress={() => onSelect(active ? null : getQuickDate(preset, now), preset)}
+            // Optional dates can be cleared by tapping the active chip.
+            onPress={() => onSelect(active && allowClear ? null : getQuickDate(preset, now), preset)}
             style={[
               styles.chip,
               {

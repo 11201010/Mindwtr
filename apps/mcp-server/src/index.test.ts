@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodTypeAny } from 'zod';
 
 import { NotFoundError } from './errors.js';
-import { addTaskSchema, logError, parseArgs, parseBooleanFlag, registerMindwtrTools, resolveServerConfig, resolveServerModeFlags, updateTaskSchema } from './index.js';
+import { addTaskSchema, logError, parseArgs, parseBooleanFlag, registerMindwtrTools, resolveManagedServerConfig, resolveServerConfig, resolveServerModeFlags, updateTaskSchema } from './index.js';
 import { MAX_TASK_LIST_LIMIT } from './input-validation.js';
 import type { Area, Person, Project, Section, Task } from './queries.js';
 import type { MindwtrService } from './service.js';
@@ -199,6 +199,44 @@ describe('mcp server index', () => {
       keepAlive: true,
       readonly: false,
     });
+  });
+
+  test('selects Local API explicitly without changing the default SQLite backend', () => {
+    expect(resolveServerConfig({}, {}).backend).toBe('local');
+    const env = { MINDWTR_MCP_API_TOKEN: 'fixture-token' };
+    expect(resolveServerConfig({ 'api-url': 'http://127.0.0.1:3456' }, env)).toMatchObject({
+      backend: 'api', readonly: true, apiToken: 'fixture-token',
+    });
+    expect(resolveServerConfig({ write: true }, { ...env, MINDWTR_MCP_API_URL: 'http://127.0.0.1:3456' }))
+      .toMatchObject({ backend: 'api', readonly: false });
+    expect(() => resolveServerConfig({ 'api-url': true }, env)).toThrow('Local API URL is required');
+    expect(() => resolveServerConfig({ 'api-url': 'http://127.0.0.1:3456' }, {})).toThrow('Local API token is required');
+    for (const conflict of [{ db: '/nonexistent.db' }, { 'cloud-url': 'https://example.com' }] as Record<string, string>[]) {
+      expect(() => resolveServerConfig({ 'api-url': 'http://127.0.0.1:3456', ...conflict }, env)).toThrow('Choose only one');
+    }
+    expect(() => resolveServerConfig({ 'api-url': 'https://example.com' }, env)).toThrow();
+    expect(resolveServerConfig({ 'api-url': 'http://127.0.0.1:3456', http: true, 'http-token': 'separate-http-token' }, env))
+      .toMatchObject({ backend: 'api', http: { token: 'separate-http-token' } });
+  });
+
+  test('Local API discovery excludes unavailable tools and fields and enforces read-only', async () => {
+    const { server, tools } = createMockServer();
+    let writes = 0;
+    registerMindwtrTools(server, { ...createMockService(), addTask: async () => { writes++; return mockTask(); } }, true, { localApi: true });
+    expect(tools.size).toBe(13);
+    expect(tools.has('mindwtr_list_areas')).toBe(true);
+    expect(tools.has('mindwtr_add_area')).toBe(false);
+    expect(tools.has('mindwtr_list_sections')).toBe(false);
+    expect(tools.has('mindwtr_list_people')).toBe(false);
+    const result = await tools.get('mindwtr_add_task')!.handler({ title: 'Read only' });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).code).toBe('read_only');
+    expect(writes).toBe(0);
+    expect(tools.get('mindwtr_add_task')!.inputSchema.safeParse({ quickAdd: 'Task @home' }).success).toBe(false);
+    expect(tools.get('mindwtr_add_task')!.inputSchema.safeParse({}).success).toBe(false);
+    expect(tools.get('mindwtr_update_project')!.inputSchema.safeParse({ id: 'p1', color: null }).success).toBe(false);
+    expect(tools.get('mindwtr_list_tasks')!.inputSchema.safeParse({ view: 'available' }).success).toBe(false);
+    expect(tools.get('mindwtr_update_task')!.inputSchema.safeParse({ id: 't1', attachments: null }).success).toBe(false);
   });
 
   test('registers all mindwtr tools', () => {
@@ -673,5 +711,32 @@ describe('link attachment tool inputs', () => {
     expect(updateTaskSchema.safeParse({ id: 't', attachments: [{ title: 'Note', uri: 'https://example.com/a' }] }).success).toBe(true);
     expect(updateTaskSchema.safeParse({ id: 't', attachments: null }).success).toBe(true);
     expect(updateTaskSchema.safeParse({ id: 't', attachments: [{ kind: 'file', uri: 'x' }] }).success).toBe(false);
+  });
+});
+
+
+describe('app-managed MCP configuration', () => {
+  const env = {
+    MINDWTR_MCP_API_URL: 'http://127.0.0.1:34567',
+    MINDWTR_MCP_API_TOKEN: 'internal-test-token',
+    MINDWTR_MCP_HTTP_TOKEN: 'external-test-token-with-sufficient-length',
+  };
+  test('locks transport and backend while ignoring ambient standalone settings', () => {
+    const config = resolveManagedServerConfig({ ...env,
+      MINDWTR_MCP_CLOUD_URL: 'https://example.com', MINDWTR_MCP_CLOUD_TOKEN: 'ambient',
+      MINDWTR_MCP_DB: '/nonexistent.db', MINDWTR_MCP_HTTP_HOST: '0.0.0.0',
+    });
+    expect(config.backend).toBe('api');
+    expect(config.readonly).toBe(true);
+    expect(config.http?.host).toBe('127.0.0.1');
+    expect(config.http?.port).toBe(8722);
+  });
+  test('requires explicit write opt-in and rejects malformed configuration', () => {
+    expect(resolveManagedServerConfig({ ...env, MINDWTR_MCP_ALLOW_WRITE: 'true' }).readonly).toBe(false);
+    expect(resolveManagedServerConfig({ ...env, MINDWTR_MCP_ALLOW_WRITE: 'false' }).readonly).toBe(true);
+    for (const field of ['MINDWTR_MCP_API_URL', 'MINDWTR_MCP_API_TOKEN', 'MINDWTR_MCP_HTTP_TOKEN']) {
+      expect(() => resolveManagedServerConfig({ ...env, [field]: '' })).toThrow();
+    }
+    expect(() => resolveManagedServerConfig({ ...env, MINDWTR_MCP_ALLOW_WRITE: 'maybe' })).toThrow();
   });
 });

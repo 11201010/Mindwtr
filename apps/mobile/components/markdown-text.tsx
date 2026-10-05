@@ -1,13 +1,11 @@
 import React from 'react';
-import { Alert, Pressable, View, Text, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
-import * as Linking from 'expo-linking';
+import { Pressable, View, Text, StyleSheet, type StyleProp, type TextStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
 import {
   createMarkdownLinkLookup,
-  isSandboxMode,
   parseMarkdownBlocks,
   resolveMarkdownInline,
   shallow,
@@ -17,6 +15,7 @@ import {
 } from '@mindwtr/core';
 import { useLanguage } from '@/contexts/language-context';
 import { openProjectScreen, openTaskScreen } from '@/lib/task-meta-navigation';
+import { openExternalLink } from '@/lib/open-external-link';
 
 const INLINE_CODE_EDGE_SPACE = '\u2006';
 
@@ -45,19 +44,15 @@ function useMarkdownRenderOptions(): MarkdownRenderOptions {
   const deletedTaskLabel = tFallback(t, 'markdown.referenceDeletedTask', 'deleted task');
   const deletedProjectLabel = tFallback(t, 'markdown.referenceDeletedProject', 'deleted project');
   const copyCodeLabel = tFallback(t, 'markdown.copyCode', 'Copy code');
-  const openExternalLink = React.useCallback((href: string) => {
-    if (isSandboxMode()) {
-      Alert.alert(t('common.notice'), t('sandbox.unavailable'));
-      return;
-    }
-    void Linking.openURL(href);
+  const openLink = React.useCallback((href: string) => {
+    void openExternalLink(href, t, 'markdown');
   }, [t]);
   return {
     lookup,
     deletedTaskLabel,
     deletedProjectLabel,
     copyCodeLabel,
-    openExternalLink,
+    openExternalLink: openLink,
   };
 }
 

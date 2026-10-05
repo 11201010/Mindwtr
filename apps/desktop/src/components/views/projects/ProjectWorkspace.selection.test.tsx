@@ -154,6 +154,9 @@ const translations: Record<string, string> = {
     'bulk.delete': 'Delete',
     'bulk.exitSelect': 'Exit Select',
     'bulk.moveTo': 'Move to',
+    'bulk.organizeStatus': 'Status',
+    'task.destination': 'Destination',
+    'common.none': 'None',
     'bulk.organize': 'Bulk organize',
     'bulk.removeContext': 'Remove context',
     'bulk.removeTag': 'Remove tag',
@@ -702,7 +705,7 @@ describe('ProjectWorkspace Select mode', () => {
         }
     });
 
-    it('shows bulk organize and area assignment for selected project tasks', () => {
+    it('moves selected project tasks through the destination picker while keeping status separate', async () => {
         const area = {
             id: 'area-1',
             name: 'Work',
@@ -711,19 +714,41 @@ describe('ProjectWorkspace Select mode', () => {
             createdAt: '2026-05-12T00:00:00.000Z',
             updatedAt: '2026-05-12T00:00:00.000Z',
         };
-        const projectTask = task('task-1', 'Move me');
-        const { getByRole } = renderWorkspace({
+        const projectTask = task('task-1', 'Move me', { sectionId: projectSection.id });
+        const destinationProject = { ...project, id: 'project-2', title: 'Destination project' };
+        const batchUpdateTasks = vi.fn(async () => ({ success: true }));
+        const batchMoveTasks = vi.fn();
+        const { getByRole, queryByRole } = renderWorkspace({
+            projects: [project, destinationProject],
             allTasks: [projectTask],
             areas: [area],
             sortedAreas: [area],
             selectedProjectTasks: [projectTask],
+            batchUpdateTasks,
+            batchMoveTasks,
         });
 
-        fireEvent.click(getByRole('button', { name: 'Select' }));
-        fireEvent.click(getByRole('checkbox', { name: 'Select task' }));
-
-        expect(getByRole('button', { name: 'Bulk organize' })).toBeInTheDocument();
-        expect(getByRole('combobox', { name: 'Area' })).toBeInTheDocument();
+        for (const [label, expectedPatch] of [
+            ['Destination project', { projectId: destinationProject.id, sectionId: undefined, areaId: undefined }],
+            ['Work', { projectId: undefined, sectionId: undefined, areaId: area.id }],
+            ['None', { projectId: undefined, sectionId: undefined, areaId: undefined }],
+        ] as const) {
+            fireEvent.click(getByRole('button', { name: 'Select' }));
+            fireEvent.click(getByRole('checkbox', { name: 'Select task' }));
+            expect(getByRole('button', { name: 'Bulk organize' })).toBeInTheDocument();
+            expect(getByRole('combobox', { name: 'Status' })).toBeInTheDocument();
+            expect(queryByRole('combobox', { name: 'Area' })).not.toBeInTheDocument();
+            const trigger = getByRole('button', { name: 'Destination' });
+            expect(trigger).toHaveTextContent('Destination');
+            fireEvent.click(trigger);
+            fireEvent.click(getByRole('option', { name: label }));
+            await waitFor(() => {
+                expect(batchUpdateTasks).toHaveBeenLastCalledWith([{ id: projectTask.id, updates: expectedPatch }]);
+                expect(queryByRole('button', { name: 'Destination' })).not.toBeInTheDocument();
+            });
+        }
+        expect(batchUpdateTasks).toHaveBeenCalledTimes(3);
+        expect(batchMoveTasks).not.toHaveBeenCalled();
     });
 
     it('offers the project\'s sections in the bulk organize dialog (#1122)', () => {

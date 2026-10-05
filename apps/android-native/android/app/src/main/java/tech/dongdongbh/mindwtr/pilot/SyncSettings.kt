@@ -50,6 +50,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -105,7 +107,8 @@ class SyncSettingsModel(private val menu: MenuModel) {
     @Volatile private var opened = false
     var form by mutableStateOf<SyncForm?>(null); private set
     /** The encryption card's passphrase fields as typed (current, next, confirm); core holds their text too. */
-    var fields by mutableStateOf(emptyMap<String, String>()); private set
+    val passphrases = PassphraseFields()
+    val fields: Map<String, String> get() = passphrases.texts
     var historyOpen by mutableStateOf(false); private set
     var preferencesOpen by mutableStateOf(false); private set
     var snapshotsOpen by mutableStateOf(false); private set
@@ -195,7 +198,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
         opened = false
         form = null
         followed = null
-        fields = emptyMap()
+        passphrases.clear()
         historyOpen = false
         preferencesOpen = false
         snapshotsOpen = false
@@ -235,16 +238,27 @@ class SyncSettingsModel(private val menu: MenuModel) {
     fun encryption(action: JSONObject) {
         val type = action.getString("type")
         val input = JSONObject().put("action", action).apply { if (type == "submit" || type == "decline") put("requestId", uuid()) }
-        run("runSyncEncryptionAction", input, light = type != "submit" && type != "decline") { reply ->
-            reply.menuText("passphrase")?.let { phrase -> fields = fields + mapOf("next" to phrase, "confirm" to phrase) }
-            if (type == "cancel" || type == "submit" || type == "decline") fields = emptyMap()
+        val heavy = type == "submit" || type == "decline"
+        // A field core refused (past its limit, or its `typed` command failed) still holds the older text core kept: never submit
+        // that. A flow change drops the fields' refusals.
+        passphrases.admit(action)?.let { refusal -> shell.showToast(null, refusal, "error"); return }
+        // A submit runs with the fields core holds: it waits for every keystroke sent before it (the light queue), never overtakes
+        // one, and then asks again, as a keystroke core refused in that wait counts too.
+        run("runSyncEncryptionAction", input, light = !heavy, after = if (heavy) SyncSettingsModel.light else null,
+            admit = if (type == "submit") ({ passphrases.admit(action) }) else null) { reply ->
+            reply.menuText("passphrase")?.let { phrase -> passphrases.generated(phrase) }
+            if (type == "cancel" || type == "submit" || type == "decline") passphrases.clear()
         }
     }
 
-    /** A passphrase field as typed; core keeps its copy (`typed`), which also clears the card's error. */
-    fun typePassphrase(field: String, text: String) {
-        fields = fields + (field to text)
-        run("runSyncEncryptionAction", JSONObject().put("action", JSONObject().put("type", "typed").put("field", field).put("value", text)), light = true)
+    /**
+     * A passphrase field as typed; core keeps its copy (`typed`), which also clears the card's error. An edit past core's limit
+     * ([maxLength], the row's) is refused with core's words ([tooLongText]) and never reaches core.
+     */
+    fun typePassphrase(field: String, text: String, maxLength: Int, tooLongText: String) {
+        val edit = passphrases.type(field, text, maxLength, tooLongText) ?: return shell.showToast(null, tooLongText, "error")
+        run("runSyncEncryptionAction", JSONObject().put("action", JSONObject().put("type", "typed").put("field", field).put("value", text)), light = true,
+            failed = { message -> passphrases.settled(field, edit, message) }) { passphrases.settled(field, edit, null) }
     }
 
     /** The form's fields as core takes them: `webdav` or `selfHosted`, a password or token left null when not edited. */
@@ -260,22 +274,33 @@ class SyncSettingsModel(private val menu: MenuModel) {
 
     /**
      * Sends a screen command off the main thread, in order. A [light] one (a field's text, opening a flow) is not the command
-     * running; the screen reads core's view again after each. [key] names a pending command a repeat tap drops, and an
-     * [ordered] one waits behind the earlier ones sent there.
+     * running; the screen reads core's view again after each. [key] names a pending command a repeat tap drops, an [ordered] one
+     * waits behind the earlier ones sent there, and one sent [after] a queue starts once that queue's earlier work is done (and
+     * leaves the queue free while it runs).
+     */
+    /**
+     * [admit] runs on the main thread once [after] drains (its answers settled there first): a refusal it returns stops the command
+     * with that toast. [failed] gets a failed command's message as its toast shows it.
      */
     private fun run(name: String, input: JSONObject, light: Boolean = false, key: String = name, ordered: ExecutorService? = null,
+                    after: ExecutorService? = null, admit: (() -> String?)? = null, failed: (String) -> Unit = {},
                     done: (JSONObject) -> Unit = {}) {
         val runtime = shell.coreHost() ?: return
         if (!light && !inFlight.add(key)) return
         if (!light) running += 1
         val work = Runnable {
-            val result = runCatching { runtime.syncCommand(name, input.toString()) }
+            val result = runCatching {
+                after?.submit {}?.get()
+                admit?.let { check -> onMain(check)?.let { refusal -> throw IllegalStateException("PASSPHRASE_REFUSED: $refusal") } }
+                runtime.syncCommand(name, input.toString())
+            }
             shell.ui {
                 if (!light) { inFlight.remove(key); running -= 1 }
                 result.onSuccess { reply -> toasts(name, reply); done(reply) }
                 result.exceptionOrNull()?.let { error ->
                     Log.w(CoreHost.TAG, "Sync screen command failed command=$name code=${error.message?.substringBefore(':')}")
                     val message = error.message.orEmpty()
+                    failed(message.substringAfter(": "))
                     shell.showToast(null, message.substringAfter(": "), if (message.startsWith("STALE_REVISION")) "warning" else "error")
                 }
                 settings.refresh()
@@ -300,6 +325,15 @@ class SyncSettingsModel(private val menu: MenuModel) {
     }
 
     private fun uuid() = UUID.randomUUID().toString()
+
+    /** [read] on the main thread, from a command's worker, after everything the main thread was already given. */
+    private fun <T> onMain(read: () -> T): T {
+        val answer = java.util.concurrent.atomic.AtomicReference<Result<T>>()
+        val done = java.util.concurrent.CountDownLatch(1)
+        shell.ui { answer.set(runCatching(read)); done.countDown() }
+        done.await()
+        return answer.get().getOrThrow()
+    }
 }
 
 // ---- The screen ----
@@ -587,15 +621,21 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
     val c = LocalTheme.current.colors
     SectionTitle(card.getString("title"), top = 16, color = c.text)
     card.optJSONObject("guide")?.let { GuideLink(it, "sync-encryption-guide-link") }
-    // RN groups consecutive texts in one settingRowColumn; every block after the first has a hairline above.
+    // RN groups consecutive texts in one settingRowColumn, but a warning or an error starts its own (the enable flow's warnings sit
+    // below the description, an error stands alone). Every block after the first has a hairline above, except the generated
+    // passphrase's hint under Generate.
     val blocks = mutableListOf<List<JSONObject>>()
     for (row in card.menuObjects("rows")) {
-        if (row.getString("kind") == "text" && blocks.lastOrNull()?.first()?.getString("kind") == "text") blocks[blocks.size - 1] = blocks.last() + row
-        else blocks += listOf(row)
+        val last = blocks.lastOrNull()
+        val tone = row.optString("tone")
+        val joins = row.getString("kind") == "text" && last?.first()?.getString("kind") == "text" && tone != "danger"
+            && last.last().optString("tone") != "danger" && (tone != "warning" || last.last().optString("tone") == "warning")
+        if (joins) blocks[blocks.size - 1] = last!! + row else blocks += listOf(row)
     }
     Card {
         blocks.forEachIndexed { index, block ->
-            val divider = index > 0
+            val divider = index > 0 && !(block.first().getString("kind") == "text"
+                && blocks[index - 1].first().optJSONObject("action")?.optString("type") == "generate")
             val row = block.first()
             when (row.getString("kind")) {
                 "text" -> Column(Modifier.fillMaxWidth().then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).padding(16.dp)) {
@@ -612,13 +652,17 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
                     val label = row.getString("label")
                     InputGroup(divider) {
                         Text(label, style = rnText(16, 500, 21), color = c.text)
-                        SyncInput(sync.fields[field].orEmpty(), label, null, row.getBoolean("secure"), "sync-passphrase-$field", KeyboardType.Password) { text -> sync.typePassphrase(field, text) }
+                        SyncInput(sync.fields[field].orEmpty(), label, null, row.getBoolean("secure"), "sync-passphrase-$field", KeyboardType.Password) { text ->
+                            sync.typePassphrase(field, text, row.getInt("maxLength"), row.getString("tooLong"))
+                        }
                     }
                 }
                 "reveal" -> {
                     val label = row.getString("label")
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier)
-                        .clearAndSetSemantics { contentDescription = label; role = Role.Switch; onClick { sync.encryption(row.getJSONObject("action")); true } }
+                        // RN's switch states whether the passphrase shows (accessibilityState checked).
+                        .clearAndSetSemantics { contentDescription = label; role = Role.Switch; toggleableState = ToggleableState(row.getBoolean("revealed"))
+                            onClick { sync.encryption(row.getJSONObject("action")); true } }
                         .clickable { sync.encryption(row.getJSONObject("action")) }.padding(16.dp)) {
                         Text(label, style = rnText(16, 500, 21), color = c.tint)
                     }
@@ -637,6 +681,67 @@ private fun EncryptionCard(sync: SyncSettingsModel, card: JSONObject) {
             }
         }
     }
+}
+
+/**
+ * The encryption card's passphrase fields as typed, for one visit. Core takes at most the row's `maxLength` characters a field:
+ * a longer edit is refused, never cut to fit, and while a refused edit stands no submit runs (it would run with the shorter text
+ * core kept, a passphrase other devices could never match).
+ */
+class PassphraseFields {
+    var texts by mutableStateOf(emptyMap<String, String>()); private set
+    /** A refused field and what to say about it: core's limit, or core's answer to its `typed` command. */
+    private var refused by mutableStateOf(emptyMap<String, String>())
+    /** Each field's newest edit; core's answer to an older one changes nothing (the light queue answers in order). */
+    private val edits = HashMap<String, Int>()
+    val submittable: Boolean get() = refused.isEmpty()
+
+    /**
+     * The edit's number when it is taken (it goes to core, whose answer comes to [settled]); null when [text] is past
+     * [maxLength] (the field keeps what it held and stays refused with [tooLong]).
+     */
+    fun type(field: String, text: String, maxLength: Int, tooLong: String): Int? {
+        val edit = next(field)
+        if (text.length > maxLength) {
+            refused = refused + (field to tooLong)
+            return null
+        }
+        texts = texts + (field to text)
+        refused = refused - field
+        return edit
+    }
+
+    /** Core's answer to [edit] of [field]: null took it; a refusal ([refusal], core's words) stands until core takes a later edit. */
+    fun settled(field: String, edit: Int, refusal: String?) {
+        if (edits[field] != edit) return
+        refused = if (refusal == null) refused - field else refused + (field to refusal)
+    }
+
+    /** Generate's passphrase, in both new-passphrase fields (core set it, so an older edit's answer no longer counts). */
+    fun generated(phrase: String) {
+        next("next"); next("confirm")
+        texts = texts + mapOf("next" to phrase, "confirm" to phrase)
+        refused = refused - "next" - "confirm"
+    }
+
+    /**
+     * What blocks [action], or null. A flow change (open, cancel, retry) starts the fields afresh, so a refusal never outlives its
+     * flow; a submit waits for every refused field, except Abandon setup's, which asks for no passphrase.
+     */
+    fun admit(action: JSONObject): String? = when (action.optString("type")) {
+        "open", "cancel", "retry" -> { clear(); null }
+        "submit" -> if (action.optString("flow") == "abandon") null else refused.values.firstOrNull()
+        else -> null
+    }
+
+    /** Counters are kept, so an answer to an edit made before the clear never matches a new one. */
+    fun clear() {
+        edits.keys.forEach { next(it) }
+        texts = emptyMap()
+        refused = emptyMap()
+    }
+
+    private fun next(field: String): Int = ((edits[field] ?: 0) + 1).also { edits[field] = it }
 }
 
 /** RN's folded card heading (Settings sync options, Recovery snapshots): its title, description and ▸ or ▾. */

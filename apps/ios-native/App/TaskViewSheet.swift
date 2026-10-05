@@ -194,6 +194,7 @@ struct TaskViewSheet: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         if !value.text("readOnlyHint").isEmpty {
                             Text(value.text("readOnlyHint")).rnFont(13).foregroundStyle(palette.secondary)
+                                .accessibilityIdentifier("task-view-readonly-hint")
                         }
                         if editing && !readOnly {
                             editorFields
@@ -211,6 +212,7 @@ struct TaskViewSheet: View {
                                     .textSelection(.enabled)
                                     .accessibilityIdentifier("task-view-error")
                                 retryButton
+                                DiagnosticsFailureAction(model: model, palette: palette)
                             }
                             .id("task-view-error")
                         }
@@ -1334,6 +1336,59 @@ struct NativeMarkdownContent: View {
     }
 }
 
+// Validation does not normalize or decode the original external link.
+enum NativeMarkdownLinkURL {
+    static func externalURL(_ href: String) -> URL? {
+        guard let url = URL(string: href),
+              ["http", "https", "mailto", "tel", "upnote"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        if url.scheme?.lowercased() == "upnote" {
+            guard href.lowercased().hasPrefix("upnote://"), url.absoluteString == href else { return nil }
+        }
+        return url
+    }
+    static func originalHref(_ url: URL, runs: [CoreObject]) -> String? {
+        runs.first { $0.text("type") == "link" && $0.object("target").text("kind") == "external"
+            && externalURL($0.object("target").text("href"))?.absoluteString == url.absoluteString }?.object("target").text("href")
+    }
+}
+
+private struct NativeExternalLinkDiagnostic: EnvironmentKey { static let defaultValue: ((String, String) -> Void)? = nil }
+private struct NativeExternalLinkLabels: EnvironmentKey { static let defaultValue: CoreObject = [:] }
+extension EnvironmentValues {
+    var nativeExternalLinkDiagnostic: ((String, String) -> Void)? {
+        get { self[NativeExternalLinkDiagnostic.self] }
+        set { self[NativeExternalLinkDiagnostic.self] = newValue }
+    }
+    var nativeExternalLinkLabels: CoreObject {
+        get { self[NativeExternalLinkLabels.self] }
+        set { self[NativeExternalLinkLabels.self] = newValue }
+    }
+}
+
+@MainActor
+enum NativeUpNoteLink {
+    static func open(_ original: String, surface: String) async -> Bool {
+        guard let url = NativeMarkdownLinkURL.externalURL(original), url.scheme?.lowercased() == "upnote" else { return false }
+        let opened = await withCheckedContinuation { continuation in
+            UIApplication.shared.open(url, options: [:]) { continuation.resume(returning: $0) }
+        }
+        NSLog("Native iOS UpNote handoff scope=links releaseCheck=v1.3.4/upnote-links outcome=%@ surface=%@ scheme=upnote", opened ? "opened" : "failed", surface)
+        return opened
+    }
+    static func showFailure(_ original: String, labels: CoreObject) {
+        let alert = UIAlertController(title: labels.text("common.error"), message: labels.text("markdown.openLinkFailed"), preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: labels.text("markdown.copyLink"), style: .default) { _ in
+            UIPasteboard.general.string = original
+        })
+        alert.addAction(UIAlertAction(title: labels.text("common.cancel"), style: .cancel))
+        let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }.flatMap(\.windows).first { $0.isKeyWindow }
+        var presenter = window?.rootViewController
+        while let presented = presenter?.presentedViewController { presenter = presented }
+        presenter?.present(alert, animated: true)
+    }
+}
+
 struct NativeMarkdownInline: View {
     let runs: [CoreObject]
     let labels: CoreObject
@@ -1341,6 +1396,8 @@ struct NativeMarkdownInline: View {
     var size: Double = 13
     var weight: Font.Weight = .regular
     var onReference: ((Int) -> Void)? = nil
+    @Environment(\.nativeExternalLinkLabels) private var linkLabels
+    @Environment(\.nativeExternalLinkDiagnostic) private var linkDiagnostic
 
     var body: some View {
         Text(Self.attributedText(runs, labels: labels, palette: palette, referenceLinks: onReference != nil)).rnFont(size, weight).textSelection(.enabled)
@@ -1353,6 +1410,15 @@ struct NativeMarkdownInline: View {
                    runs.indices.contains(index), runs[index].text("type") == "link",
                    ["task", "project"].contains(runs[index].object("target").text("kind")) {
                     onReference(index)
+                    return .handled
+                }
+                if url.scheme?.lowercased() == "upnote",
+                   let original = NativeMarkdownLinkURL.originalHref(url, runs: runs) {
+                    Task {
+                        let opened = await NativeUpNoteLink.open(original, surface: "markdown")
+                        linkDiagnostic?(opened ? "opened" : "failed", "markdown")
+                        if !opened { NativeUpNoteLink.showFailure(original, labels: linkLabels) }
+                    }
                     return .handled
                 }
                 return ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "")
@@ -1396,8 +1462,7 @@ struct NativeMarkdownInline: View {
     private static func externalURL(_ run: CoreObject) -> URL? {
         let target = run.object("target")
         guard run.text("type") == "link", target.text("kind") == "external",
-              let url = URL(string: target.text("href")),
-              ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+              let url = NativeMarkdownLinkURL.externalURL(target.text("href")) else { return nil }
         return url
     }
 }

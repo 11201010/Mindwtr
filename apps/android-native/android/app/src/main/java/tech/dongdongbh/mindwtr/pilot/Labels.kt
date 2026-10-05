@@ -44,6 +44,7 @@ val LABEL_KEYS = listOf(
     "projects.activeSection", "projects.deferredSection", "projects.closed", "projects.noArea", "projects.noNextAction",
     "common.tasks", "filters.starred", "projects.availableNextAction", "projects.laterInSequence",
     "markdown.expand", "markdown.collapse",
+    "common.error", "markdown.openLinkFailed", "markdown.copyLink", "markdown.copyLinkFailed",
     "inbox.empty", "inbox.emptyAddHint", "agenda.allClear", "agenda.noTasks", "projects.empty",
     "agenda.addToFocus", "agenda.removeFromFocus", "agenda.focusWhenAvailable", "projects.addToFocus", "projects.removeFromFocus",
     "taskStatus.changeStatus", "task.aria.changeStatus", "task.aria.changeStatusHint",
@@ -75,6 +76,11 @@ val LABEL_KEYS = listOf(
     "attachments.addFile", "attachments.addPhoto", "attachments.addLink", "attachments.download", "attachments.missing", "attachments.remove",
     "attachments.linkPlaceholder", "attachments.linkInputHint", "attachments.linkBatchHint", "common.validationRequired", "common.share",
     "share.unavailable", "common.play", "common.pause", "audio.loading", "quickAdd.audioNoteTitle", "quickAdd.audioErrorBody",
+    // Project details (ProjectDetails.kt): the panel's labels and help, its pickers and the section manager; the values are core's.
+    "projects.statusLabel", "projects.projectTypeLabel", "projects.projectTypeHelpLabel", "projects.projectTypeHelpText", "projects.sequentialScope",
+    "projects.sequentialAcrossSections", "projects.sequentialWithinSections", "projects.sequentialScopeHelpLabel", "projects.sequentialScopeHelpText",
+    "projects.sectionsLabel", "settings.manage", "projects.addSection", "projects.areaLabel", "project.notes", "projects.notesPlaceholder",
+    "projects.reviewAt", "projects.sectionPlaceholder", "projects.moveUp", "projects.moveDown", "projects.deleteSectionConfirm", "common.add",
 )
 
 /** The label map: core's text for each of [LABEL_KEYS]. It has no fallback text; a key core lacks shows as the key. */
@@ -84,12 +90,12 @@ object Labels {
     private val logged: MutableSet<String> = Collections.synchronizedSet(HashSet())
 
     /** Replaces the map with a getStrings reply. Core already put English in for a key the language lacks. */
-    fun load(reply: JSONObject) {
+    fun load(reply: JSONObject, reportLoaded: (String) -> Unit = { Log.i(CoreHost.TAG, it) }) {
         val values = reply.getJSONObject("strings")
         strings = LABEL_KEYS.filter(values::has).associateWith(values::getString)
         val missing = reply.getJSONArray("missing")
         for (index in 0 until missing.length()) missing(missing.getString(index))
-        Log.i(CoreHost.TAG, "Native Android labels language=${reply.getString("language")} missing=${missing.length()}")
+        reportLoaded("Native Android labels language=${reply.getString("language")} missing=${missing.length()}")
     }
 
     operator fun get(name: String): String = strings[name] ?: name.also(::missing)

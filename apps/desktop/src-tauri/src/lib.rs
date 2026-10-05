@@ -53,6 +53,7 @@ mod linux_notification;
 #[cfg(target_os = "linux")]
 mod portal_secrets;
 mod local_api;
+mod mcp_server;
 mod logging;
 mod macos_widget;
 mod obsidian_paths;
@@ -98,6 +99,10 @@ use linux_notification::LinuxNotificationState;
 use local_api::{
     get_local_api_server_status, set_local_api_server_config, start_configured_local_api_server,
     LocalApiServerState,
+};
+use mcp_server::{
+    get_mcp_server_status, set_mcp_server_config, start_configured_mcp_server, stop_mcp_server,
+    McpServerState,
 };
 use logging::{append_log_line, append_native_log_line, clear_log_file, get_log_file_path};
 use macos_widget::write_macos_widget_payload;
@@ -462,6 +467,14 @@ struct AppConfigToml {
     // folders picked with "Link folder…" on the sandboxed App Store build.
     #[serde(skip_serializing_if = "Option::is_none")]
     link_folder_bookmarks: Option<String>,
+    // Managed MCP is an opt-in, device-local capability. Its credential is
+    // routed into secrets.toml by config::SECRET_FIELDS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_enabled: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_allow_write: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1392,6 +1405,7 @@ pub fn run() {
         .manage(QuickAddFocusState::default())
         .manage(MainWindowReveal::default())
         .manage(LocalApiServerState::default())
+        .manage(McpServerState::default())
         .manage(DropboxStagedCredentialState::default())
         .manage(FileSyncLeaseState::default())
         .plugin(tauri_plugin_dialog::init())
@@ -1602,6 +1616,25 @@ pub fn run() {
                 let _ = crate::platform::apply_macos_activation_policy(&app.handle(), true);
             }
 
+            // Register the initial default before creating either webview.
+            // WebView2 creation pumps Windows messages: while the second
+            // webview is being created, the main one can already hydrate its
+            // settings and apply the saved shortcut over IPC. Applying the
+            // default later would overwrite that preference (disabled on
+            // Windows) until the setting changes again.
+            let handle = app.handle();
+            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
+            let default_shortcut = if cfg!(target_os = "linux") && is_flatpak() {
+                GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
+            } else {
+                default_global_quick_add_shortcut()
+            };
+            if let Err(error) =
+                apply_global_quick_add_shortcut(&handle, &shortcut_state, Some(default_shortcut))
+            {
+                log::warn!("Failed to register global quick add shortcut: {error}");
+            }
+
             // The main window is declared create:false so portable mode can pin
             // the webview's browsing profile inside the portable dir (#855).
             {
@@ -1805,18 +1838,6 @@ pub fn run() {
                 }
             }
 
-            let shortcut_state = app.state::<GlobalQuickAddShortcutState>();
-            let default_shortcut = if is_flatpak_install {
-                GLOBAL_QUICK_ADD_SHORTCUT_DISABLED
-            } else {
-                default_global_quick_add_shortcut()
-            };
-            if let Err(error) =
-                apply_global_quick_add_shortcut(&handle, &shortcut_state, Some(default_shortcut))
-            {
-                log::warn!("Failed to register global quick add shortcut: {error}");
-            }
-
             if initial_launch_requests_quick_add {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_skip_taskbar(true);
@@ -1850,6 +1871,14 @@ pub fn run() {
             // Reported here because the migration itself runs before any
             // logger exists — the first config read is the top of `run()`.
             crate::storage_layout::log_layout_migration();
+            // Optional helper readiness can take up to ten seconds. Startup
+            // stays responsive and failure only affects this capability.
+            let mcp_app = handle.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let state = mcp_app.state::<McpServerState>();
+                let local_api = mcp_app.state::<LocalApiServerState>();
+                start_configured_mcp_server(&mcp_app, &state, &local_api);
+            });
             Ok(())
         })
         .manage(AudioRecorderState::default())
@@ -2005,6 +2034,8 @@ pub fn run() {
             send_windows_packaged_notification,
             get_local_api_server_status,
             set_local_api_server_config,
+            get_mcp_server_status,
+            set_mcp_server_config,
             get_email_capture_config,
             set_email_capture_config,
             email_capture_poll,
@@ -2018,6 +2049,7 @@ pub fn run() {
         .expect("error while running tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                stop_mcp_server(&app.state::<McpServerState>());
                 crate::window_state::save(app);
                 // Other plugins can still create the OS config dir a portable
                 // install is meant to stay out of; clearing it here runs after

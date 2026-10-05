@@ -43,7 +43,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, isOn, owedRetry, readRetry, Stopped, tab, tabSelected, taskRows, withDescription } from './device.mjs';
+import { besideRow, bootFailure, box, button, check, connect, evidenced, fail, field, hasText, inEditor, isOn, owedRetry, projectTitled, readRetry, Stopped, tab, tabSelected, taskRows, withDescription } from './device.mjs';
 
 const cliArgs = process.argv.slice(2);
 const prune = cliArgs.includes('--prune-old');
@@ -117,7 +117,8 @@ const stopApp = async () => {
 const inbox = () => waitFor('the Inbox', (nodes) => tabSelected(nodes, 'Inbox') && !inEditor(nodes) && hasText(nodes, 'Inbox'), 60_000);
 const textNode = (nodes, text) => nodes.find((node) => node.text === text && node.class !== 'android.widget.EditText');
 /** The open project: the Projects tab, core's project title as the heading, and Back. */
-const inProject = (nodes, title) => tabSelected(nodes, 'Projects') && !inEditor(nodes) && hasText(nodes, title) && Boolean(button(nodes, 'Back'));
+// The header's title is RN's editable title field (ProjectDetails.kt's ProjectTitleField).
+const inProject = (nodes, title) => tabSelected(nodes, 'Projects') && !inEditor(nodes) && projectTitled(nodes, title) && Boolean(button(nodes, 'Back'));
 const openProject = (title, description = `the project ${title}`) => waitFor(description, (nodes) => inProject(nodes, title), 60_000);
 const showTab = async (name) => {
     const nodes = await waitFor('the tabs', (current) => tab(current, name), 60_000);
@@ -274,7 +275,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
             // settings and editor 70 (plus the 1 of its injected Done list task), Mind Sweep and saved search 75 (plus the 1 of its
             // injected task and the 2-3 of its two captures), entry points 77 (plus the 1 of its shared text; 2 to 8 are never saved),
             // the capture screen 79 (plus the 0-8 of its captures; 3 and 4 are never saved),
-            // the runner 80 (plus the 1-9 of its captures),
+            // the runner 80 (plus the 1-9 of its captures), the widgets 94 (plus the 1-6 of its captures),
             // sync 93 (plus the 1-4 of its four captures) and its two emoji titles (a 12-digit run id after them), attachments 94.
             // No other title matches. [0-9], not \\d: this code sits in a template literal, which drops the backslash.
             const shapes = {
@@ -295,6 +296,7 @@ const core = (db, mode, extra = {}) => JSON.parse(execFileSync('bun', ['-e', `
                 sync: /^(93[0-9]{12}[1-4]|(Sync ✓ Grüße|Cloud ✓ 雲) 😀 [0-9]{12})$/,
                 runner: /^80[0-9]{12}[1-9]$/,
                 attachments: /^94[0-9]{12}$/,
+                widgets: /^94[0-9]{12}[1-6]$/,
             };
             for (const [check, shape] of Object.entries(shapes)) {
                 const ids = live(store()._allTasks).filter((item) => shape.test(item.title)).map((item) => item.id);

@@ -10,7 +10,8 @@ import java.io.IOException
  * The write-ahead journal under the app's `files/journal`: every write request (a [WRITES] method and its exact arguments,
  * its request UUID included) is on disk before the engine sees it, and leaves only after core's final reply. After process
  * death or a stopped engine, the next boot replays what is left, in order (CoreHost.replayJournal); core's crash-safe
- * commands make a replay write nothing wrong. Engine thread only.
+ * commands make a replay write nothing wrong. The engine thread sends and settles; a Project details edit is also journaled
+ * ahead from the main thread (CoreHost.journalAhead), so [pending], [append] and [settle] are synchronized.
  *
  * An entry is one file, `<sequence>.json`: written whole to a temporary file, synced, renamed into place, and the directory
  * synced. A temporary file left by a death mid-write was never sent, so it is removed. An entry that cannot be read, or names
@@ -40,7 +41,7 @@ class WriteJournal(
             "resetChecklist" to listOf("{id,requestId,taskRevision}"), "taskFocus" to listOf("id", "bool", "id"), "projectFocus" to listOf("id", "bool", "id"),
             "createProject" to listOf("id", "text", "id"), "setAreaFilter" to listOf("{included[],excluded[]}"), "saveSearch" to listOf("{requestId}"),
             "inboxCommit" to listOf("{sessionId,taskId,requestId}"), "inboxSkip" to listOf("{sessionId,taskId,requestId}"), "menuCommand" to listOf("menu", "{menu}"),
-            "ingest" to listOf("id"),
+            "ingest" to listOf("id"), "reminderDone" to listOf("id", "id"), "reminderSnooze" to listOf("{requestId}"),
         )
         /** host-entry.ts's MENU_COMMANDS and the keys each one's JSON input holds (check-boot-gates.mjs keeps the names equal). */
         val MENU = mapOf(
@@ -55,6 +56,8 @@ class WriteJournal(
             "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
             // Attachments: Add file and Add photo, the link sheet's Save, Remove (a project's written at once through receipts).
             "attachmentAddFile" to "{requestId}", "attachmentLinks" to "{requestId}", "attachmentRemove" to "{requestId,attachmentId}",
+            // Project details (ProjectDetails.kt): the user's edit, journaled ahead of its send (core's runProjectEdit).
+            "projectEdit" to "{requestId,projectId,kind}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
             "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",
@@ -128,13 +131,13 @@ class WriteJournal(
     }
 
     /** The entries on disk, oldest first. */
-    fun pending(): List<Entry> = entries.toList()
+    @Synchronized fun pending(): List<Entry> = entries.toList()
 
     /**
      * [method] with [args], durable before this returns; null for an [UNJOURNALED] write, which never reaches the disk. The
      * same request while its entry is still here (an owed retry) returns that entry: the journal never holds a request twice.
      */
-    fun append(method: String, args: List<Any?>): Entry? {
+    @Synchronized fun append(method: String, args: List<Any?>): Entry? {
         require(method in WRITES) { "$method is not a write" }
         if (key(method, args) in UNJOURNALED) return null
         val text = JSONObject().put("method", method).put("args", JSONArray().apply { args.forEach { put(requireNotNull(it)) } }).toString()
@@ -160,7 +163,7 @@ class WriteJournal(
      * move and the folder sync: one that fails keeps it for the next boot's replay (core's crash-safe commands allow that), and
      * no receipt it may need is pruned while it stays.
      */
-    fun settle(entry: Entry, error: String?, replay: Boolean = false): Boolean {
+    @Synchronized fun settle(entry: Entry, error: String?, replay: Boolean = false): Boolean {
         if (keeps(error)) return false
         if (replay && malformed(error)) {
             if (!moveAside(entry.file)) return false

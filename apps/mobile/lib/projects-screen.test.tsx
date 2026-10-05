@@ -21,6 +21,7 @@ const asyncStorageMock = vi.hoisted(() => ({
 
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
 const detailModal = vi.hoisted(() => ({ props: null as Record<string, any> | null }));
+const tagPicker = vi.hoisted(() => ({ props: null as Record<string, any> | null }));
 const taskEditModal = vi.hoisted(() => ({ props: null as Record<string, any> | null }));
 const focusEffect = vi.hoisted(() => ({ callback: null as null | (() => void | (() => void)) }));
 const consumePendingCaptureTaskOpenMock = vi.hoisted(() => vi.fn());
@@ -310,7 +311,10 @@ vi.mock('@/components/projects-screen/ProjectDetailModal', () => ({
 vi.mock('@/components/projects-screen/ProjectOverlayModals', () => ({
   ProjectImagePreviewModal: () => null,
   ProjectLinkModal: () => null,
-  ProjectTagPickerModal: () => null,
+  ProjectTagPickerModal: (props: Record<string, any>) => {
+    tagPicker.props = props;
+    return null;
+  },
 }));
 vi.mock('@/components/task-edit-modal', () => ({
   TaskEditModal: (props: Record<string, any>) => {
@@ -336,6 +340,28 @@ vi.mock('../lib/app-log', () => ({
   logError: vi.fn(),
   logWarn: vi.fn(),
 }));
+
+describe('ProjectsScreen project tag picker', () => {
+  // The picker's + adds the typed tag; a tag already on the project stays (it toggled before, so + removed it).
+  // Removing a tag is the tag chip's toggle.
+  it('adds the typed tag with + and never removes one the project already has', async () => {
+    const tagged = { ...testProject, tagIds: ['#work'] };
+    storeState.projects = [tagged];
+    storeState._allProjects = [tagged];
+    routeParams.current = { projectId: tagged.id };
+    await act(async () => {
+      create(<ProjectsScreen />);
+      await Promise.resolve();
+    });
+    storeState.updateProject.mockClear();
+    await act(async () => { tagPicker.props?.onChangeTagDraft?.('work'); await Promise.resolve(); });
+    await act(async () => { tagPicker.props?.onAddTag?.(); await Promise.resolve(); });
+    for (const [, patch] of storeState.updateProject.mock.calls) expect(patch.tagIds).toContain('#work');
+    await act(async () => { tagPicker.props?.onChangeTagDraft?.('home'); await Promise.resolve(); });
+    await act(async () => { tagPicker.props?.onAddTag?.(); await Promise.resolve(); });
+    expect(storeState.updateProject).toHaveBeenLastCalledWith(tagged.id, { tagIds: ['#work', '#home'] });
+  });
+});
 
 describe('ProjectsScreen project quick add', () => {
   // The detail sheet is a native modal driven by selectedProject. Leaving it set

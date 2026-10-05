@@ -34,6 +34,14 @@ describe('normalizeLinkAttachmentInput', () => {
 });
 
 describe('parseAttachmentLinkBatch', () => {
+    it('preserves UpNote URI encoding and query parameters in all Add Link forms', () => {
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        const parsed = parseAttachmentLinkBatch(`${uri}\nNote | ${uri}\n[My note](${uri})`);
+        expect(parsed.invalidLine).toBeNull();
+        expect(parsed.entries.map((entry) => entry.uri)).toEqual([uri, uri, uri]);
+        expect(parsed.entries.map((entry) => entry.kind)).toEqual(['link', 'link', 'link']);
+        expect(parsed.entries.map((entry) => entry.title)).toEqual(['x-callback-url/openNote', 'Note', 'My note']);
+    });
     it('preserves order, original line numbers, labels, and links containing spaces or commas', () => {
         const result = parseAttachmentLinkBatch('  https://example.com/one  \r\n\r\nTitle | https://example.com/two,three\n[Third](https://example.com/a%20b)');
         expect(result.invalidLine).toBeNull();

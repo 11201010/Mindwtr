@@ -67,17 +67,23 @@ struct EditorDraftStore {
         if let attempt = value.attempt {
             guard validUUID(attempt.id), attempt.sessionID == snapshot.sessionID,
                   attempt.taskID == snapshot.taskID, attempt.generation == snapshot.generation,
-                  ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote"].contains(attempt.method),
+                  ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote", "attachmentDraftSave"].contains(attempt.method),
                   attempt.argumentsJSON.utf8.count <= 2_000_000,
                   let arguments = try? JSONSerialization.jsonObject(with: Data(attempt.argumentsJSON.utf8)) as? [String],
                   arguments.count == 1, validObject(arguments[0], limit: 2_000_000) else {
                 throw EditorDraftStoreError.corrupt
             }
+            if attempt.method == "attachmentDraftSave" {
+                guard snapshot.generation <= 9_007_199_254_740_991,
+                      exact(attempt.sessionID, snapshot.sessionID), exact(attempt.taskID, snapshot.taskID) else {
+                    throw EditorDraftStoreError.corrupt
+                }
+            }
         }
     }
 
     private func bytes() throws -> Data? {
-        let fd = open(url.path, O_RDONLY | O_NOFOLLOW)
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if fd < 0 {
             if errno == ENOENT { return nil }
             if errno == ELOOP { throw EditorDraftStoreError.corrupt }
@@ -117,11 +123,20 @@ struct EditorDraftStore {
         return (stored.snapshot, stored.attempt)
     }
 
-    private func write(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws {
+    private func encodedBytes(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws -> Data {
         let value = StoredEditorDraft(snapshot: snapshot, attempt: attempt)
         try validate(value)
         let data = try JSONEncoder().encode(value)
         guard data.count <= Self.maxFile else { throw EditorDraftStoreError.corrupt }
+        return data
+    }
+
+    /// Pure validation and exact encoded-file capacity admission. The caller
+    /// separately reads the actual editor/attempt and retains its sidecar intent.
+    func preflightCheckpoint(_ snapshot: EditorDraftSnapshot) throws { _ = try encodedBytes(snapshot) }
+
+    private func write(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws {
+        let data = try encodedBytes(snapshot, attempt: attempt)
         try DurableFile.write(data, to: url, privateDraft: true)
     }
 
@@ -139,6 +154,59 @@ struct EditorDraftStore {
             }
         }
         try write(snapshot)
+    }
+
+    /// Caller owns the durable operation intent; this store only compares the
+    /// complete opaque checkpoint and performs its existing durable file write.
+    func checkpointMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot) throws {
+        try checkpointMatching(before: before, after: after, mode: .add)
+    }
+
+    /// A retained v2 sidecar pair and shared projection proof belong to the
+    /// caller. This distinct exact CAS accepts safe generation gaps and confirms
+    /// durability by rewriting matched after, including after a lost write ack.
+    func checkpointOwnedAdvanceMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot) throws {
+        try checkpointMatching(before: before, after: after, mode: .ownedAdvance)
+    }
+
+    private enum ExactCheckpointMode { case add, ownedAdvance }
+    private func checkpointMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot,
+                                    mode: ExactCheckpointMode) throws {
+        try validate(StoredEditorDraft(snapshot: before, attempt: nil))
+        try validate(StoredEditorDraft(snapshot: after, attempt: nil))
+        let next = before.generation.addingReportingOverflow(1)
+        let validGeneration = mode == .add ? !next.overflow && after.generation == next.partialValue
+            : before.generation <= 9_007_199_254_740_991 && after.generation <= 9_007_199_254_740_991
+                && after.generation > before.generation
+        guard validGeneration,
+              before.sessionID == after.sessionID, before.taskID.utf8.elementsEqual(after.taskID.utf8) else {
+            throw HostFailure("Editor draft checkpoint transition is invalid")
+        }
+        guard let current = try read(), current.attempt == nil else {
+            throw HostFailure("Editor draft checkpoint is missing or pending")
+        }
+        if matches(current.snapshot, after) {
+            if mode == .ownedAdvance { try write(after) }
+            return
+        }
+        guard matches(current.snapshot, before) else { throw HostFailure("Editor draft checkpoint changed") }
+        try write(after)
+    }
+
+    /// Missing is idempotent only because the caller retains its discard intent.
+    func discardMatching(expected: EditorDraftSnapshot) throws {
+        try validate(StoredEditorDraft(snapshot: expected, attempt: nil))
+        guard let current = try read() else { return }
+        guard current.attempt == nil, matches(current.snapshot, expected) else {
+            throw HostFailure("Editor draft checkpoint changed or is pending")
+        }
+        try DurableFile.remove(url)
+    }
+
+    private func matches(_ snapshot: EditorDraftSnapshot, _ expected: EditorDraftSnapshot) -> Bool {
+        snapshot.version == expected.version && snapshot.sessionID == expected.sessionID
+            && snapshot.taskID.utf8.elementsEqual(expected.taskID.utf8) && snapshot.generation == expected.generation
+            && snapshot.payloadJSON.utf8.elementsEqual(expected.payloadJSON.utf8)
     }
 
     func freeze(sessionID: String, generation: Int, method: String, argumentsJSON: String) throws -> EditorDraftAttempt {
@@ -166,6 +234,57 @@ struct EditorDraftStore {
     func removeMatching(_ attempt: EditorDraftAttempt) throws {
         guard let current = try read() else { return }
         guard current.attempt == attempt else { throw HostFailure("Editor draft Save attempt changed") }
+        try DurableFile.remove(url)
+    }
+
+    private func exact(_ a: String, _ b: String) -> Bool { a.utf8.elementsEqual(b.utf8) }
+    private func ownedMatches(_ a: EditorDraftSnapshot, _ b: EditorDraftSnapshot) -> Bool {
+        a.version == b.version && exact(a.sessionID, b.sessionID) && exact(a.taskID, b.taskID)
+            && a.generation == b.generation && exact(a.payloadJSON, b.payloadJSON)
+    }
+    private func ownedMatches(_ a: EditorDraftAttempt, _ b: EditorDraftAttempt) -> Bool {
+        exact(a.id, b.id) && exact(a.sessionID, b.sessionID) && exact(a.taskID, b.taskID)
+            && a.generation == b.generation && exact(a.method, b.method) && exact(a.argumentsJSON, b.argumentsJSON)
+    }
+
+    /// Structural capacity admission only; the caller separately proves shared
+    /// correspondence and retained native ownership under the library lock.
+    func preflightOwnedSave(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        guard attempt.method == "attachmentDraftSave" else { throw EditorDraftStoreError.corrupt }
+        _ = try encodedBytes(expected, attempt: attempt)
+    }
+
+    /// Exact replay rewrites the same frozen record to repair a lost sync ack.
+    func freezeOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        guard let current = try read(), ownedMatches(current.snapshot, expected),
+              current.attempt.map({ ownedMatches($0, attempt) }) ?? true else {
+            throw HostFailure("Owned editor Save checkpoint or attempt changed")
+        }
+        try write(expected, attempt: attempt)
+    }
+
+    /// The caller proves nonapplication/no invocation; this does not grant it.
+    /// Even an already-thawed exact snapshot is rewritten for durable retry.
+    func thawOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        guard let current = try read(), ownedMatches(current.snapshot, expected),
+              current.attempt.map({ ownedMatches($0, attempt) }) ?? true else {
+            throw HostFailure("Owned editor Save checkpoint or attempt changed")
+        }
+        try write(expected)
+    }
+
+    /// Caller retains validated durable success. Missing still syncs the parent;
+    /// a present editor requires the entire exact snapshot and frozen attempt.
+    func removeOwnedSaveMatching(expected: EditorDraftSnapshot, attempt: EditorDraftAttempt) throws {
+        try preflightOwnedSave(expected: expected, attempt: attempt)
+        if let current = try read() {
+            guard ownedMatches(current.snapshot, expected),
+                  current.attempt.map({ ownedMatches($0, attempt) }) == true else {
+                throw HostFailure("Owned editor Save checkpoint or attempt changed")
+            }
+        }
         try DurableFile.remove(url)
     }
 

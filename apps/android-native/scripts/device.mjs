@@ -126,6 +126,8 @@ export const tabSelected = (nodes, name) => tab(nodes, name)?.selected === 'true
 /** The capture field's text, "" when the capture sheet is closed (a saved capture closes it, as in RN). */
 export const draftText = (nodes) => field(nodes)?.text ?? '';
 export const hasText = (nodes, text) => nodes.some((node) => node.text === text && node.class !== 'android.widget.EditText');
+/** The open project's title: RN's editable header field (ProjectDetails.kt's project-title-input) shows it. */
+export const projectTitled = (nodes, title) => nodes.some((node) => (node['resource-id'] ?? '').endsWith('project-title-input') && node.text === title);
 /** The message of a failed boot: the app then shows only this text, tagged for tests, and no command control. */
 export const bootFailure = (nodes) => nodes.find((node) => /(^|\/)boot-failure$/.test(node['resource-id'] ?? ''))?.text;
 /**

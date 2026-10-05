@@ -617,6 +617,7 @@ export function InboxProcessingQuickPanel({
                             t={t}
                             fields={scheduleFields}
                             visibleFieldKeys={['review']}
+                            requiredFieldKeys={['review']}
                             variant="quick"
                         />
                     </div>

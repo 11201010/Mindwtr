@@ -144,7 +144,7 @@ export function resolveTaskEditorFocusStar(
 export function resolveTaskFocusCreation(
     task: Task,
     context: Pick<FocusStarContext, 'tasks' | 'projects' | 'sections' | 'focusedCount' | 'focusTaskLimit' | 'now'>
-        & { endOfTodayIso?: string },
+        & { endOfTodayIso?: string; frozenDates?: FocusStarContext['frozenDates'] },
 ): TaskFocusCreationDecision {
     if (task.isFocusedToday !== true) {
         return {
@@ -161,7 +161,7 @@ export function resolveTaskFocusCreation(
         isFocusedToday: false,
     };
     const queued = context.endOfTodayIso
-        ? isTaskFutureFocusCandidateBeforeBoundary(candidate, context.endOfTodayIso)
+        ? isTaskFutureFocusCandidateBeforeBoundary(candidate, context.endOfTodayIso, context.frozenDates)
         : isTaskFutureFocusCandidate(candidate, context.now);
     const eligibility = getTaskFocusEligibility(candidate, {
         tasks: [...context.tasks, candidate],
@@ -169,6 +169,7 @@ export function resolveTaskFocusCreation(
         sections: context.sections,
         now: context.now,
         endOfTodayIso: context.endOfTodayIso,
+        frozenDates: context.frozenDates,
         allowFutureStart: queued,
     });
 

@@ -84,23 +84,7 @@ struct InboxScreen: View {
                                 Spacer()
                             }
                         }
-                        if !model.taskActionNotice.isEmpty && !model.taskPresented {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(model.taskActionNotice.text("message")).rnFont(14)
-                                    .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-notice")
-                                if model.taskActionNotice.flag("undoEnabled") {
-                                    Button {
-                                        Task { await model.undoTaskAction() }
-                                    } label: {
-                                        Text(model.taskActionNotice.text("undoLabel"))
-                                            .frame(minWidth: 44, minHeight: 44)
-                                            .contentShape(Rectangle())
-                                    }.disabled(model.busy || model.retryNeeded)
-                                        .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-undo")
-                                }
-                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundStyle(palette.text).background(palette.filter)
-                        }
+                        if !model.referenceProjectNextActionPresented { taskActionNoticeView }
                         if !model.projectDeleteNotice.isEmpty && !model.taskPresented {
                             HStack(spacing: 12) {
                                 Text(model.projectDeleteNotice.text("message")).rnFont(14)
@@ -159,9 +143,9 @@ struct InboxScreen: View {
             // More's content, dismissal backdrop and visible tabs share one modal boundary.
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(model.morePresented ? .isModal : [])
-            .disabled(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
+            .disabled(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || !model.focusPanel.isEmpty || (model.selectedSurface == .review
                 && (model.reviewGuidePresented || model.reviewPickerPresented)))
-            .accessibilityHidden(model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
+            .accessibilityHidden(model.referenceProjectNextActionPresented || model.savedSearchWritePresented || model.focusSavedFilterPresented || model.boardFiltersPresented || model.calendarItemPresented || model.calendarComposerPresented || model.mindSweepPresented || model.processInboxPresented || model.capturePresented || model.areaPickerPresented || !model.focusPanel.isEmpty
                 || (model.selectedSurface == .review && (model.reviewGuidePresented || model.reviewPickerPresented)))
             if model.selectedSurface == .board && model.boardFiltersPresented {
                 BoardFiltersSheet(model: model, palette: palette)
@@ -211,6 +195,14 @@ struct InboxScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 }
             }
+            if model.referenceProjectNextActionPresented {
+                VStack(spacing: 0) {
+                    ReferenceProjectNextActionPrompt(model: model, palette: palette)
+                    taskActionNoticeView
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityAddTraits(.isModal)
+            }
         }
         .foregroundStyle(palette.text)
         .tint(palette.tint)
@@ -218,6 +210,12 @@ struct InboxScreen: View {
         .sheet(isPresented: Binding(get: { model.taskPresented }, set: { if !$0 && !model.appLock.concealed { model.closeTask() } })) {
             TaskViewSheet(model: model, palette: palette)
                 .presentationDetents([.large])
+        }
+        .onChange(of: model.selectedSurface) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.taskPresented) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.appLock.concealed) { _ in model.referenceProjectNextActionOwnerChanged() }
+        .onChange(of: model.taskStatusMenuPresented) { active in
+            if !active { model.presentQueuedReferenceProjectNextAction() }
         }
         .task(id: (model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board) && scenePhase == .active) {
             guard model.selectedSurface == .focus || model.selectedSurface == .review || model.selectedSurface == .calendar || model.selectedSurface == .board, scenePhase == .active else { return }
@@ -229,6 +227,26 @@ struct InboxScreen: View {
                 await model.refresh()
             }
         }
+    }
+
+    @ViewBuilder private var taskActionNoticeView: some View {
+        if !model.taskActionNotice.isEmpty && !model.taskPresented {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(model.taskActionNotice.text("message")).rnFont(14)
+                                    .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-notice")
+                                if model.taskActionNotice.flag("undoEnabled") {
+                                    Button {
+                                        Task { await model.undoTaskAction() }
+                                    } label: {
+                                        Text(model.taskActionNotice.text("undoLabel"))
+                                            .frame(minWidth: 44, minHeight: 44)
+                                            .contentShape(Rectangle())
+                                    }.disabled(model.busy || model.retryNeeded || model.referenceProjectNextActionPending)
+                                        .accessibilityIdentifier("task-" + model.taskActionNotice.text("operation") + "-undo")
+                                }
+                            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(palette.text).background(palette.filter)
+                        }
     }
 
     private func areaSheet(maxHeight: CGFloat, bottomInset: CGFloat) -> some View {
@@ -1032,6 +1050,152 @@ struct InboxScreen: View {
     }
 }
 
+private struct TaskCardSelectionLongPress: ViewModifier {
+    @Environment(\.isEnabled) private var interactionEnabled
+    let identity: String
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.background(TaskCardLongPressRegistrar(identity: identity, enabled: enabled && interactionEnabled, action: action)
+            .allowsHitTesting(false))
+    }
+}
+
+private struct TaskCardLongPressRegistrar: UIViewRepresentable {
+    let identity: String
+    let enabled: Bool
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> RegistrarView { RegistrarView(frame: .zero) }
+    func updateUIView(_ view: RegistrarView, context: Context) {
+        view.configure(identity: identity, enabled: enabled, action: action)
+    }
+    static func dismantleUIView(_ view: RegistrarView, coordinator: ()) { view.stop() }
+
+    final class RegistrarView: UIView {
+        private var identity = ""
+        private var enabled = false
+        private var press = CardLongPress()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            isAccessibilityElement = false
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        func configure(identity: String, enabled: Bool, action: @escaping () -> Void) {
+            if !self.identity.utf8.elementsEqual(identity.utf8) {
+                press.retire()
+                press = CardLongPress()
+                self.identity = identity
+            }
+            self.enabled = enabled
+            press.marker = self
+            press.configure(enabled: enabled, action: action)
+            attach()
+        }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); attach() }
+        override func didMoveToWindow() { super.didMoveToWindow(); attach() }
+        override func layoutSubviews() { super.layoutSubviews(); attach() }
+        func stop() { enabled = false; press.retire() }
+
+        private func attach() {
+            guard enabled, window != nil else { press.detach(); return }
+            // List provides a row-local UIKit host on both iOS 17 and newer
+            // systems. Never put a per-card recognizer on a shared scroll/window.
+            var ancestor = superview
+            var host: UIView?
+            while let candidate = ancestor {
+                if let cell = candidate as? UICollectionViewCell { host = cell.contentView; break }
+                if let cell = candidate as? UITableViewCell { host = cell.contentView; break }
+                if candidate is UIScrollView || candidate is UIWindow { break }
+                ancestor = candidate.superview
+            }
+            guard let host, isDescendant(of: host) else { press.detach(); return }
+            var parent = host.superview
+            while let candidate = parent, !(candidate is UIScrollView), !(candidate is UIWindow) {
+                parent = candidate.superview
+            }
+            guard let scroll = parent as? UIScrollView else { press.detach(); return }
+            press.attach(to: host, scroll: scroll)
+        }
+    }
+
+    final class CardLongPress: UILongPressGestureRecognizer, UIGestureRecognizerDelegate {
+        weak var marker: UIView?
+        private weak var enclosingScroll: UIScrollView?
+        private var requestedEnabled = false
+        private var retired = false
+        private var fired = false
+        private var action: (() -> Void)?
+        private var recognizing: Bool { state == .began || state == .changed }
+
+        init(marker: UIView? = nil) {
+            super.init(target: nil, action: nil)
+            self.marker = marker
+            minimumPressDuration = 0.5
+            allowableMovement = 10
+            cancelsTouchesInView = true
+            delegate = self
+            addTarget(self, action: #selector(handlePress))
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func configure(enabled: Bool, action: (() -> Void)?) {
+            requestedEnabled = enabled && !retired
+            self.action = requestedEnabled ? action : nil
+            // Keep an already recognized touch cancelled through its release,
+            // even if selection rerenders this card with a nil handler.
+            if !requestedEnabled && !recognizing { detach() }
+        }
+        func attach(to host: UIView, scroll: UIScrollView) {
+            guard requestedEnabled, !retired else { return }
+            if view !== host {
+                guard !recognizing else { return }
+                detach()
+                host.addGestureRecognizer(self)
+            }
+            enclosingScroll = scroll
+            isEnabled = true
+        }
+        func detach() {
+            guard !recognizing else { return }
+            view?.removeGestureRecognizer(self)
+            enclosingScroll = nil
+            isEnabled = false
+        }
+        func retire() {
+            retired = true
+            requestedEnabled = false
+            action = nil
+            marker = nil
+            detach()
+        }
+        @objc private func handlePress() {
+            if state == .began, requestedEnabled, !retired, !fired {
+                fired = true
+                action?()
+            } else if state == .ended || state == .cancelled || state == .failed {
+                fired = false
+                if !requestedEnabled || retired || marker?.window == nil { detach() }
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard requestedEnabled, !retired, let marker, let host = view, let touched = touch.view,
+                  marker.window != nil, marker.window === host.window,
+                  marker.isDescendant(of: host), (touched === host || touched.isDescendant(of: host)),
+                  marker.bounds.width > 0, marker.bounds.height > 0 else { return false }
+            let point = touch.location(in: marker)
+            return point.x.isFinite && point.y.isFinite && marker.bounds.contains(point)
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            other === enclosingScroll?.panGestureRecognizer
+        }
+    }
+}
+
 struct TaskCard: View {
     let row: CoreObject
     @ObservedObject var model: CoreModel
@@ -1179,10 +1343,10 @@ struct TaskCard: View {
         .environment(\.layoutDirection, meta.text("textDirection") == "rtl" ? .rightToLeft : .leftToRight)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(meta.text("accessibilityLabel"))
-        // Preserve RN inspection taps when a selection long press is unavailable.
-        .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+        // Observe the whole card without adding a hit-testing overlay or replacing taps.
+        .modifier(TaskCardSelectionLongPress(identity: row.text("id"), enabled: onSelectionStart != nil, action: {
             onSelectionStart?(row)
-        }, including: onSelectionStart == nil ? .subviews : .all)
+        }))
         .confirmationDialog(onStatusOptions == nil ? meta.text("statusLabel") : statusOptions.text("title"),
                             isPresented: $statusMenu, titleVisibility: .visible) {
             if let onStatusChange {
@@ -1237,6 +1401,15 @@ struct TaskCard: View {
                 Task { await model.openProject(["id": target.text("id")],
                                                descriptionSourceID: row.text("id")) }
             } else { return .discarded }
+            return .handled
+        }
+        if url.scheme?.lowercased() == "upnote",
+           let original = NativeMarkdownLinkURL.originalHref(url, runs: meta.object("description").objects("inline")) {
+            Task {
+                let opened = await NativeUpNoteLink.open(original, surface: "markdown")
+                await model.recordUpNoteHandoff(opened ? "opened" : "failed", surface: "markdown")
+                if !opened { NativeUpNoteLink.showFailure(original, labels: model.strings) }
+            }
             return .handled
         }
         return ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
@@ -1322,13 +1495,171 @@ struct FailureBanner: View {
             }
             .disabled(model.busy)
             .accessibilityIdentifier("persistence-retry")
+            DiagnosticsFailureAction(model: model, palette: palette)
         }
         .frame(maxWidth: .infinity, alignment: .leading).padding(16)
         .background(palette.card)
     }
 }
 
+/// Local presentation ownership also works inside the task editor's existing sheet.
+struct DiagnosticsFailureAction: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    @State private var diagnosticsOwner = UUID()
+    @State private var diagnosticsPresented = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if model.cachedFailureDiagnosticsAvailable {
+                Button {
+                    diagnosticsPresented = model.openCachedFailureDiagnostics(owner: diagnosticsOwner)
+                } label: {
+                    Text(model.diagnosticsLabels.text("title")).rnFont(14, .semibold)
+                        .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("persistence-diagnostics")
+            }
+        }
+        .sheet(isPresented: $diagnosticsPresented, onDismiss: {
+            model.closeDiagnostics(owner: diagnosticsOwner)
+        }) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(model.diagnosticsLabels.text("title")).rnFont(20, .bold)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(model.label("common.close")) {
+                        model.closeDiagnostics(owner: diagnosticsOwner)
+                        diagnosticsPresented = false
+                    }
+                    .frame(minWidth: 44, minHeight: 44).accessibilityIdentifier("diagnostics-close")
+                }
+                .padding(.horizontal, 16).foregroundStyle(palette.text).background(palette.card)
+                DiagnosticsCard(model: model, palette: palette, owner: diagnosticsOwner)
+            }
+            .accessibilityAction(.escape) {
+                model.closeDiagnostics(owner: diagnosticsOwner)
+                diagnosticsPresented = false
+            }
+        }
+        .onChange(of: model.diagnosticsSession) { session in
+            if session == nil || model.diagnosticsOwner != diagnosticsOwner { diagnosticsPresented = false }
+        }
+    }
+}
+
 private struct FocusOrderItem: Identifiable {
     let row: CoreObject
     var id: String { row.text("id") }
+}
+
+// App-level ownership deliberately outlives the completed Reference row.
+private struct ReferenceProjectNextActionPrompt: View {
+    @ObservedObject var model: CoreModel
+    let palette: AppPalette
+    private let prefix = "reference-project-next-action"
+    private var options: CoreObject { model.referenceProjectNextActionOptions }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { model.dismissReferenceProjectNextAction() }
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 12) {
+                    if !options.isEmpty {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(options.text("title")).rnFont(18, .bold).accessibilityAddTraits(.isHeader)
+                                    .accessibilityIdentifier(prefix + "-title")
+                                Text(options.text("description")).rnFont(14).fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier(prefix + "-description")
+                                if !model.referenceProjectNextActionCandidates.isEmpty {
+                                    Text(model.label("projects.nextActionPromptChooseExisting")).rnFont(14, .semibold)
+                                    ForEach(Array(model.referenceProjectNextActionCandidates.enumerated()), id: \.offset) { index, candidate in
+                                        Button {
+                                            Task { await model.performReferenceProjectNextAction("choose", candidate: candidate) }
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(candidate.text("title")).fixedSize(horizontal: false, vertical: true)
+                                                Text(candidate.text("statusLabel")).rnFont(12).foregroundStyle(palette.secondary)
+                                            }
+                                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain).disabled(!model.referenceProjectNextActionControlsEnabled)
+                                        .accessibilityIdentifier(prefix + "-candidate-" + String(index))
+                                    }
+                                }
+                                if options.object("candidates").flag("hasMore") {
+                                    Button {
+                                        Task { await model.readReferenceProjectNextAction(more: true) }
+                                    } label: {
+                                        Text(model.label("common.more")).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                                    }
+                                    .disabled(!model.referenceProjectNextActionControlsEnabled).accessibilityIdentifier(prefix + "-more")
+                                }
+                                Text(model.label("projects.nextActionPromptAddNew")).rnFont(14, .semibold)
+                                TextField(options.object("input").text("placeholder"), text: Binding(
+                                    get: { model.referenceProjectNextActionText }, set: model.updateReferenceProjectNextActionText))
+                                    .textFieldStyle(.roundedBorder).frame(minHeight: 44)
+                                    .disabled(model.referenceProjectNextActionPending || model.busy)
+                                    .accessibilityIdentifier(prefix + "-input")
+                                actionButton(options.object("input").text("addLabel"), suffix: "add", enabled: model.referenceProjectNextActionCanSave) {
+                                    await model.performReferenceProjectNextAction("add")
+                                }
+                                actionButton(options.object("input").text("saveAndEditLabel"), suffix: "save-edit", enabled: model.referenceProjectNextActionCanSave) {
+                                    await model.performReferenceProjectNextAction("add", openAfterSave: true)
+                                }
+                                if !options.object("completeProject").isEmpty {
+                                    actionButton(options.object("completeProject").text("label"), suffix: "complete-project") {
+                                        await model.performReferenceProjectNextAction("completeProject")
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .scrollDismissesKeyboard(.interactively)
+                        .accessibilityIdentifier(prefix + "-scroll")
+                    }
+                    if model.referenceProjectNextActionReading { ProgressView().accessibilityLabel(model.label("common.loading")) }
+                    if let error = model.referenceProjectNextActionError {
+                        Text(error).rnFont(13).foregroundStyle(palette.danger).fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(prefix + "-error")
+                        Button {
+                            Task {
+                                if model.referenceProjectNextActionPending { await model.retry() }
+                                else { await model.readReferenceProjectNextAction() }
+                            }
+                        } label: {
+                            Text(model.label("common.retry")).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .disabled(model.busy || model.referenceProjectNextActionReading)
+                        .accessibilityIdentifier(prefix + (model.referenceProjectNextActionPending ? "-retry" : "-read-retry"))
+                    }
+                    Button { model.dismissReferenceProjectNextAction() } label: {
+                        Text(options.object("skip").text("label").isEmpty ? model.label("common.cancel") : options.object("skip").text("label"))
+                            .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .disabled(model.busy || model.referenceProjectNextActionPending).accessibilityIdentifier(prefix + "-skip")
+                }
+                .rnFont(14).padding(16)
+                .frame(maxWidth: 860, maxHeight: geometry.size.height * 0.94, alignment: .topLeading)
+                .background(palette.card, in: RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(palette.border)
+                    .allowsHitTesting(false).accessibilityHidden(true))
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(prefix + "-prompt")
+        .accessibilityAction(.escape) { model.dismissReferenceProjectNextAction() }
+    }
+
+    private func actionButton(_ title: String, suffix: String, enabled: Bool = true, action: @escaping () async -> Void) -> some View {
+        Button { Task { await action() } } label: {
+            Text(title).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+        }
+        .disabled(!model.referenceProjectNextActionControlsEnabled || !enabled)
+        .accessibilityIdentifier(prefix + "-" + suffix)
+    }
 }

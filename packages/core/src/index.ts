@@ -176,6 +176,7 @@ export * from './general-settings-model';
 export * from './manage-settings-model';
 export * from './gtd-settings-model';
 export * from './data-settings-model';
+export * from './native-backup-document';
 export * from './more-menu-model';
 export * from './reference';
 export * from './project-grouping';
@@ -205,6 +206,7 @@ export * from './saved-filters';
 export * from './saved-filter-labels';
 export * from './hierarchy-utils';
 export * from './markdown';
+export * from './markdown-links';
 export * from './markdown-blocks';
 export * from './obsidian-parser';
 export * from './tasknotes-parser';
@@ -327,3 +329,20 @@ export * from './native-host-contract-person-edit';
 export * from './native-host-contract-taxonomy';
 export * from './native-host-contract-general-preference';
 export * from './taxonomy-policy';
+
+export type { NativeReferenceTasksMoveRequest, NativeReferenceTasksMovePrepared, NativeReferenceTasksMoveEnvelope,
+    NativeReferenceTasksMoveResult, NativeReferenceTasksMovePreparation, NativeReferenceTasksMoveParams } from './native-host-contract-reference-bulk-status';
+
+export type { NativeReferenceTasksAddTagRequest, NativeReferenceTasksAddTagPrepared, NativeReferenceTasksAddTagEnvelope,
+    NativeReferenceTasksAddTagResult, NativeReferenceTasksAddTagPreparation } from './native-host-contract-reference-bulk-tag';
+
+export type { NativeReferenceTasksRemoveTagRequest, NativeReferenceTasksRemoveTagPrepared, NativeReferenceTasksRemoveTagEnvelope,
+    NativeReferenceTasksRemoveTagResult, NativeReferenceTasksRemoveTagPreparation } from './native-host-contract-reference-bulk-remove-tag';
+
+export { validateNativeAttachmentDraftBegin, validateNativeAttachmentDraftLineage, prepareNativeAttachmentDraftAdd,
+    completeNativeAttachmentDraftAdd, validateNativeAttachmentDraftBeginV2, validateNativeAttachmentDraftLineageV2,
+    prepareNativeAttachmentDraftAddV2 } from './native-attachment-draft';
+
+export type { OwnedFileAddSaveRequest, PreparedOwnedFileAddSave } from './native-host-contract-owned-file-save';
+
+export type { OwnedEditorFileAddSaveRequest, PreparedOwnedEditorFileAddSave } from './native-host-contract-owned-editor-save';

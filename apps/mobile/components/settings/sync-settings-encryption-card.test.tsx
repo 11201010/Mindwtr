@@ -16,11 +16,13 @@ const encryptionMocks = vi.hoisted(() => ({
     async (_current: string, _next: string, _options?: TransitionOptions): Promise<void> => undefined,
   ),
   declineSyncEncryptionPassphrase: vi.fn(async (): Promise<void> => undefined),
+  abandonSyncEncryptionTransition: vi.fn(async (): Promise<string | null> => 'enable'),
+  recheckPartlyEncryptedLocation: vi.fn(async (): Promise<string> => 'mixed'),
   disableSyncEncryption: vi.fn(async (_options?: TransitionOptions): Promise<void> => undefined),
   enableSyncEncryption: vi.fn(
     async (_passphrase: string, _options?: TransitionOptions): Promise<void> => undefined,
   ),
-  getSyncEncryptionStatus: vi.fn(async (): Promise<{ state: EncryptionState }> => ({ state: 'off' })),
+  getSyncEncryptionStatus: vi.fn(async (): Promise<{ state: EncryptionState; incompleteTransition?: string; partlyEncrypted?: boolean }> => ({ state: 'off' })),
   isSyncEncryptionBackendPending: vi.fn(async (): Promise<boolean> => false),
   provideSyncEncryptionPassphrase: vi.fn(
     async (_passphrase: string): Promise<'ok' | 'wrong-passphrase'> => 'ok',
@@ -130,6 +132,46 @@ const inputLabels = (tree: renderer.ReactTestRenderer): string[] =>
   tree.root.findAllByType(TextInput).map((node) => node.props.accessibilityLabel as string);
 
 describe('SyncEncryptionCard', () => {
+  it('offers "Abandon setup" while a change is unfinished, warns first, and drops it on this device only', async () => {
+    encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off', incompleteTransition: 'enable' });
+    const tree = await renderCard();
+    expect(texts(tree)).toContain('settings.syncEncryptionErrorTransitionIncomplete');
+
+    await press(tree, 'settings.syncEncryptionAbandon');
+    expect(texts(tree)).toContain('settings.syncEncryptionAbandonWarning');
+    expect(texts(tree)).not.toContain('settings.syncEncryptionEnable');
+    expect(encryptionMocks.abandonSyncEncryptionTransition).not.toHaveBeenCalled();
+
+    encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off' });
+    await press(tree, 'settings.syncEncryptionAbandon');
+    expect(encryptionMocks.abandonSyncEncryptionTransition).toHaveBeenCalledTimes(1);
+    expect(texts(tree)).not.toContain('settings.syncEncryptionAbandon');
+    expect(texts(tree)).not.toContain('settings.syncEncryptionErrorTransitionIncomplete');
+    expect(texts(tree)).toContain('settings.syncEncryptionEnable');
+  });
+
+  it('holds a partly encrypted location: no Enable, RN\'s words, and "Check this location again" until it is whole', async () => {
+    encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off', partlyEncrypted: true });
+    const tree = await renderCard();
+    expect(texts(tree)).toContain('settings.syncEncryptionPartlyEncrypted');
+    expect(texts(tree)).not.toContain('settings.syncEncryptionEnable');
+
+    await press(tree, 'settings.syncEncryptionRecheck');
+    expect(encryptionMocks.recheckPartlyEncryptedLocation).toHaveBeenCalledTimes(1);
+    expect(texts(tree)).toContain('settings.syncEncryptionPartlyEncrypted');
+
+    encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off' });
+    await press(tree, 'settings.syncEncryptionRecheck');
+    expect(texts(tree)).not.toContain('settings.syncEncryptionPartlyEncrypted');
+    expect(texts(tree)).toContain('settings.syncEncryptionEnable');
+  });
+
+  it('never offers "Abandon setup" with nothing unfinished', async () => {
+    encryptionMocks.getSyncEncryptionStatus.mockResolvedValue({ state: 'off' });
+    const tree = await renderCard();
+    expect(texts(tree)).not.toContain('settings.syncEncryptionAbandon');
+  });
+
   it('follows the current saved language and English fallback for the guide', async () => {
     const tree = await renderCard('en');
     const guideUrl = () => tree.root.findByType(SettingsGuideLink).props.url;

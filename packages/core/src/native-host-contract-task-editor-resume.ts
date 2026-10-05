@@ -65,6 +65,51 @@ async function currentTask(id: string): Promise<NativeHostResult<{ task: Task; p
         : fail('TASK_NOT_FOUND', 'Task not found');
 }
 
+export function validateNativeTaskEditorOpeningFields(
+    input: Pick<NativeTaskEditorResumeCheck, 'id' | 'touchedBase' | 'scheduleBase' | 'recurrenceBase' | 'checklistBase'>,
+    task: Task, validateField: (field: TaskDraftField, value: unknown) => boolean,
+): NativeHostResult<Omit<NativeTaskEditorResumeReady, 'kind' | 'freshAttachmentsBase'>> {
+    const touched = Object.keys(input.touchedBase);
+    if (task.id !== input.id || OWNED_GROUPS.some((group) => group.some((field) => touched.includes(field))
+            && !group.every((field) => touched.includes(field)))
+        || own(input, 'scheduleBase') !== SCHEDULE.some((field) => touched.includes(field))
+        || own(input, 'recurrenceBase') !== RECURRENCE.some((field) => touched.includes(field)))
+        return fail('INVALID_INPUT', 'Incomplete editor recovery group');
+    const checklist = own(input, 'checklistBase') ? readChecklist(input.checklistBase, true) : undefined;
+    if (checklist === null) return fail('INVALID_INPUT', 'Invalid editor recovery checklist');
+    const freshScheduleBase = getNativeTaskScheduleBase(task);
+    const freshRecurrenceBase = getNativeTaskRecurrenceBase({ ...task, recurrence: normalizeRecurrenceForLoad(task.recurrence) });
+    // The save parser owns field type grammar. An untouched schedule uses its fresh witness;
+    // a touched schedule carries the opening witness and cannot be silently rebased.
+    const candidate = readNativeTaskDraftSaveRequest({
+        id: input.id, base: input.touchedBase, patch: input.touchedBase,
+        scheduleBase: input.scheduleBase ?? freshScheduleBase,
+        ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}),
+    }, validateField, true, true);
+    if (!candidate) return fail('INVALID_INPUT', 'Invalid editor recovery field base');
+
+    const freshChecklistBase = toChecklist(task.checklist);
+    const projected = { ...task, timeSpentMinutes: normalizeTimeSpentMinutes(task.timeSpentMinutes),
+        recurrence: normalizeRecurrenceForLoad(task.recurrence) };
+    const freshDraft = createTaskDraft(projected);
+    if ((own(input, 'scheduleBase') && !taskEditValuesEqual(input.scheduleBase, freshScheduleBase))
+        || (own(input, 'recurrenceBase') && !taskEditValuesEqual(input.recurrenceBase, freshRecurrenceBase)))
+        return fail('STALE_REVISION', 'Task changed while editor draft was open');
+    const matchesOpening = (field: string) => taskEditValuesEqual(freshDraft[field as keyof TaskDraft],
+        input.touchedBase[field] === null && ['relativeStartOffset', 'timeSpentMinutes'].includes(field)
+            ? undefined : input.touchedBase[field]);
+    // A matching raw witness makes the current projection the opening projection.
+    // Its touched draft half must agree too; otherwise the snapshot is internally inconsistent.
+    if (touched.some((field) => (SCHEDULE.includes(field as typeof SCHEDULE[number])
+        || RECURRENCE.includes(field as typeof RECURRENCE[number])) && !matchesOpening(field)))
+        return fail('INVALID_INPUT', 'Editor recovery draft disagrees with its opening witness');
+    if ((checklist && !sameChecklist(checklist, freshChecklistBase))
+        || touched.some((field) => !SCHEDULE.includes(field as typeof SCHEDULE[number])
+            && !RECURRENCE.includes(field as typeof RECURRENCE[number]) && !matchesOpening(field)))
+        return fail('STALE_REVISION', 'Task changed while editor draft was open');
+    return { ok: true, value: { freshDraft, freshScheduleBase, freshRecurrenceBase, freshChecklistBase } };
+}
+
 export function createTaskEditorResumeMethods(deps: {
     readiness: () => NativeHostResult<null>;
     validateField: (field: TaskDraftField, value: unknown) => boolean;
@@ -102,38 +147,9 @@ export function createTaskEditorResumeMethods(deps: {
             if (!freshAttachmentsBase || attachments
                 && mergeNativeTaskLinkHalf(freshAttachmentsBase, attachments) === null)
                 return fail('INVALID_INPUT', 'Invalid editor recovery attachments');
-            const freshScheduleBase = getNativeTaskScheduleBase(task);
-            const freshRecurrenceBase = getNativeTaskRecurrenceBase({ ...task, recurrence: normalizeRecurrenceForLoad(task.recurrence) });
-            // The save parser owns field type grammar. An untouched schedule uses its fresh witness;
-            // a touched schedule carries the opening witness and cannot be silently rebased.
-            const candidate = readNativeTaskDraftSaveRequest({
-                id: input.id, base: input.touchedBase, patch: input.touchedBase,
-                scheduleBase: input.scheduleBase ?? freshScheduleBase,
-                ...(own(input, 'recurrenceBase') ? { recurrenceBase: input.recurrenceBase } : {}),
-            }, deps.validateField, true, true);
-            if (!candidate) return fail('INVALID_INPUT', 'Invalid editor recovery field base');
-
-            const freshChecklistBase = toChecklist(task.checklist);
-            const projected = { ...task, timeSpentMinutes: normalizeTimeSpentMinutes(task.timeSpentMinutes),
-                recurrence: normalizeRecurrenceForLoad(task.recurrence) };
-            const freshDraft = createTaskDraft(projected);
-            if ((own(input, 'scheduleBase') && !taskEditValuesEqual(input.scheduleBase, freshScheduleBase))
-                || (own(input, 'recurrenceBase') && !taskEditValuesEqual(input.recurrenceBase, freshRecurrenceBase)))
-                return fail('STALE_REVISION', 'Task changed while editor draft was open');
-            const matchesOpening = (field: string) => taskEditValuesEqual(freshDraft[field as keyof TaskDraft],
-                input.touchedBase[field] === null && ['relativeStartOffset', 'timeSpentMinutes'].includes(field)
-                    ? undefined : input.touchedBase[field]);
-            // A matching raw witness makes the current projection the opening projection.
-            // Its touched draft half must agree too; otherwise the snapshot is internally inconsistent.
-            if (touched.some((field) => (SCHEDULE.includes(field as typeof SCHEDULE[number])
-                || RECURRENCE.includes(field as typeof RECURRENCE[number])) && !matchesOpening(field)))
-                return fail('INVALID_INPUT', 'Editor recovery draft disagrees with its opening witness');
-            if ((checklist && !sameChecklist(checklist, freshChecklistBase))
-                || touched.some((field) => !SCHEDULE.includes(field as typeof SCHEDULE[number])
-                    && !RECURRENCE.includes(field as typeof RECURRENCE[number]) && !matchesOpening(field)))
-                return fail('STALE_REVISION', 'Task changed while editor draft was open');
-            return { ok: true, value: { kind: 'ready', freshDraft, freshScheduleBase,
-                freshRecurrenceBase, freshChecklistBase, freshAttachmentsBase } };
+            const opening = validateNativeTaskEditorOpeningFields(input, task, deps.validateField);
+            if (!opening.ok) return opening;
+            return { ok: true, value: { kind: 'ready', ...opening.value, freshAttachmentsBase } };
         },
     };
 }

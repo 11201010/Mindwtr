@@ -621,7 +621,8 @@ export interface TaskStore {
         task: Task;
         project: Project | null;
         deviceIdToInitialize: string | null;
-    }) => Promise<StoreActionResult>;
+        deviceIdBefore?: string | null;
+    }, options?: Extract<PreparedChecklistWriteOptions, { authority: PreparedAreaAuthority }>) => Promise<StoreActionResult>;
     /** Internal prepared edit; native validates the journal before this atomic guarded overlay. */
     commitPreparedTaskEdit: (input: PreparedTaskEdit) => Promise<PreparedTaskEditResult>;
     /** Native one-task raw overlay; the calling contract validates its effect and guards. */
@@ -633,6 +634,15 @@ export interface TaskStore {
     /** One guarded raw batch overlay; the contract validates complete scope and RN effect first. */
     commitPreparedArchivedTasksRestore: (input: Pick<import('./native-host-contract-archive-bulk-restore').NativePreparedArchivedTasksRestore,
         'request' | 'effect' | 'deviceIdBefore' | 'deviceIdToInitialize'>,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Reference-only atomic batch, including all shared recurrence-created rows. */
+    commitPreparedReferenceTasksMove: (input: import('./native-host-contract-reference-bulk-status').NativeReferenceTasksMovePrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Reference Add tag's shared guarded raw batch; contract validates all selected members. */
+    commitPreparedReferenceTasksAddTag: (input: import('./native-host-contract-reference-bulk-tag').NativeReferenceTasksAddTagPrepared,
+        authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
+    /** Reference Remove tag's guarded raw batch, including unchanged selected noncarriers. */
+    commitPreparedReferenceTasksRemoveTag: (input: import('./native-host-contract-reference-bulk-remove-tag').NativeReferenceTasksRemoveTagPrepared,
         authority: PreparedAreaAuthority) => Promise<PreparedTaskEditResult>;
     /** Selected-row raw Delete/Undo overlay; native validates the full effect and receipt guards. */
     commitPreparedArchivedTasksMutation: (input: {
@@ -716,7 +726,7 @@ export interface TaskStore {
     commitPreparedProjectDelete: (input: PreparedProjectDelete) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDeleteUndo: (input: PreparedProjectDeleteUndo) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDuplicate: (input: PreparedProjectDuplicate) => Promise<PreparedTaskEditResult>;
-    commitPreparedProjectLifecycle: (input: PreparedProjectLifecycle) => Promise<PreparedTaskEditResult>;
+    commitPreparedProjectLifecycle: (input: PreparedProjectLifecycle, options?: Extract<PreparedChecklistWriteOptions, { authority: PreparedAreaAuthority }>) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectDate: (input: PreparedProjectDate & { request: { projectId: string; field: 'startDate' | 'dueDate' | 'reviewAt'; value: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectArea: (input: PreparedProjectArea & { request: { projectId: string; areaId: string | null } }) => Promise<PreparedTaskEditResult>;
     commitPreparedProjectSectionCreate: (input: PreparedProjectSectionCreate) => Promise<PreparedTaskEditResult>;

@@ -32,6 +32,7 @@ import {
     type SyncRemoteMutationFenceLease,
 } from './sync-remote-fence';
 import { AttachmentUploadTooLargeError } from './attachment-transfer';
+import { SyncEncryptionPartlyEncryptedError } from './sync-encryption';
 
 // Each harness stands up its own fake store, so the process-wide idle-cycle
 // snapshot (keyed on sync scope + the store's change stamp, unique inside a
@@ -2233,6 +2234,36 @@ describe('runSharedSyncCycle', () => {
         expect(hooks.finalizeErrorStatus).not.toHaveBeenCalled();
     });
 
+
+    it('ends the cycle when an attachment pass refuses a partly encrypted location, and writes nothing remotely', async () => {
+        const task = createTask('t-partly', 'Pending upload');
+        task.attachments = [{
+            id: 'attachment-partly',
+            kind: 'file',
+            title: 'notes.txt',
+            uri: '/local/notes.txt',
+            localStatus: 'available',
+            createdAt: STAMP,
+            updatedAt: STAMP,
+        }];
+        const local = createData([task]);
+        const syncAttachments = vi.fn(async () => {
+            throw new SyncEncryptionPartlyEncryptedError();
+        });
+        const { io, run } = createHarness({
+            local,
+            remote: cloneAppData(local),
+            backend: 'webdav',
+            io: { syncAttachments },
+        });
+
+        const result = await run();
+
+        expect(result.success).toBe(false);
+        expect(String(result.error)).toContain('partly encrypted');
+        expect(result.hadAttachmentWarning).toBeUndefined();
+        expect(io.writeRemote).not.toHaveBeenCalled();
+    });
     it('fails a File Sync activation probe actionably when an attachment exceeds the buffered cap', async () => {
         const task = createTask('t-oversized-activation', 'Oversized activation attachment');
         task.attachments = [{

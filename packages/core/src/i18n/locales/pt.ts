@@ -3,6 +3,7 @@ export const ptOverrides: Record<string, string> = {
     'task.doneTagOutcomeUnknown': "Não foi possível confirmar a alteração das etiquetas. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.doneCompletedAtOutcomeUnknown': "Não foi possível confirmar a alteração da data de conclusão. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.destinationOutcomeUnknown': "Não foi possível confirmar a alteração do destino. Reinicie o Mindwtr para recarregar os dados salvos.",
+    'task.projectNextActionOutcomeUnknown': "Não foi possível confirmar a próxima ação. Reinicie o Mindwtr para recarregar os dados salvos.",
     'filters.searchTasks': "Pesquisar títulos de tarefas",
     'filters.searchOptions': "Pesquisar opções",
     'filters.tokenCycleHint': "Clique para incluir, novamente para excluir e mais uma vez para limpar a seleção.",
@@ -76,6 +77,9 @@ export const ptOverrides: Record<string, string> = {
         'settings.donateLinkValue': "Doar",
         'settings.documentationLinkValue': "Documentação",
         'markdown.copyCode': 'Copiar código',
+        'markdown.copyLink': "Copiar link",
+        'markdown.openLinkFailed': "Não foi possível abrir este link. Verifique se o aplicativo correspondente está instalado. Você pode copiar o link e abri-lo nele.",
+        'markdown.copyLinkFailed': "Não foi possível copiar este link.",
 
         // Navigation
         'nav.main': 'Principal',
@@ -882,6 +886,7 @@ export const ptOverrides: Record<string, string> = {
         'settings.saveLog': 'Salvar registro',
         'settings.logMissing': 'Arquivo de log ainda não encontrado. Ative o registro e reproduza o problema primeiro.',
         'settings.logCleared': 'Arquivo de log limpo.',
+        'settings.logClearFailed': 'Não foi possível limpar o arquivo de log.',
         'settings.shareUnavailable': 'O compartilhamento não está disponível neste dispositivo.',
 
         // Mobile Settings
@@ -1682,6 +1687,11 @@ export const ptOverrides: Record<string, string> = {
         'settings.syncFileLockUnavailable': 'O Mindwtr não consegue bloquear com segurança este local de sincronização de arquivos. Selecione a pasta novamente, reinicie ou atualize o Mindwtr, ou use o WebDAV.',
         'settings.syncEncryptionCleanupDeferred': 'A criptografia foi atualizada. O Mindwtr não conseguiu remover o bloqueio temporário de sincronização, mas ele expirará automaticamente. Não é necessário tentar novamente.',
         'settings.syncEncryptionFileCleanupDeferred': 'A criptografia foi atualizada, mas o Mindwtr não conseguiu liberar o bloqueio da Sincronização de arquivos. Reinicie o Mindwtr antes de sincronizar novamente. Não repita a alteração da criptografia.',
+        'settings.syncEncryptionAbandon': 'Abandonar a configuração',
+        'settings.syncEncryptionAbandonWarning': 'Abandone a alteração de criptografia inacabada somente neste dispositivo. A criptografia é desativada aqui e o local de sincronização não é contatado, então ele pode continuar parcialmente criptografado, e este dispositivo mantém a sincronização pausada lá. Conclua ou desfaça a alteração em um dispositivo que consiga acessá-lo.',
+        'settings.syncEncryptionPassphraseTooLong': 'Uma frase secreta pode ter no máximo 1.000 caracteres.',
+        'settings.syncEncryptionPartlyEncrypted': 'Este local de sincronização está parcialmente criptografado: uma alteração de criptografia foi interrompida nele. A sincronização fica pausada aqui para que arquivos sem criptografia nunca fiquem ao lado de arquivos criptografados. Conclua ou desfaça a alteração em um dispositivo que consiga acessá-lo e verifique novamente.',
+        'settings.syncEncryptionRecheck': 'Verificar este local novamente',
     'shareCard.title': "Minha reflexão semanal",
     'shareCard.action': "Compartilhar minha reflexão",
     'shareCard.reflectionLabel': "O que você leva para a próxima semana?",

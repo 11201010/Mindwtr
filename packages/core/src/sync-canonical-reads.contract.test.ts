@@ -29,6 +29,9 @@
  * Timing is printed, never asserted.
  */
 import { performance } from 'node:perf_hooks';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeAppData, mergeAppDataWithStats, performSyncCycle } from './sync';
 import { parseSyncDocument, toRemoteSyncDocument } from './sync-document';
@@ -40,12 +43,14 @@ import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
 import { readAreaDurableData } from './native-host-contract-area-durable';
-import { taskRevisionOf } from './native-request-receipts';
+import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
+import { openScratchSqlite } from './screen-parity.replay';
 import { createTaskDraft } from './task-draft';
 import { prepareProjectToSection } from './project-to-section';
 import { DEFAULT_FOCUS_CONTROL_STATE } from './focus-controls';
 import { TASK_SQLITE_COLUMNS, TASK_SYNC_FIELD_SCHEMA, TASK_SYNC_SCHEMA_FIXTURE, taskToSqliteRow } from './task-sync-schema';
-import { mapSqliteTaskRow } from './sqlite-adapter';
+import { mapSqliteTaskRow, rawReadTaskSnapshot, SqliteAdapter } from './sqlite-adapter';
+import { buildBulkTaskTokenUpdates } from './bulk-task-tokens';
 import { PROJECT_SQLITE_COLUMNS, projectFromSqliteRow, projectToSqliteRow } from './project-sync-schema';
 import { SECTION_SQLITE_COLUMNS, sectionFromSqliteRow, sectionToSqliteRow } from './section-sync-schema';
 import { AREA_SQLITE_COLUMNS, areaFromSqliteRow, areaToSqliteRow } from './area-sync-schema';
@@ -831,6 +836,7 @@ describe('canonical local reads contract', () => {
             label: string,
             mutate: (control: MutationControl) => Promise<unknown>,
             fixture: AppData = settled,
+            withDurableReceipts = false,
         ): Promise<{ storeFields: string[]; readFields: string[] }> => {
             let saved: AppData | null = null;
             let durable = structuredClone(fixture);
@@ -846,43 +852,71 @@ describe('canonical local reads contract', () => {
                 _areasById: new Map(), _peopleById: new Map(),
                 lastDataChangeAt: 0,
             } as never);
-            setStorageAdapter({
+            let sqlite: ReturnType<typeof openScratchSqlite> | null = null;
+            let sqliteDir: string | null = null;
+            if (withDurableReceipts) {
+                sqliteDir = mkdtempSync(join(tmpdir(), 'mindwtr-canonical-receipts-'));
+                sqlite = openScratchSqlite(join(sqliteDir, 'mindwtr.sqlite'));
+                await new SqliteAdapter(sqlite.client).saveData(durable);
+                resetNativeRequestReceipts();
+                class TrackedReceiptAdapter extends NativeReceiptSqliteAdapter {
+                    async saveData(data: AppData): Promise<void> {
+                        await super.saveData(data);
+                        saved = structuredClone(data);
+                    }
+                }
+                setStorageAdapter(new TrackedReceiptAdapter(sqlite.client, {
+                    rejectConcurrentWrites: label === 'commitPreparedReferenceTasksMove'
+                        || label === 'commitPreparedReferenceTasksAddTag' || label === 'commitPreparedReferenceTasksRemoveTag',
+                }));
+                await loadNativeRequestReceipts(sqlite.client);
+            } else setStorageAdapter({
                 getData: async () => structuredClone(durable),
                 saveData: async (data: AppData) => {
                     saved = structuredClone(data);
                     durable = structuredClone(data);
                 },
             });
-            await (useTaskStore.getState() as unknown as {
-                fetchData: (options?: { silent?: boolean }) => Promise<void>;
-            }).fetchData({ silent: true });
-            await mutate({
-                resetBaseline: () => { saved = null; },
-                expectPersisted: (verify) => { verifyPersisted = verify; },
-            });
-            await flushPendingSave();
-            if (!saved) throw new Error(`${label}: the store never persisted a snapshot`);
-            const written = saved as AppData;
-            verifyPersisted?.(written);
-            const passed = runNormalizePass(written);
-            const storeIdentical = remoteBytes(written) === remoteBytes(passed);
+            try {
+                await (useTaskStore.getState() as unknown as {
+                    fetchData: (options?: { silent?: boolean }) => Promise<void>;
+                }).fetchData({ silent: true });
+                await mutate({
+                    resetBaseline: () => { saved = null; },
+                    expectPersisted: (verify) => { verifyPersisted = verify; },
+                });
+                await flushPendingSave();
+                if (!saved) throw new Error(`${label}: the store never persisted a snapshot`);
+                const written = saved as AppData;
+                verifyPersisted?.(written);
+                const passed = runNormalizePass(written);
+                const storeIdentical = remoteBytes(written) === remoteBytes(passed);
 
-            const readBack = throughLocalStorage(written);
-            const readBackPassed = runNormalizePass(readBack);
-            const readIdentical = remoteBytes(readBack) === remoteBytes(readBackPassed);
+                const readBack = throughLocalStorage(written);
+                const readBackPassed = runNormalizePass(readBack);
+                const readIdentical = remoteBytes(readBack) === remoteBytes(readBackPassed);
 
-            report(
-                `| ${label} | ${storeIdentical ? 'no' : 'YES'} | ${readIdentical ? 'no' : 'YES'} | ${storeIdentical ? '-' : summarizeDiff(diffDocuments(written, passed, 5_000))} | ${readIdentical ? '-' : summarizeDiff(diffDocuments(readBack, readBackPassed, 5_000))} |`,
-            );
-            resetForTests();
-            return {
-                storeFields: [...new Set(
-                    diffDocuments(written, passed, 5_000).map((entry) => entry.path.split('.').pop() as string),
-                )].sort(),
-                readFields: [...new Set(
-                    diffDocuments(readBack, readBackPassed, 5_000).map((entry) => entry.path.split('.').pop() as string),
-                )].sort(),
-            };
+                report(
+                    `| ${label} | ${storeIdentical ? 'no' : 'YES'} | ${readIdentical ? 'no' : 'YES'} | ${storeIdentical ? '-' : summarizeDiff(diffDocuments(written, passed, 5_000))} | ${readIdentical ? '-' : summarizeDiff(diffDocuments(readBack, readBackPassed, 5_000))} |`,
+                );
+                resetForTests();
+                return {
+                    storeFields: [...new Set(
+                        diffDocuments(written, passed, 5_000).map((entry) => entry.path.split('.').pop() as string),
+                    )].sort(),
+                    readFields: [...new Set(
+                        diffDocuments(readBack, readBackPassed, 5_000).map((entry) => entry.path.split('.').pop() as string),
+                    )].sort(),
+                };
+            } finally {
+                if (sqlite) {
+                    await flushPendingSave();
+                    resetForTests();
+                    resetNativeRequestReceipts();
+                    sqlite.close();
+                    rmSync(sqliteDir!, { recursive: true, force: true });
+                }
+            }
         };
 
         const store = () => useTaskStore.getState() as unknown as Record<string, (...args: never[]) => Promise<unknown>>;
@@ -1177,6 +1211,134 @@ describe('canonical local reads contract', () => {
                     operation: 'delete', before: planned.prepared.before, after: planned.prepared.after,
                     deviceIdBefore: planned.prepared.deviceIdBefore, deviceIdToInitialize: planned.prepared.deviceIdToInitialize,
                 }, durable.authority)).toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedReferenceTasksMove: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-46', 'task-69'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'reference') throw new Error(`Reference Move fixture missing: ${id}`);
+                    return source;
+                });
+                const request = { requestId: 'd41122ed-aef4-4691-8bdd-bcd70104d193', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    status: 'next' as const, params: {} };
+                const planned = nativeValue(await host.prepareReferenceTasksMove(request));
+                expect(nativeValue(host.validatePreparedReferenceTasksMove({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 2, status: 'next' });
+                const moved = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...moved.keys()].sort()).toEqual([...taskIds].sort());
+                for (const source of sources) {
+                    expect(moved.get(source.id)).toMatchObject({ status: 'next', rev: (source.rev ?? 0) + 1 });
+                }
+                expect(planned.prepared.effect.createdTasks).toEqual([]);
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => moved.get(row.id) ?? row));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedReferenceTasksMove(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedReferenceTasksAddTag: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-46', 'task-69'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'reference') throw new Error(`Reference Add-tag fixture missing: ${id}`);
+                    return source;
+                });
+                expect(sources[0].tags).toContain('#writing');
+                expect(sources[1].tags).not.toContain('#writing');
+                const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717195', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    tag: ' ###writing ', params: {} };
+                const planned = nativeValue(await host.prepareReferenceTasksAddTag(request));
+                if (planned.kind !== 'prepared') throw new Error('Reference Add-tag fixture unexpectedly produced a no-op');
+                expect(nativeValue(host.validatePreparedReferenceTasksAddTag({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 1, changed: true });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const rawSources = taskIds.map((id) => {
+                    const row = before.tasks.find((task) => task.id === id);
+                    const raw = row && rawReadTaskSnapshot(row);
+                    if (!raw) throw new Error(`Reference Add-tag raw fixture missing: ${id}`);
+                    return raw;
+                });
+                const expectedUpdates = buildBulkTaskTokenUpdates(taskIds,
+                    new Map(rawSources.map((row) => [row.id, row])), 'tags', request.tag.trim(), 'add');
+                expect(expectedUpdates.map((update) => update.id)).toEqual(['task-69']);
+                const tagged = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...tagged.keys()]).toEqual(['task-69']);
+                expect(tagged.get('task-69')).toMatchObject({ status: 'reference',
+                    tags: expectedUpdates[0].updates.tags, rev: (sources[1].rev ?? 0) + 1 });
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => tagged.get(row.id) ?? row));
+                    expect(written.tasks.find((row) => row.id === 'task-46')).toEqual(before.tasks.find((row) => row.id === 'task-46'));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas);
+                    expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedReferenceTasksAddTag(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
+            },
+            commitPreparedReferenceTasksRemoveTag: async (control) => {
+                const host = await nativeHost(control);
+                const taskIds = ['task-46', 'task-69'];
+                const sources = taskIds.map((id) => {
+                    const source = useTaskStore.getState()._tasksById.get(id);
+                    if (!source || source.status !== 'reference') throw new Error(`Reference Remove-tag fixture missing: ${id}`);
+                    return source;
+                });
+                expect(sources[0].tags).toContain('#writing');
+                expect(sources[1].tags).not.toContain('#writing');
+                const request = { requestId: 'c79d9455-74a4-4cb6-a543-4b5f7a717196', taskIds,
+                    taskRevisions: Object.fromEntries(sources.map((source) => [source.id, taskRevisionOf(source)])),
+                    tags: [' ###writing '], params: {} };
+                const planned = nativeValue(await host.prepareReferenceTasksRemoveTag(request));
+                if (planned.kind !== 'prepared') throw new Error('Reference Remove-tag fixture unexpectedly produced a no-op');
+                expect(nativeValue(host.validatePreparedReferenceTasksRemoveTag({ request, prepared: planned.prepared })))
+                    .toEqual({ count: 1, changed: true });
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const rawSources = taskIds.map((id) => {
+                    const row = before.tasks.find((task) => task.id === id);
+                    const raw = row && rawReadTaskSnapshot(row);
+                    if (!raw) throw new Error(`Reference Remove-tag raw fixture missing: ${id}`);
+                    return raw;
+                });
+                const expectedUpdates = buildBulkTaskTokenUpdates(taskIds,
+                    new Map(rawSources.map((row) => [row.id, row])), 'tags', request.tags, 'remove');
+                expect(expectedUpdates.map((update) => update.id)).toEqual(['task-46']);
+                const tagged = new Map(planned.prepared.effect.tasks.map((pair) => [pair.after.id, pair.after]));
+                expect([...tagged.keys()]).toEqual(['task-46']);
+                expect(tagged.get('task-46')).toMatchObject({ status: 'reference',
+                    tags: expectedUpdates[0].updates.tags, rev: (sources[0].rev ?? 0) + 1 });
+                expect(planned.prepared.effect.projects).toEqual([]);
+                expect(planned.prepared.effect.sections).toEqual([]);
+                control.expectPersisted((written) => {
+                    expect(written.tasks).toEqual(before.tasks.map((row) => tagged.get(row.id) ?? row));
+                    expect(written.tasks.find((row) => row.id === 'task-69')).toEqual(before.tasks.find((row) => row.id === 'task-69'));
+                    expect(written.projects).toEqual(before.projects);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.areas).toEqual(before.areas);
+                    expect(written.people).toEqual(before.people);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedReferenceTasksRemoveTag(planned.prepared, durable.authority))
+                    .toEqual({ success: true, ids: taskIds, outcome: 'applied' });
             },
             commitPreparedArchivedTasksRestore: async (control) => {
                 const host = await nativeHost(control);
@@ -2036,7 +2198,8 @@ describe('canonical local reads contract', () => {
 
         const notCanonical: Array<{ action: string; storeFields: string[]; readFields: string[] }> = [];
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
-            const outcome = await runMutation(action, WRITE_ACTIONS[action]);
+            const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
+                action === 'commitPreparedReferenceTasksMove' || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
             }
@@ -2148,6 +2311,50 @@ describe('canonical local reads contract', () => {
                 expect(useTaskStore.getState()._tasksById.get(source.id)).toEqual(affected.get(source.id));
             }, fixture);
             if (referenceMenu.storeFields.length > 0 || referenceMenu.readFields.length > 0) notCanonical.push({ action: name, ...referenceMenu });
+        }
+        for (const action of ['choose', 'add', 'completeProject'] as const) {
+            const name = `native prepared Reference project next action ${action}`;
+            const parentId = 'prompt191-parent'; const sourceId = 'prompt191-source'; const candidateId = 'prompt191-candidate';
+            const fixture = convergeThroughStorage({ ...settled,
+                projects: [...settled.projects, project(parentId)],
+                tasks: [...settled.tasks, task(sourceId, { status: 'reference', projectId: parentId, sectionId: undefined,
+                    isFocusedToday: false, recurrence: undefined, startTime: undefined, dueDate: undefined }),
+                    task(candidateId, { status: 'waiting', projectId: parentId, sectionId: undefined,
+                        isFocusedToday: false, recurrence: undefined, startTime: undefined, dueDate: undefined })] });
+            const result = await runMutation(name, async control => {
+                const host = await nativeHost(control); const source = useTaskStore.getState()._tasksById.get(sourceId)!;
+                const completionRequest = { id: sourceId, source: 'reference' as const,
+                    requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0193', taskRevision: taskRevisionOf(source) };
+                const completion = { request: completionRequest, prepared: nativeValue(await host.prepareTaskCompletion(completionRequest)).prepared };
+                nativeValue(await host.commitPreparedTaskCompletion(completion)); await flushPendingSave();
+                const origin = { kind: 'completion' as const, envelope: completion };
+                const options = nativeValue(await host.getReferenceProjectNextActionOptions({ origin, params: { offset: 0, revision: null } }));
+                if (!options) throw new Error('Project next action fixture must have a real prompt');
+                const base = { requestId: '2f0e9b35-afcd-4710-8847-9c4219ad0194', origin: options.origin, promptRevision: options.promptRevision };
+                const request = action === 'choose' ? { ...base, action, candidateId,
+                    candidateRevision: taskRevisionOf(useTaskStore.getState()._tasksById.get(candidateId)!) }
+                    : action === 'add' ? { ...base, action, text: 'Canonical next action', openAfterSave: true }
+                        : { ...base, action };
+                const prepared = nativeValue(await host.prepareReferenceProjectNextAction({ request, origin })).prepared;
+                const envelope = { request, prepared }; expect(nativeValue(host.validatePreparedReferenceProjectNextAction(envelope))).toEqual(prepared.result);
+                const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+                const op = prepared.operation;
+                const taskEffects = op.kind === 'choose' ? op.effect.tasks : op.kind === 'add' ? [{ before: null, after: op.task }] : op.lifecycle.effect.tasks;
+                const projectEffects = op.kind === 'completeProject' ? [op.lifecycle.effect.project] : [];
+                const sectionEffects = op.kind === 'completeProject' ? op.lifecycle.effect.sections : [];
+                control.resetBaseline(); control.expectPersisted(written => {
+                    const tasks = new Map(taskEffects.map(row => [row.after.id, row.after]));
+                    expect(written.tasks).toEqual([...before.tasks.map(row => tasks.get(row.id) ?? row), ...taskEffects.filter(row => row.before === null).map(row => row.after)]);
+                    expect(written.projects).toEqual(before.projects.map(row => projectEffects.find(effect => effect.after.id === row.id)?.after ?? row));
+                    expect(written.sections).toEqual(before.sections?.map(row => sectionEffects.find(effect => effect.after.id === row.id)?.after ?? row));
+                    expect(written.areas).toEqual(before.areas); expect(written.people).toEqual(before.people); expect(written.settings).toEqual(before.settings);
+                });
+                expect(nativeValue(await host.commitPreparedReferenceProjectNextAction(envelope))).toEqual(prepared.result);
+                if (op.kind === 'choose') expect(useTaskStore.getState()._tasksById.get(candidateId)?.rev).toBe(op.effect.tasks[0].after.rev);
+                if (op.kind === 'add') expect(useTaskStore.getState()._tasksById.get(op.task.id)).toEqual(op.task);
+                if (op.kind === 'completeProject') expect(useTaskStore.getState()._projectsById.get(parentId)?.status).toBe('archived');
+            }, fixture, true);
+            if (result.storeFields.length || result.readFields.length) notCanonical.push({ action: name, ...result });
         }
         const referenceDestinationFixture = convergeThroughStorage({ ...settled, tasks: settled.tasks.map(row => row.id === 'task-66'
             ? { ...row, status: 'reference', isFocusedToday: false, projectId: undefined, sectionId: undefined } : row) });

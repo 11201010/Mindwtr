@@ -12,26 +12,66 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
+import java.util.UUID
 
 /**
- * A notification shown now, as RN shows one (react-native-alarm-notification's sendNotification, patched), from core's
- * details (buildImmediateNotificationDetails; host-entry adds the channel's name). Kotlin reads the details; it decides none.
+ * A notification as RN shows one (react-native-alarm-notification's sendNotification, patched), from core's details
+ * (buildImmediateNotificationDetails, or a reminder alarm's buildReminderAlarmDetails; host-entry adds the channel's name). Kotlin
+ * reads the details; it decides none.
  */
 internal object CoreNotifications {
-    /** Posts [details]; false when Android drops it (no notification permission, Android 13+). */
+    /** Core's REMINDER_NOTIFICATION_CHANNEL. */
+    const val REMINDER_CHANNEL = "mindwtr_reminders_v2"
+    /** A tap's payload for MainActivity: the notification's data as JSON, which core routes (EntryPoints.kt, routeNotificationOpen). */
+    const val EXTRA_OPEN = "tech.dongdongbh.mindwtr.notificationOpen"
+
+    /** Posts [details] now; false when Android drops it (no notification permission, Android 13+). */
     fun post(context: Context, details: JSONObject): Boolean {
-        val channel = details.getString("channel")
-        val color = details.optString("color").takeIf { it.isNotEmpty() }?.let(Color::parseColor)
-        ensureChannel(context, channel, details.getString("channelName"), color)
-        val title = details.getString("title")
-        val message = details.getString("message")
-        val sound = if (details.optBoolean("play_sound", true)) Settings.System.DEFAULT_NOTIFICATION_URI else null
         // RN's notification ID: the send time in seconds.
         val id = (System.currentTimeMillis() / 1000).toInt()
-        // A tap opens the app with the notification's data as extras, as RN's library passes them (the tap's route: the reminders pass).
+        val builder = builder(context, id, details, details.getString("channelName")) ?: return false
+        context.getSystemService(NotificationManager::class.java).notify(id, builder.build())
+        return NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+
+    /**
+     * A fired reminder alarm (core's NativeReminderAlarm with the channel's name) under the alarm's id, as RN's AlarmReceiver posts
+     * it: with buttons, Complete (a task reminder only), Snooze and Dismiss, with RN's labels and icons. Done and Snooze each carry a
+     * request UUID made now, so every tap on this notification is the same request.
+     */
+    fun postReminder(context: Context, alarm: JSONObject) {
+        val id = alarm.getInt("id")
+        val details = alarm.getJSONObject("details")
+        val builder = builder(context, id, details, alarm.optString("channelName")) ?: return
+        if (details.optBoolean("has_button")) {
+            val data = details.optJSONObject("data") ?: JSONObject()
+            fun action(name: String) = Intent(context, ReminderActionReceiver::class.java).setAction(name).putExtra(ReminderActionReceiver.EXTRA_ID, id)
+            fun broadcast(intent: Intent) = PendingIntent.getBroadcast(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (data.optString("notificationActionComplete") == "true") {
+                builder.addAction(android.R.drawable.checkbox_on_background, "COMPLETE", broadcast(action(ReminderActionReceiver.COMPLETE)
+                    .putExtra(ReminderActionReceiver.EXTRA_REQUEST, UUID.randomUUID().toString()).putExtra(ReminderActionReceiver.EXTRA_TASK, data.optString("taskId"))))
+            }
+            builder.addAction(R.drawable.ic_snooze, "SNOOZE", broadcast(action(ReminderActionReceiver.SNOOZE)
+                .putExtra(ReminderActionReceiver.EXTRA_REQUEST, UUID.randomUUID().toString()).putExtra(ReminderAlarms.EXTRA_ALARM, alarm.toString())))
+            builder.addAction(android.R.drawable.ic_lock_idle_alarm, "DISMISS", broadcast(action(ReminderActionReceiver.DISMISS)))
+        }
+        context.getSystemService(NotificationManager::class.java).notify(id, builder.build())
+    }
+
+    /**
+     * RN's notification for [details] under [id]: RN's title (the app's name when empty) and text (none: nothing is posted), icon,
+     * color, sound, and a tap that opens the app with the notification's data for core to route. Null when RN would post nothing.
+     */
+    private fun builder(context: Context, id: Int, details: JSONObject, channelName: String): NotificationCompat.Builder? {
+        val channel = details.optString("channel").ifEmpty { return null }
+        val message = details.optString("message").ifEmpty { return null }
+        val title = details.optString("title").ifEmpty { context.applicationInfo.loadLabel(context.packageManager).toString() }
+        val color = details.optString("color").takeIf { it.isNotEmpty() }?.let(Color::parseColor)
+        ensureChannel(context, channel, channelName.ifEmpty { channel }, color)
+        val sound = if (details.optBoolean("play_sound", true)) Settings.System.DEFAULT_NOTIFICATION_URI else null
         val open = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        details.optJSONObject("data")?.let { data -> data.keys().forEach { key -> open.putExtra(key, data.getString(key)) } }
-        val notification = NotificationCompat.Builder(context, channel)
+            .putExtra(EXTRA_OPEN, (details.optJSONObject("data") ?: JSONObject()).toString())
+        return NotificationCompat.Builder(context, channel)
             .setSmallIcon(context.resources.getIdentifier(details.optString("small_icon", "ic_launcher"), "mipmap", context.packageName))
             .setContentTitle(title)
             .setContentText(message)
@@ -45,9 +85,6 @@ internal object CoreNotifications {
                 color?.let(::setColor)
                 if (details.optBoolean("use_big_text")) setStyle(NotificationCompat.BigTextStyle().bigText(message))
             }
-            .build()
-        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
-        return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
     /** RN's reminder channel as RN makes it at start (NotificationOpenIntentsModule.ensureReminderChannel), once; its light in core's color. */

@@ -920,7 +920,7 @@ describe('ListView', () => {
 
     fireEvent.click(view.getByRole('button', { name: 'Select All' }));
     expect(within(activeRow).getByRole('checkbox', { name: 'Select task' })).toBeChecked();
-    fireEvent.change(view.getByRole('combobox', { name: 'Move to' }), {
+    fireEvent.change(view.getByRole('combobox', { name: 'Status' }), {
       target: { value: 'next' },
     });
 
@@ -973,7 +973,7 @@ describe('ListView', () => {
     fireEvent.click(view.getByRole('checkbox', { name: 'Include archived projects' }));
     fireEvent.click(view.getByRole('button', { name: 'Select' }));
     fireEvent.click(view.getByRole('checkbox', { name: 'Select task' }));
-    expect(view.getByRole('combobox', { name: 'Move to' })).toBeInTheDocument();
+    expect(view.getByRole('combobox', { name: 'Status' })).toBeInTheDocument();
 
     act(() => {
       useTaskStore.setState({
@@ -985,7 +985,7 @@ describe('ListView', () => {
     await waitFor(() => {
       expect(view.getByText('Changing project note')).toBeInTheDocument();
       expect(view.queryByRole('checkbox', { name: 'Select task' })).not.toBeInTheDocument();
-      expect(view.queryByRole('combobox', { name: 'Move to' })).not.toBeInTheDocument();
+      expect(view.queryByRole('combobox', { name: 'Status' })).not.toBeInTheDocument();
     });
   });
 

@@ -1235,6 +1235,9 @@ describe('native host contract', () => {
     ];
 
     it.each(editorFieldEdits)('persists $field only after its save is durable', async ({ field, value }) => {
+        // Keep the saved schedule in the future; crossing its date must not
+        // turn this durability check into an Inbox activation test.
+        freezeClock();
         const host = await activateWith(
             [task('edit', '2026-09-01T00:00:00.000Z', { description: 'Old notes', priority: 'low' })],
             [project('assigned-project')],
@@ -1246,7 +1249,7 @@ describe('native host contract', () => {
         let savedSnapshot: unknown;
         let releaseSave!: () => void;
         saveData.mockClear();
-        saveData.mockImplementation((data: unknown) => {
+        saveData.mockImplementationOnce((data: unknown) => {
             savedSnapshot = data;
             return new Promise<void>((resolve) => { releaseSave = resolve; });
         });

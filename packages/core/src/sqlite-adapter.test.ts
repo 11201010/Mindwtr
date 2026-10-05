@@ -25,6 +25,7 @@ import { computeRemoteSyncDocumentFingerprint, toRemoteSyncDocument } from './sy
 import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from './store-helpers';
 import { ENTITY_FOREIGN_KEY_CHILDREN, purgeExpiredTombstones } from './sync-tombstones';
 import { buildTaskViewSectionUpdates, buildTaskViewSectionUndoUpdates } from './view-sections';
+import { parseAttachmentLinkBatch } from './attachment-link-utils';
 
 const require = createRequire(import.meta.url);
 type BunStatement = {
@@ -1916,6 +1917,28 @@ describeSqlite('SqliteAdapter', () => {
         expect(projectOrders.every((order) => order > 0)).toBe(true);
         expect(new Set(sectionOrders).size).toBe(sectionOrders.length);
         expect(sectionOrders.every((order) => order > 0)).toBe(true);
+    });
+
+    it('preserves UpNote links and Markdown descriptions through SQLite close/reopen', async () => {
+        const now = '2026-10-03T12:00:00.000Z';
+        const uri = 'upnote://x-callback-url/openNote?noteId=Note%2FCase%2520&new_window=true';
+        const attachments = parseAttachmentLinkBatch(`${uri}\nPipe title | ${uri}\n[Markdown title](${uri})`).entries.map((entry, index) => ({
+            ...entry, id: `upnote-${index}`, createdAt: now, updatedAt: now,
+        }));
+        await adapter.saveData({
+            tasks: [{ id: 'upnote-task', title: 'Task', status: 'inbox', tags: [], contexts: [],
+                description: `[Note](${uri})`, attachments, createdAt: now, updatedAt: now }],
+            projects: [{ id: 'upnote-project', title: 'Project', status: 'active', color: '#123456', order: 0,
+                attachments, createdAt: now, updatedAt: now }],
+            sections: [], areas: [], settings: {},
+        });
+        db.close();
+        db = new RuntimeDatabase!(databasePath);
+        adapter = new SqliteAdapter(createClient(db));
+        const loaded = await adapter.getData();
+        expect(loaded.tasks[0].description).toBe(`[Note](${uri})`);
+        expect(loaded.tasks[0].attachments).toEqual(attachments);
+        expect(loaded.projects[0].attachments).toEqual(attachments);
     });
 
     it('preserves attachments with empty URIs when loading tasks', async () => {

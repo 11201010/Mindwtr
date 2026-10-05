@@ -451,6 +451,9 @@ export class SqliteAdapter {
         this.rejectConcurrentWrites = options.rejectConcurrentWrites === true;
     }
 
+    /** Read-only capability for prepared native writes that require a BEGIN epoch fence. */
+    get concurrentWritesGuarded(): boolean { return this.rejectConcurrentWrites; }
+
     private async loadAllRows(table: 'tasks' | 'projects' | 'sections' | 'areas' | 'people'): Promise<Record<string, unknown>[]> {
         const rows: Record<string, unknown>[] = [];
         try {
@@ -1261,6 +1264,11 @@ export class SqliteAdapter {
      */
     protected async beforeCommit(_write: { data: AppData } | { task: Task }): Promise<void> {}
 
+    /** A specialized writer can keep untrusted document identifiers out of failure diagnostics. */
+    protected buildSaveFailureContext(data: AppData, step: string): Record<string, unknown> {
+        return buildSqliteSaveFailureContext(data, step);
+    }
+
     async saveTask(task: Task): Promise<void> {
         await this.ensureSchema();
         await this.client.run('BEGIN IMMEDIATE');
@@ -1714,7 +1722,7 @@ export class SqliteAdapter {
                 scope: 'sqlite',
                 category: 'storage',
                 error,
-                context: buildSqliteSaveFailureContext(data, saveStep),
+                context: this.buildSaveFailureContext(data, saveStep),
             });
             throw error;
         }
