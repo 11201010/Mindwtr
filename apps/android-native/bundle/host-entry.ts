@@ -63,6 +63,7 @@ import {
     webdavPutJson,
 } from '@mindwtr/core';
 import { createNativeAI } from './host-ai';
+import { createNativeLocalAttachmentsForHost } from './host-attachments';
 import { createNativeReminders } from './host-reminders';
 import { createNativeSync, type NativeSync } from './host-sync';
 import { createWidgetPublisher, type WidgetInputs } from './host-widgets';
@@ -348,8 +349,10 @@ const widgets = typeof (globalThis.__mindwtrNative as { widgetPublish?: unknown 
 /** Settings › AI and the AI actions (host-ai.ts), on the same host: RN's AsyncStorage and SecureStore hold what RN's do. */
 const nativeAI = nativeSync ? createNativeAI(keyValue, () => globalThis.__mindwtrSecrets as HostSecrets) : null;
 
+const localAttachments = nativeSync ? null : createNativeLocalAttachmentsForHost();
+const attachmentsHost = nativeSync?.attachmentsHost ?? localAttachments?.contractHost;
 const contract = createNativeHostContract({ ...(nativeSync ? { syncSettings: nativeSync.settingsHost } : {}), ...(nativeAI ? { ai: nativeAI } : {}),
-    ...(nativeSync?.attachmentsHost ? { attachments: nativeSync.attachmentsHost } : {}) });
+    ...(attachmentsHost ? { attachments: attachmentsHost } : {}) });
 
 /**
  * Reminder alarms (host-reminders.ts), on a host with the alarm bridges (Android). The iOS host and the gates' stand-in bridge have
@@ -818,6 +821,7 @@ const ATTACHMENT_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
     openAttachment: (input) => contract.openAttachment(input),
     settleTaskDraftAttachments: (input) => contract.settleTaskDraftAttachments(input),
 };
+const LOCAL_ATTACHMENT_REQUESTS = new Set(['draftAddFile', 'draftRemove', 'openAttachment', 'settleTaskDraftAttachments']);
 /**
  * The AI's requests (native-host-contract-ai.ts): each waits on the provider (up to RN's 5 min request timeout), so
  * CoreHost.aiRequest waits for it without holding the engine. None writes: an answer is a dialog whose buttons apply through the
@@ -3032,9 +3036,31 @@ globalThis.MindwtrHost = {
     attachmentRequest(name: string, json: string): string {
         return submit(async () => {
             requireSaved();
+            if (localAttachments && !LOCAL_ATTACHMENT_REQUESTS.has(name)) {
+                throw new Error('INVALID_INPUT: Only task local attachment operations run here');
+            }
             const request = ATTACHMENT_REQUESTS[name];
             if (!request) throw new Error(`INVALID_INPUT: no attachment request ${name}`);
-            return unwrap(await request(JSON.parse(json) as never));
+            const input = JSON.parse(json) as never;
+            if (localAttachments && (!LOCAL_ATTACHMENT_REQUESTS.has(name)
+                || (name !== 'settleTaskDraftAttachments' && (input as { owner?: { kind?: unknown } } | null)?.owner?.kind !== 'task'))) {
+                throw new Error('INVALID_INPUT: Only task local attachment operations run here');
+            }
+            if (localAttachments && (name === 'draftAddFile' || name === 'draftRemove')) {
+                const owner = (input as { owner: { taskId: string } }).owner;
+                const view = unwrap(contract.getTaskView({ id: owner.taskId }));
+                if (view.readOnly) throw new Error('INVALID_INPUT: Task draft attachments cannot be edited');
+            }
+            const answer = unwrap(await request(input));
+            if (localAttachments && LOCAL_ATTACHMENT_REQUESTS.has(name)
+                && (answer as { kind?: string })?.kind !== 'refused' && (answer as { kind?: string })?.kind !== 'blocked'
+                && (name !== 'openAttachment' || (answer as { status?: string })?.status === 'available')) {
+                try {
+                    await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios', message: 'Native iOS local attachment operation completed',
+                        context: { releaseCheck: 'v1.3.4/ios-local-attachment-host', operation: name, outcome: 'completed' } }, { force: true });
+                } catch { /* an acknowledged local operation cannot fail on its diagnostic */ }
+            }
+            return answer;
         });
     },
     /**

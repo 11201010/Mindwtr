@@ -964,7 +964,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const draftOnly = \(input: never, command: \(\) => Promise<Reply>\): Promise<Reply> => \(\(input as \{ owner\?: \{ kind\?: unknown \} \} \| null\)\?\.owner\?\.kind === 'task'\s*\? command\(\)\s*: Promise\.resolve\(\{ ok: false, error: \{ code: 'INVALID_INPUT', message: 'Only a task draft attachment command runs here' \} \}\)\);/);
     assert.match(source('Attachments.kt'), /if \(owner\.kind == "task"\) \{\s*sendDraft\(owner, kind,/, 'a task draft\'s commands take the draft path');
     assert.match(source('Attachments.kt'), /private fun sendDraft\([\s\S]{0,500}?runtime\.attachmentRequest\(DRAFT_REQUESTS\.getValue\(kind\)/, 'a task draft\'s commands are sent unjournaled');
-    assert.match(host, /attachmentRequest\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*requireSaved\(\);\s*const request = ATTACHMENT_REQUESTS\[name\];/);
+    const attachmentEntry = /attachmentRequest\(name: string, json: string\): string \{([\s\S]*?)\n    \},/.exec(host)[1];
+    assert.match(attachmentEntry, /return submit\(async \(\) => \{\s*requireSaved\(\);/);
+    assert.match(attachmentEntry, /const request = ATTACHMENT_REQUESTS\[name\];/);
+    assert(attachmentEntry.indexOf('requireSaved();') < attachmentEntry.indexOf('const request ='), 'attachment readiness precedes dispatch');
     assert.deepEqual(called(table('AI_REQUESTS')).sort(), ['loadAIModels', 'requestAICopilot', 'requestInboxClarify', 'requestTaskEditorBreakdown',
         'requestTaskEditorClarify', 'requestTaskEditorCopilot', 'requestWeeklyReviewAnalysis'], 'AI_REQUESTS are core\'s AI requests');
     assert.match(host, /aiRequest\(name: string, json: string\): string \{\s*return submit\(async \(signal\) => \{\s*requireSaved\(\);\s*const request = AI_REQUESTS\[name\];[\s\S]{0,120}?const answer = await request\(JSON\.parse\(json\) as never, signal\);\s*if \(signal\.aborted\) throw new Error\('The AI request was cancelled'\);\s*return unwrap\(answer\);/);
@@ -986,7 +989,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     }
     // Core's AI device binds RN's stores (host-ai.ts): the refused secret calls (an AI key is no sync commit), RN's AsyncStorage.
     assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets\) : null;/);
-    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(nativeSync\?\.attachmentsHost \? \{ attachments: nativeSync\.attachmentsHost \} : \{\}\) \}\)/);
+    assert.match(hostEntry, /const localAttachments = nativeSync \? null : createNativeLocalAttachmentsForHost\(\);/);
+    assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(attachmentsHost \? \{ attachments: attachmentsHost \} : \{\}\) \}\)/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -3374,7 +3379,8 @@ export function isSandboxMode() { return globalThis.sandbox === true; }
 export function isWorkspaceTransitionActive() { return globalThis.workspaceTransition === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
-export function createNativeHostContract() {
+export function createNativeHostContract(bindings = {}) {
+  globalThis.contractBindings = bindings;
   return {
     async activate() {
       globalThis.events.push('activate');
@@ -3406,8 +3412,13 @@ export function createNativeHostContract() {
     },
     getTaskView(input) {
       globalThis.editorInputs.push(JSON.stringify(['view', input]));
-      return { ok: true, value: { version: 1, id: input.id, readOnly: false, rows: [], checklistBase: [{ id: 'c', title: 'Milk', isCompleted: true }] } };
+      if (globalThis.localTaskViewFailure) return globalThis.localTaskViewFailure;
+      return { ok: true, value: { version: 1, id: input.id, readOnly: globalThis.localTaskReadOnly === true, rows: [], checklistBase: [{ id: 'c', title: 'Milk', isCompleted: true }] } };
     },
+    async addAttachmentFile(input) { globalThis.attachmentInputs.push(['draftAddFile', input]); return globalThis.attachmentReply; },
+    async removeAttachment(input) { globalThis.attachmentInputs.push(['draftRemove', input]); return globalThis.attachmentReply; },
+    async openAttachment(input) { globalThis.attachmentInputs.push(['openAttachment', input]); return globalThis.attachmentReply; },
+    async settleTaskDraftAttachments(input) { globalThis.attachmentInputs.push(['settleTaskDraftAttachments', input]); return globalThis.attachmentReply; },
     editTaskChecklist(input) {
       globalThis.editorInputs.push(JSON.stringify(['checklist', input]));
       return { ok: true, value: { draft: input.draft, checklist: input.checklist, changed: false, focusId: null, field: { items: [] } } };
@@ -3570,6 +3581,25 @@ export function logInfo(message, meta) {
   throw new Error('diagnostic sink failed');
 }
 export function logWarn() { throw new Error('diagnostic sink failed'); }
+// Only the explicit iOS local-capability fixture may construct these. Backends
+// and sync triggers retain the throwing stand-ins below.
+export function createMobileAttachmentFiles(host) {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  globalThis.localFilePorts = host;
+  return { persistAttachmentLocally: async (attachment) => attachment, deleteManagedAttachmentFile: async () => false };
+}
+export function createMobileAttachmentInstaller() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  return { installAttachmentFileGeneration: async () => { throw new Error('no remote installer call'); } };
+}
+export function createMobileAttachmentCommon() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  return {};
+}
+export function setSha256HexProvider() {
+  if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  globalThis.localShaInstallCount++;
+}
 `;
 // host-sync.ts's and host-reminders.ts's core imports: bound only on a host with the key-value or the alarm bridges, which the
 // stand-in bridge below lacks, so they are bundled and never run here. Each one the fake does not define throws if anything calls it.
@@ -3588,7 +3618,7 @@ const built = await build({
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
-const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined) => {
+const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
@@ -3619,6 +3649,8 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined) =
         saveDraftResult: { ok: true, value: { id: 't', draft: { title: 'b' } } },
         inboxCommitResult: { ok: false, error: { code: 'SAVE_FAILED', message: 'disk full' } },
         logText: null, logOps: [], logFailure: null,
+        localAttachmentTest: false, localShaInstallCount: 0, attachmentInputs: [],
+        attachmentReply: { ok: true, value: { kind: 'saved', ids: [], attachments: [] } },
         __mindwtrNative: {
             sqlAll(sql) {
                 if (sql === 'SELECT data FROM settings WHERE id = 1') {
@@ -3662,6 +3694,7 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined) =
             kvSet(key, value) { state.fileCalls.push(`kvSet ${key} ${value}`); state.kv[key] = value; return null; },
         },
     };
+    configure(state);
     vm.runInNewContext(built.outputFiles[0].text, state);
     return state;
 };
@@ -3669,6 +3702,69 @@ const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Production host-entry selects independent local attachment policy only for
+// complete iOS file capabilities. No kvMultiGet, sync settings, AI or backend
+// constructor is supplied; readiness and diagnostic acknowledgments are real.
+{
+    const configureLocal = (state) => {
+        state.localAttachmentTest = true;
+        for (const name of ['fileCall', 'installerCall', 'fileAbort', 'fileDeleteNow', 'ioNext', 'ioBody']) state.__mindwtrNative[name] = () => '';
+        state.__mindwtrNative.fileDirectories = () => JSON.stringify({ document: 'file:///library/documents/', cache: 'file:///library/cache/' });
+        state.__mindwtrFileCall = async () => null;
+        state.__mindwtrInstallerCall = async () => null;
+    };
+    const local = makeState(0, [], 'ios', configureLocal);
+    assert.deepEqual(Object.keys(local.contractBindings), ['attachments'], 'local capability enables neither Sync nor AI');
+    assert.equal(local.localShaInstallCount, 1, 'successful local construction installs native SHA once');
+    assert.equal((await poll(local, local.MindwtrHost.boot())).ok, true);
+    const owner = { kind: 'task', taskId: 'task215', attachments: [] };
+    const markerLines = () => (local.logText ?? '').split('\n').filter((line) => line.includes('v1.3.4/ios-local-attachment-host'));
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).ok, true);
+    assert.equal(markerLines().length, 1, 'one forced marker follows an acknowledged task draft operation');
+    const marker = JSON.parse(markerLines()[0]);
+    assert.deepEqual(marker.context, { releaseCheck: 'v1.3.4/ios-local-attachment-host', operation: 'draftRemove', outcome: 'completed' });
+    assert(!markerLines()[0].includes('task215'), 'diagnostic has no task ID or request body');
+    local.localTaskReadOnly = true;
+    const beforeInputs = local.attachmentInputs.length;
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })))).ok, false);
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).ok, false);
+    assert.equal(local.attachmentInputs.length, beforeInputs, 'read-only task cannot enter copy/remove policy');
+    local.attachmentReply = { ok: true, value: { status: 'available', open: { kind: 'file' } } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner })))).ok, true,
+        'read-only task can still ask shared Open policy');
+    local.attachmentReply = { ok: true, value: { deleted: 0 } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('settleTaskDraftAttachments', '{}'))).ok, true,
+        'stale/read-only draft settlement remains owned by shared latest-keep policy');
+    local.localTaskReadOnly = false;
+    local.localTaskViewFailure = { ok: false, error: { code: 'TASK_NOT_FOUND', message: 'Task not found' } };
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })))).ok, false);
+    local.localTaskViewFailure = null;
+    const successfulMarkers = markerLines().length;
+    for (const reply of [{ ok: false, error: { code: 'ACTION_FAILED', message: 'refused' } },
+        { ok: true, value: { kind: 'refused' } }, { ok: true, value: { kind: 'blocked' } }]) {
+        local.attachmentReply = reply;
+        await poll(local, local.MindwtrHost.attachmentRequest('draftAddFile', JSON.stringify({ owner })));
+    }
+    local.attachmentReply = { ok: true, value: { status: 'unavailable' } };
+    await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner })));
+    assert.equal(markerLines().length, successfulMarkers, 'refused/blocked/unavailable operations emit no success marker');
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('openAttachment', JSON.stringify({ owner: { kind: 'project', projectId: 'p' } })))).ok, false);
+    assert.equal((await poll(local, local.MindwtrHost.attachmentRequest('downloadAttachment', JSON.stringify({ owner })))).ok, false);
+    local.persistenceFailure = { message: 'previous save failed' };
+    assert.match((await poll(local, local.MindwtrHost.attachmentRequest('draftRemove', JSON.stringify({ owner })))).error, /SAVE_FAILED/);
+    assert.equal(markerLines().length, successfulMarkers);
+    assert(local.fileCalls.every((call) => !call.startsWith('kv')), 'local requests never touch RN device storage');
+    for (const variant of ['partial', 'refused', 'android']) {
+        const unavailable = makeState(0, [], variant === 'android' ? undefined : 'ios', (state) => {
+            configureLocal(state);
+            if (variant === 'partial') delete state.__mindwtrNative.ioBody;
+            if (variant === 'refused') state.__mindwtrNative.fileDirectories = () => '!MindwtrNativeError:fixed unavailable';
+        });
+        assert.deepEqual(Object.keys(unavailable.contractBindings), [], `${variant} capability offers no local fallback`);
+        assert.equal(unavailable.localShaInstallCount, 0, 'failed optional discovery leaves SHA binding unchanged');
+        assert.equal((await poll(unavailable, unavailable.MindwtrHost.boot())).ok, true, 'optional local failure does not fail boot');
+    }
+}
 const state = makeState(1);
 const result = await poll(state, state.MindwtrHost.boot());
 assert.equal(result.ok, false);

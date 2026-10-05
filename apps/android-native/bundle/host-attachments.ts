@@ -15,6 +15,11 @@
 // Load this leaf directly across deferred store imports and the iOS core alias.
 import { createMobileAttachmentAvailability } from '../../../packages/core/src/mobile-attachment-availability';
 import {
+    CLOUD_ALLOW_INSECURE_HTTP_KEY, CLOUD_PROVIDER_KEY, CLOUD_URL_KEY,
+    SYNC_BACKEND_KEY, SYNC_PATH_BOOKMARK_KEY, SYNC_PATH_KEY,
+    WEBDAV_ALLOW_INSECURE_HTTP_KEY, WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY,
+} from '../../../packages/core/src/sync-storage-keys';
+import {
     createMobileAttachmentBackends,
     createMobileAttachmentCommon,
     createMobileAttachmentFiles,
@@ -28,6 +33,7 @@ import {
     type MobileSyncAttachmentsPort,
     type MobileSyncEncryptionPort,
     type MobileSyncLogPort,
+    type MobileSyncDropboxAuthPort,
     type NativeAttachmentFileInstaller,
     type NativeAttachmentsHost,
     type SyncCryptoPrimitives,
@@ -43,6 +49,9 @@ export type NativeAttachmentBindings = {
     /** Sync encryption's cipher (host-sync.ts: refused until the crypto bridge, S4, so an encrypted upload fails closed). */
     crypto: SyncCryptoPrimitives;
     encryption: Pick<MobileSyncEncryptionPort, 'logSyncEncryptionEvent' | 'getSyncEncryptionMaterial'>;
+    fetch?: typeof fetch;
+    dropboxAuth?: Pick<MobileSyncDropboxAuthPort, 'getValidAccessToken' | 'forceRefreshAccessToken'>;
+    getDropboxClientId?: () => Promise<string>;
 };
 
 declare const globalThis: Record<string, unknown>;
@@ -76,13 +85,9 @@ export const nativeFileChannels = (): NativeFileChannels | null => {
     return { files, installer, directories: JSON.parse(text) as { document: string; cache: string }, deleteNow };
 };
 
-export const createNativeAttachments = (bindings: NativeAttachmentBindings, channels: NativeFileChannels) => {
+const bindNativeAttachmentFiles = (bindings: NativeAttachmentBindings, channels: NativeFileChannels) => {
     const call = channels.files;
     const { directories } = channels;
-    // QuickJS has no WebCrypto: core's attachment hashes (upload snapshots, download checks) go to the host, off the engine
-    // thread, as RN's _layout.tsx registers its native SHA-256.
-    setSha256HexProvider(async (bytes) => await call({ op: 'sha256' }, bytes) as string);
-
     // expo-file-system as RN's attachment-sync-utils.ts binds it; URIs pass through as they are.
     const fs: MobileAttachmentFileSystemPort = {
         documentDirectory: () => directories.document,
@@ -118,8 +123,8 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
         storage: bindings.storage,
         getSecureConfigValue: (key) => bindings.getSecureConfigValue(key),
         log: bindings.log,
-        fetch: (input, init) => fetch(input, init),
-        dropboxAuth: { getValidAccessToken: unavailable('Dropbox'), forceRefreshAccessToken: unavailable('Dropbox') },
+        fetch: bindings.fetch ?? ((input, init) => fetch(input, init)),
+        dropboxAuth: bindings.dropboxAuth ?? { getValidAccessToken: unavailable('Dropbox'), forceRefreshAccessToken: unavailable('Dropbox') },
     });
 
     // RN's installer Kotlin (HostInstaller.kt): install and hash. File Sync's immutable publication comes with S5.
@@ -159,8 +164,22 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
         storage: { getItem: (key) => bindings.storage.getItem(key) },
         encryption: { getSyncEncryptionMaterial: () => bindings.encryption.getSyncEncryptionMaterial() },
         // No Dropbox app key on this build yet (S4): a Dropbox attachment reads as unavailable.
-        getDropboxClientId: async () => '',
+        getDropboxClientId: bindings.getDropboxClientId ?? (async () => ''),
     });
+
+    const contractHost: NativeAttachmentsHost = {
+        persistAttachmentLocally: (attachment) => files.persistAttachmentLocally(attachment),
+        ensureAttachmentAvailableDetailed: (attachment) => availability.ensureAttachmentAvailableDetailed(attachment),
+        deleteManagedAttachmentFile: (attachment, options) => files.deleteManagedAttachmentFile(attachment, options),
+    };
+    // Install the global provider only after every optional binding constructed
+    // successfully. A refused local capability leaves the prior provider intact.
+    setSha256HexProvider(async (bytes) => await call({ op: 'sha256' }, bytes) as string);
+    return { fs, files, common, installer, contractHost };
+};
+
+export const createNativeAttachments = (bindings: NativeAttachmentBindings, channels: NativeFileChannels) => {
+    const { fs, files, common, installer, contractHost } = bindNativeAttachmentFiles(bindings, channels);
 
     const backends = createMobileAttachmentBackends({
         fs,
@@ -169,13 +188,6 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
         installer,
         log: { sanitize: (message) => bindings.log.sanitize(message) },
     });
-
-    /** Core's attachments contract host (native-host-contract-attachments.ts): the editor's and the project screen's IO. */
-    const contractHost: NativeAttachmentsHost = {
-        persistAttachmentLocally: (attachment) => files.persistAttachmentLocally(attachment),
-        ensureAttachmentAvailableDetailed: (attachment) => availability.ensureAttachmentAvailableDetailed(attachment),
-        deleteManagedAttachmentFile: (attachment, options) => files.deleteManagedAttachmentFile(attachment, options),
-    };
 
     /** Sync's attachment passes (core's mobile sync service), as RN's lib/sync-service.ts binds them. */
     const syncPort: MobileSyncAttachmentsPort = {
@@ -194,3 +206,76 @@ export const createNativeAttachments = (bindings: NativeAttachmentBindings, chan
 };
 
 export type NativeAttachments = ReturnType<typeof createNativeAttachments>;
+
+const LOCAL_UNAVAILABLE = 'Local attachment capability is not available on this host';
+class LocalAttachmentUnavailableError extends Error {
+    constructor() { super(LOCAL_UNAVAILABLE); }
+}
+const refuseLocal = async (): Promise<never> => { throw new LocalAttachmentUnavailableError(); };
+const LOCAL_CONFIG_READS = new Set<string>([
+    SYNC_BACKEND_KEY, SYNC_PATH_KEY, SYNC_PATH_BOOKMARK_KEY, CLOUD_PROVIDER_KEY, CLOUD_URL_KEY,
+    CLOUD_ALLOW_INSECURE_HTTP_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY,
+    WEBDAV_ALLOW_INSECURE_HTTP_KEY, WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY,
+]);
+
+/** Explicit unbound configuration ports, not a replacement device key-value store. */
+export const createNativeLocalAttachmentConfiguration = (): NativeAttachmentBindings => ({
+    storage: {
+        getItem: async (name) => {
+            if (!LOCAL_CONFIG_READS.has(name)) return refuseLocal();
+            return null;
+        },
+        setItem: refuseLocal,
+        removeItem: refuseLocal,
+    },
+    getSecureConfigValue: refuseLocal,
+    // Core's detailed attachment logs can include imported IDs. The local slice
+    // reports only its fixed aggregate acknowledgment through host-entry's queue.
+    log: { info: () => {}, warn: () => {}, sanitize: () => LOCAL_UNAVAILABLE },
+    crypto: {
+        argon2id: refuseLocal, aesGcmSeal: refuseLocal, aesGcmOpen: refuseLocal,
+        randomBytes: () => { throw new LocalAttachmentUnavailableError(); },
+    },
+    encryption: {
+        getSyncEncryptionMaterial: refuseLocal,
+        logSyncEncryptionEvent: () => { throw new LocalAttachmentUnavailableError(); },
+    },
+    fetch: refuseLocal,
+    dropboxAuth: { getValidAccessToken: refuseLocal, forceRefreshAccessToken: refuseLocal },
+    getDropboxClientId: refuseLocal,
+});
+
+/** Local file policy only: no backend construction, cleanup or sync port escapes. */
+export const createNativeLocalAttachments = (channels: NativeFileChannels) => {
+    const { contractHost } = bindNativeAttachmentFiles(createNativeLocalAttachmentConfiguration(), channels);
+    const localHost: NativeAttachmentsHost = {
+        ...contractHost,
+        ensureAttachmentAvailableDetailed: async (attachment) => {
+            try { return await contractHost.ensureAttachmentAvailableDetailed(attachment); }
+            catch (error) {
+                // Shared availability's unconfigured WebDAV fallback may ask an
+                // explicitly unbound secure port. This host has no remote bytes;
+                // only our own fixed capability refusal maps to unavailable.
+                if (error instanceof LocalAttachmentUnavailableError) return { status: 'unavailable' };
+                throw error;
+            }
+        },
+    };
+    return { contractHost: localHost };
+};
+
+/** Optional iOS capability. Partial/refused channels never fail library boot. */
+export const createNativeLocalAttachmentsForHost = () => {
+    if (globalThis.__mindwtrHostPlatform !== 'ios') return null;
+    const bridge = globalThis.__mindwtrNative as Record<string, unknown> | undefined;
+    if (!bridge || !['fileCall', 'installerCall', 'fileAbort', 'fileDirectories', 'fileDeleteNow', 'ioNext', 'ioBody']
+        .every((name) => typeof bridge[name] === 'function')
+        || typeof globalThis.__mindwtrFileCall !== 'function' || typeof globalThis.__mindwtrInstallerCall !== 'function') return null;
+    try {
+        const channels = nativeFileChannels();
+        if (!channels || Object.keys(channels.directories).sort().join(',') !== 'cache,document'
+            || !Object.values(channels.directories).every((value) => typeof value === 'string' && value.length <= 4096
+                && value.startsWith('file:///') && value.endsWith('/'))) return null;
+        return createNativeLocalAttachments(channels);
+    } catch { return null; }
+};

@@ -35,6 +35,7 @@ public struct NativeBackupImportPreview: Sendable {
 public final class CoreHost: @unchecked Sendable {
     private let queue = DispatchQueue(label: "tech.dongdongbh.mindwtr.native-core", qos: .userInitiated)
     private let engine: Engine
+    private let localAttachmentRequests = NativeAttachmentLocalRequests()
 
     public init(databaseURL: URL, bundleURL: URL) {
         engine = Engine(queue: queue, databaseURL: databaseURL, bundleURL: bundleURL)
@@ -56,6 +57,23 @@ public final class CoreHost: @unchecked Sendable {
     public func call(_ method: String, argumentsJSON: String = "[]") async throws -> String {
         try await perform { try $0.call(method, argumentsJSON: argumentsJSON) }
     }
+
+    /// Task-local byte operations only; no project/store command or picker UI.
+    public func localAttachmentRequest(name: String, requestJSON: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.localAttachmentRequest(name: name, requestJSON: requestJSON, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+
+    #if DEBUG
+    func configureAttachmentHost(_ hooks: NativeAttachmentHostHooks) async {
+        _ = try? await perform { $0.attachmentHooks = hooks }
+    }
+    #endif
 
     /// Initialized file actions cannot activate, replay or acknowledge domain work.
     public func diagnosticsFileAction(_ method: String) async throws -> String {
@@ -131,6 +149,9 @@ public final class CoreHost: @unchecked Sendable {
     public func cancelAppLockRecovery() async throws { try await perform { try $0.cancelAppLockRecovery() } }
 
     public func close() async {
+        // This primitive flag reaches a running local invoke immediately; an
+        // ordinary durable command remains governed by its existing journal.
+        localAttachmentRequests.close()
         await withCheckedContinuation { continuation in
             queue.async { [engine] in
                 engine.shutdown()
@@ -148,7 +169,10 @@ public final class CoreHost: @unchecked Sendable {
         }
     }
 
-    deinit { queue.async { [engine] in engine.shutdown() } }
+    deinit {
+        localAttachmentRequests.close()
+        queue.async { [engine] in engine.shutdown() }
+    }
 }
 
 private struct PendingCommand: Codable {
@@ -188,6 +212,13 @@ private final class Engine: @unchecked Sendable {
     private let legacyStorage: LegacyRNStorage?
     private var context: JSContext?
     private var database: SQLiteBridge?
+    private var attachmentJobs: NativeAttachmentFileJobs?
+    private var attachmentGeneration: UInt64 = 0
+    private var attachmentIdlePump: DispatchWorkItem?
+    private var invoking = false
+    #if DEBUG
+    var attachmentHooks: NativeAttachmentHostHooks?
+    #endif
     private var lockFD: Int32 = -1
     private var started = false
     private var recoveryActivationPending = false
@@ -467,6 +498,23 @@ private final class Engine: @unchecked Sendable {
             try DurableFile.sync(databaseURL.deletingLastPathComponent().deletingLastPathComponent(), directory: true)
             lockFD = open(databaseURL.appendingPathExtension("host-lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
             guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw HostFailure("Native database is already in use or cannot be locked") }
+            // Optional platform capability: failure leaves attachments unbound,
+            // never prevents database recovery or leaks the exclusive lock.
+            attachmentJobs = try? NativeAttachmentFileJobs(libraryRoot: databaseURL.deletingLastPathComponent())
+            attachmentGeneration &+= 1
+            if let jobs = attachmentJobs {
+                #if DEBUG
+                attachmentHooks?.configureJobs?(jobs)
+                #endif
+                let generation = attachmentGeneration
+                jobs.setWake { [weak self] in
+                    guard let self else { return }
+                    self.queue.async { [weak self] in
+                        guard let self, self.attachmentGeneration == generation else { return }
+                        self.scheduleAttachmentIdle(immediate: true)
+                    }
+                }
+            }
             // Optional cache cleanup cannot block startup or change an owed command.
             try? backupExportFile.discardInterruptedExports()
             if pending == nil { pending = try loadPendingJournal() }
@@ -11195,8 +11243,68 @@ private final class Engine: @unchecked Sendable {
         pending = nil
     }
 
-    private func invoke(_ method: String, arguments: [Any]) throws -> String {
+    func localAttachmentRequest(name: String, requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, !recoveryActivationPending, pending == nil else {
+            throw HostFailure("Core host is not ready; retry startup")
+        }
+        guard attachmentJobs != nil else { throw HostFailure("Attachment file operation is unavailable") }
+        if cancellation.isCancelled { throw CancellationError() }
+        guard requestJSON.utf8.count <= 6_400_000,
+              let request = try? NativeJSON.jsonObject(with: Data(requestJSON.utf8)) as? [String: Any] else {
+            throw HostFailure("INVALID_INPUT: Local attachment request is invalid")
+        }
+        func text(_ value: Any?, limit: Int = 500, nonempty: Bool = true) -> Bool {
+            guard let value = value as? String else { return false }
+            return value.utf16.count <= limit && (!nonempty || !value.isEmpty)
+        }
+        func uuid(_ value: Any?) -> Bool {
+            guard let value = value as? String else { return false }
+            return UUID(uuidString: value)?.uuidString.lowercased() == value
+        }
+        let valid: Bool
+        switch name {
+        case "draftAddFile":
+            let picked = request["picked"] as? [String: Any] ?? [:]
+            let nullableName = picked["name"] is NSNull || text(picked["name"], limit: 100_000, nonempty: false)
+            let nullableMime = picked["mimeType"] is NSNull || text(picked["mimeType"], nonempty: false)
+            let size = picked["size"] as? NSNumber
+            let validSize = picked["size"] is NSNull || (size != nil && CFGetTypeID(size!) != CFBooleanGetTypeID()
+                && size!.doubleValue.isFinite && size!.doubleValue >= 0)
+            valid = Set(request.keys) == Set(["requestId", "owner", "source", "picked"])
+                && uuid(request["requestId"]) && Self.validTaskAttachmentOwner(request["owner"])
+                && ["file", "image"].contains(request["source"] as? String ?? "")
+                && Set(picked.keys) == Set(["uri", "name", "mimeType", "size"])
+                && text(picked["uri"], limit: 16 * 1024) && nullableName && nullableMime && validSize
+        case "draftRemove":
+            valid = Set(request.keys) == Set(["requestId", "owner", "attachmentId"])
+                && uuid(request["requestId"]) && Self.validTaskAttachmentOwner(request["owner"])
+                && text(request["attachmentId"])
+        case "openAttachment":
+            valid = Set(request.keys) == Set(["owner", "attachmentId"])
+                && Self.validTaskAttachmentOwner(request["owner"]) && text(request["attachmentId"])
+        case "settleTaskDraftAttachments":
+            valid = Set(request.keys) == Set(["taskId", "taskRevision", "baseline", "draft", "committed"])
+                && text(request["taskId"]) && text(request["taskRevision"], limit: 100_000, nonempty: false)
+                && ["baseline", "draft", "committed"].allSatisfy { Self.validTaskAttachmentList(request[$0]) }
+        default: valid = false
+        }
+        guard valid else { throw HostFailure("INVALID_INPUT: Local attachment request is invalid") }
+        do {
+            let result = try invoke("attachmentRequest", arguments: [name, requestJSON], localCancellation: cancellation)
+            guard result.utf8.count <= 6_400_000,
+                  (try? NativeJSON.jsonObject(with: Data(result.utf8))) is [String: Any] else {
+                throw HostFailure("Local attachment operation failed")
+            }
+            return result
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw HostFailure("Local attachment operation failed") }
+    }
+
+    private func invoke(_ method: String, arguments: [Any], localCancellation: NativeAttachmentCancellation? = nil) throws -> String {
         guard let context, let host = context.objectForKeyedSubscript("MindwtrHost") else { throw HostFailure("Core runtime unavailable") }
+        invoking = true
+        defer { invoking = false; scheduleAttachmentIdle(immediate: true) }
         context.exception = nil
         let ticket: JSValue?
         if method == "dataSetting" {
@@ -11215,15 +11323,47 @@ private final class Engine: @unchecked Sendable {
         }
         // No timeout abandons a command while its durable result is unknown.
         // Promise jobs drain whenever JSC returns from a call; timers share this queue.
+        var cancelled = false
+        defer {
+            if cancelled {
+                attachmentJobs?.cancelAndDrain()
+                _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+                _ = context.objectForKeyedSubscript("__resumeHostCalls")?.call(withArguments: [])
+                context.exception = nil
+            }
+        }
         while true {
-            _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
-            try checkException()
-            let reply = host.invokeMethod("poll", withArguments: [id])
-            try checkException()
+            var reply: JSValue?
+            if !cancelled, localCancellation?.isCancelled == true {
+                // An already acknowledged terminal result wins the cancellation
+                // race; do not report failure after its completion diagnostic.
+                reply = host.invokeMethod("poll", withArguments: [id])
+                try checkException()
+                if reply == nil || reply!.isNull || reply!.isUndefined {
+                    cancelled = true
+                    _ = host.invokeMethod("cancel", withArguments: [id])
+                    try checkException()
+                    // Completes uninterruptible RN installer work before allowing
+                    // another operation or library owner to observe the namespace.
+                    attachmentJobs?.cancelAndDrain()
+                }
+            }
+            if reply == nil || reply!.isNull || reply!.isUndefined {
+                _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+                try checkException()
+                #if DEBUG
+                if localCancellation != nil { attachmentHooks?.pump?() }
+                #endif
+                reply = host.invokeMethod("poll", withArguments: [id])
+                try checkException()
+            }
             if let reply, !reply.isNull, !reply.isUndefined {
                 guard reply.isString, let json = reply.toString(),
                       let envelope = try NativeJSON.jsonObject(with: Data(json.utf8)) as? [String: Any],
                       let ok = envelope["ok"] as? Bool else { throw HostFailure("Malformed core response") }
+                if cancelled {
+                    throw CancellationError()
+                }
                 if !ok { throw HostFailure(envelope["error"] as? String ?? "Core command failed") }
                 guard let value = envelope["value"] else { throw HostFailure("Core response has no value") }
                 return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]), as: UTF8.self)
@@ -11232,6 +11372,32 @@ private final class Engine: @unchecked Sendable {
             try checkException()
             Thread.sleep(forTimeInterval: delay.isFinite && delay > 0 ? min(delay, 10) / 1_000 : 0.001)
         }
+    }
+
+    private func scheduleAttachmentIdle(immediate: Bool = false) {
+        guard started, !closed, !invoking, !recoveryActivationPending, pending == nil,
+              attachmentJobs != nil, let context else { return }
+        let delay = immediate ? 0 : context.objectForKeyedSubscript("__nextTimerDelay")?.call(withArguments: [])?.toDouble() ?? -1
+        guard delay.isFinite, delay >= 0 else { return }
+        // One scheduled idle turn per generation; completions can move a timer
+        // earlier but never capture a JSContext/JSValue on the worker queue.
+        if attachmentIdlePump != nil && !immediate { return }
+        attachmentIdlePump?.cancel()
+        let generation = attachmentGeneration
+        let item = DispatchWorkItem { [weak self] in self?.pumpAttachmentIdle(generation: generation) }
+        attachmentIdlePump = item
+        queue.asyncAfter(deadline: .now() + min(delay, 60_000) / 1_000, execute: item)
+    }
+
+    private func pumpAttachmentIdle(generation: UInt64) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard generation == attachmentGeneration else { return }
+        attachmentIdlePump = nil
+        guard started, !closed, !invoking, !recoveryActivationPending, pending == nil, let context else { return }
+        _ = context.objectForKeyedSubscript("__pumpTimers")?.call(withArguments: [])
+        // No arbitrary JS exception content enters diagnostics.
+        if context.exception != nil { context.exception = nil }
+        scheduleAttachmentIdle()
     }
 
     private func checkException() throws {
@@ -11358,6 +11524,31 @@ private final class Engine: @unchecked Sendable {
                               "nowMs": now as Any, "randomBytes": random as Any, "rnStateCommit": rnState as Any, "log": log as Any, "logFile": logFile as Any] {
             bridge.setObject(block, forKeyedSubscript: name as NSString)
         }
+        if let jobs = attachmentJobs {
+            let fileCall: @convention(block) (JSValue) -> String = { [weak self] request in
+                guard let self, request.isString, let json = request.toString() else { return "!MindwtrNativeError:Attachment file request is invalid" }
+                return self.guarded { try jobs.submit(json) } ?? "!MindwtrNativeError:Attachment file operation is unavailable"
+            }
+            let installerCall: @convention(block) (JSValue) -> String = { [weak self] request in
+                guard let self, request.isString, let json = request.toString() else { return "!MindwtrNativeError:Attachment installer request is invalid" }
+                return self.guarded { try jobs.submit(json, installer: true) } ?? "!MindwtrNativeError:Attachment file operation is unavailable"
+            }
+            let abort: @convention(block) (JSValue) -> Void = { request in
+                guard request.isString, let id = request.toString() else { return }; jobs.abort(id)
+            }
+            let directories: @convention(block) () -> String = { jobs.directoriesJSON }
+            let delete: @convention(block) (JSValue) -> String? = { [weak self] request in
+                guard let self, request.isString, let uri = request.toString() else { return "!MindwtrNativeError:Attachment file request is invalid" }
+                return self.guarded { try jobs.deleteNow(uri); return nil }
+            }
+            let next: @convention(block) () -> String = { jobs.next() }
+            let body: @convention(block) () -> String = { jobs.body() }
+            for (name, block) in ["fileCall": fileCall as Any, "installerCall": installerCall as Any,
+                                  "fileAbort": abort as Any, "fileDirectories": directories as Any,
+                                  "fileDeleteNow": delete as Any, "ioNext": next as Any, "ioBody": body as Any] {
+                bridge.setObject(block, forKeyedSubscript: name as NSString)
+            }
+        }
         context.setObject(bridge, forKeyedSubscript: "__mindwtrNative" as NSString)
     }
 
@@ -11378,6 +11569,10 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func releaseRuntime() {
+        attachmentGeneration &+= 1
+        attachmentIdlePump?.cancel(); attachmentIdlePump = nil
+        // No file/installer worker survives release of the library lock.
+        attachmentJobs?.shutdown(); attachmentJobs = nil
         started = false
         recoveryActivationPending = false
         startupBoardResult = nil
