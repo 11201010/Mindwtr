@@ -656,7 +656,7 @@ final class BackupDocumentHostTests: XCTestCase {
         _ = try await core.mergeBackupImport(baseline.id)
         let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
         let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
-        let beforeSnapshots = try await core.listBackupSnapshots()
+        let beforeSnapshots = try json(await snapshots(core))
         let url = root.appendingPathComponent("ticktick-large-result.csv")
         let csv = "List Name,Title,taskId\n" + names.enumerated().map { "\($0.element),Imported,\($0.offset)" }.joined(separator: "\n")
         try csv.write(to: url, atomically: true, encoding: .utf8)
@@ -670,8 +670,8 @@ final class BackupDocumentHostTests: XCTestCase {
         }
         XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
         XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
-        let afterSnapshots = try await core.listBackupSnapshots()
-        XCTAssertEqual(afterSnapshots, beforeSnapshots)
+        let afterSnapshots = try await snapshots(core)
+        XCTAssertEqual(try json(afterSnapshots), beforeSnapshots)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
@@ -784,7 +784,7 @@ final class BackupDocumentHostTests: XCTestCase {
         _ = try await core.mergeBackupImport(baseline.id)
         let beforeTasks = try json(rows("SELECT * FROM tasks ORDER BY id"))
         let beforeProjects = try json(rows("SELECT * FROM projects ORDER BY id"))
-        let beforeSnapshots = try await core.listBackupSnapshots()
+        let beforeSnapshots = try json(await snapshots(core))
         let url = root.appendingPathComponent("dgt-large-result.json")
         let dgt: [String: Any] = ["version": 3, "TASK": names.enumerated().map { ["ID": $0.offset + 1, "TITLE": $0.element, "TYPE": 1] as [String: Any] }]
         let input = try json(dgt)
@@ -799,8 +799,8 @@ final class BackupDocumentHostTests: XCTestCase {
         }
         XCTAssertEqual(try json(rows("SELECT * FROM tasks ORDER BY id")), beforeTasks)
         XCTAssertEqual(try json(rows("SELECT * FROM projects ORDER BY id")), beforeProjects)
-        let afterSnapshots = try await core.listBackupSnapshots()
-        XCTAssertEqual(afterSnapshots, beforeSnapshots)
+        let afterSnapshots = try await snapshots(core)
+        XCTAssertEqual(try json(afterSnapshots), beforeSnapshots)
         XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
     }
 
