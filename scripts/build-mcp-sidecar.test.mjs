@@ -84,6 +84,19 @@ test('Windows signing/staging includes the helper before installers and preserve
   expect(msix.indexOf('Copy-Item "$buildDir/mindwtr-mcp.exe"') < msix.indexOf('& $makeappx pack')).toBe(true);
 });
 
+test('AppImage inserts and smoke-tests the unchanged helper after linuxdeploy has finished', () => {
+  const steps = parse(readFileSync('.github/workflows/release-linux.yml', 'utf8')).jobs.linux.steps;
+  const build = steps.find((step) => step.name === 'Build Tauri app').run;
+  expect(build).toContain('tauri build --verbose --bundles deb,rpm');
+  expect(build).toContain('tauri bundle --verbose --bundles appimage --config \'{"bundle":{"externalBin":[]}}\'');
+  const repair = steps.find((step) => step.name === 'Repair AppImage metadata').run;
+  const insert = repair.indexOf('install -m 0755 "$GITHUB_WORKSPACE/apps/desktop/src-tauri/binaries/mindwtr-mcp-x86_64-unknown-linux-gnu" appdir/usr/bin/mindwtr-mcp');
+  const smoke = repair.indexOf('node "$GITHUB_WORKSPACE/scripts/build-mcp-sidecar-smoke.mjs" "$PWD/appdir/usr/bin/mindwtr-mcp"');
+  expect(insert).toBeGreaterThan(repair.indexOf('mv squashfs-root appdir'));
+  expect(smoke).toBeGreaterThan(insert);
+  expect(repair.indexOf('appdir fixed.AppImage')).toBeGreaterThan(smoke);
+});
+
 test('macOS helper signatures use separate JIT entitlements and sandbox inheritance for App Store', () => {
   const app = '/Applications/Mindwtr.app';
   const direct = signPlan(app, 'Developer ID', 'developer-id');
