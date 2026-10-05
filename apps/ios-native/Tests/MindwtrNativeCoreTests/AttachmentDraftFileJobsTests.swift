@@ -61,14 +61,20 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
     private func raw(_ request: [String: Any], installer: Bool = false) throws -> String {
         try jobs.submit(json(request), installer: installer)
     }
-    private func take(_ id: String) throws -> [String: Any] {
+    private func takeDraft(_ id: String) throws -> [String: Any] {
+        jobs.drain()
+        let answer = try object(jobs.takeDraft(id))
+        XCTAssertEqual(answer["id"] as? String, id)
+        return answer
+    }
+    private func takeRaw(_ id: String) throws -> [String: Any] {
         jobs.drain()
         let answer = try object(jobs.next())
         XCTAssertEqual(answer["id"] as? String, id)
         return answer
     }
     private func value(_ id: String, fields: Set<String>) throws -> [String: Any] {
-        let answer = try take(id)
+        let answer = try takeDraft(id)
         XCTAssertEqual(Set(answer.keys), ["id", "value"])
         XCTAssertNil(answer["error"])
         let result = try XCTUnwrap(answer["value"] as? [String: Any])
@@ -106,20 +112,23 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
     }
 
     func testTypedAndCompatibilityJobsShareFIFOAndExactProofReplies() throws {
+        var execution: [String] = []
+        jobs.beforeWork = { id, _ in execution.append(id) }
         let bytes = Data([0, 255, 1]) + Data("captured + 世界".utf8)
         let source = cache.appendingPathComponent("source + 世界.bin")
         let write = try raw(["op": "writeBytes", "uri": source.absoluteString, "base64": bytes.base64EncodedString()])
         let snapshotID = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
         let barrier = try raw(["op": "barrier"])
         XCTAssertEqual([write, snapshotID, barrier], ["1", "2", "3"])
-        XCTAssertNil(try take(write)["error"])
+        XCTAssertNil(try takeRaw(write)["error"])
+        XCTAssertEqual(execution, [write, snapshotID, barrier])
         let proof = try sourceProof(value(snapshotID, fields: sourceFields))
         XCTAssertEqual(proof.sourceURI, source.absoluteString)
         XCTAssertEqual(proof.sha256, digest(bytes)); XCTAssertEqual(proof.size, Int64(bytes.count))
         XCTAssertEqual(proof.identity, try identity(source))
         XCTAssertEqual(proof.cacheRootIdentity, try identity(cache))
         XCTAssertEqual(proof.parentIdentity, try identity(cache))
-        XCTAssertNil(try take(barrier)["error"])
+        XCTAssertNil(try takeRaw(barrier)["error"])
         let target = managed.appendingPathComponent("target.bin")
         let stage = try prepare(target), stageFile = try stageURL(stage)
         XCTAssertEqual(stage.stagedIdentity, try identity(stageFile))
@@ -131,14 +140,14 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         XCTAssertEqual(fillValue["sha256"] as? String, proof.sha256)
         XCTAssertEqual(fillValue["identity"] as? String, stage.stagedIdentity)
         XCTAssertEqual((fillValue["size"] as? NSNumber)?.int64Value, proof.size)
-        XCTAssertNil(try take(info)["error"])
+        XCTAssertNil(try takeRaw(info)["error"])
         let published = try run(.publishStage(stage: stage, targetURI: target.absoluteString, sha256: proof.sha256), fields: ["status"])
         XCTAssertEqual(published["status"] as? String, "published")
         XCTAssertEqual(try Data(contentsOf: target), bytes)
         XCTAssertEqual(try Data(contentsOf: source), bytes)
         XCTAssertFalse(FileManager.default.fileExists(atPath: stageFile.path))
         let hash = try raw(["op": "hash", "path": target.absoluteString], installer: true)
-        let hashValue = try XCTUnwrap(try take(hash)["value"] as? [String: Any])
+        let hashValue = try XCTUnwrap(try takeRaw(hash)["value"] as? [String: Any])
         XCTAssertEqual(hashValue["sha256"] as? String, proof.sha256)
         XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
     }
@@ -215,7 +224,7 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         jobs = try NativeAttachmentFileJobs(libraryRoot: root)
         let id = try jobs.submitDraft(.verifyPublication(targetURI: target.absoluteString, stage: stage,
                                                          sha256: proof.sha256, size: proof.size))
-        let refusal = try take(id)
+        let refusal = try takeDraft(id)
         XCTAssertEqual(Set(refusal.keys), ["id", "error"])
         XCTAssertEqual(refusal["error"] as? String, "Attachment file operation is unavailable")
         XCTAssertEqual(try Data(contentsOf: target), bytes)
@@ -240,7 +249,7 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         release.signal(); XCTAssertEqual(drained.wait(timeout: .now() + 5), .success)
         XCTAssertEqual(jobs.counters.jobs, 1)
         XCTAssertGreaterThan(jobs.counters.bytes, 64 * 1024)
-        XCTAssertEqual(try take(id)["error"] as? String, "Attachment file operation was cancelled")
+        XCTAssertEqual(try takeDraft(id)["error"] as? String, "Attachment file operation was cancelled")
         XCTAssertEqual(try Data(contentsOf: source), bytes)
         // Cancellation does not roll back an in-place fill; the inode remains owned.
         XCTAssertEqual(try Data(contentsOf: stageFile), bytes)
@@ -250,7 +259,7 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         jobs.beforeStageSync = nil
         try filled(proof, stage)
         jobs.cancelAndDrain()
-        XCTAssertNil(try take(raw(["op": "barrier"]))["error"])
+        XCTAssertNil(try takeRaw(raw(["op": "barrier"]))["error"])
     }
 
     func testQueuedTypedCancellationDoesNotCreateStageAndOwnerRemainsReusable() throws {
@@ -263,9 +272,9 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         let snapshotID = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
         let stageID = try jobs.submitDraft(.prepareStage(targetURI: managed.appendingPathComponent("target").absoluteString, operationID: operationID))
         jobs.abort(snapshotID); jobs.abort(stageID); release.signal()
-        XCTAssertNil(try take(first)["error"])
+        XCTAssertNil(try takeRaw(first)["error"])
         for id in [snapshotID, stageID] {
-            XCTAssertEqual(try take(id)["error"] as? String, "Attachment file operation was cancelled")
+            XCTAssertEqual(try takeDraft(id)["error"] as? String, "Attachment file operation was cancelled")
         }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: managed.path), [])
         XCTAssertEqual(try Data(contentsOf: source), Data("source".utf8))
@@ -294,7 +303,7 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: stage), Data())
         XCTAssertEqual(jobs.counters.bytes, 0)
         jobs.afterWork = nil
-        XCTAssertNil(try take(raw(["op": "barrier"]))["error"])
+        XCTAssertNil(try takeRaw(raw(["op": "barrier"]))["error"])
     }
 
     func testCompletedPublishRetainsActualOutcomeAfterCancellationAndDrain() throws {
@@ -318,7 +327,7 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), bytes)
         XCTAssertEqual(jobs.counters.bytes, 0)
         jobs.afterWork = nil
-        XCTAssertNil(try take(raw(["op": "barrier"]))["error"])
+        XCTAssertNil(try takeRaw(raw(["op": "barrier"]))["error"])
     }
 
     func testTypedAnswersRetainCountAndInputPlusReplyReservationUntilConsumed() throws {
@@ -330,6 +339,8 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         jobs.drain()
         XCTAssertEqual(jobs.counters.jobs, 16)
         XCTAssertGreaterThan(jobs.counters.bytes, 16 * 64 * 1024)
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.counters.jobs, 16)
         XCTAssertThrowsError(try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))) { error in
             XCTAssertEqual(error.localizedDescription, "Attachment file bridge capacity is unavailable")
         }
@@ -347,16 +358,22 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         jobs.drain()
         XCTAssertGreaterThan(jobs.counters.bytes, 32 * 1024 * 1024)
         XCTAssertThrowsError(try raw(read))
-        XCTAssertEqual(try take(first)["body"] as? Bool, true)
+        XCTAssertEqual(try takeRaw(first)["body"] as? Bool, true)
         XCTAssertEqual(jobs.next(), "")
         XCTAssertEqual(jobs.counters.jobs, 3)
         XCTAssertThrowsError(try raw(read))
+        let heldBytes = jobs.counters.bytes
+        _ = try value(typed, fields: sourceFields)
+        XCTAssertEqual(jobs.counters.jobs, 2)
+        XCTAssertLessThan(jobs.counters.bytes, heldBytes)
+        XCTAssertGreaterThan(jobs.counters.bytes, 32 * 1024 * 1024)
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.takeDraft(first), "")
         XCTAssertEqual(Data(base64Encoded: jobs.body()), Data([7]))
         let last = try raw(read)
-        XCTAssertEqual(try take(second)["body"] as? Bool, true)
+        XCTAssertEqual(try takeRaw(second)["body"] as? Bool, true)
         XCTAssertEqual(Data(base64Encoded: jobs.body()), Data([7]))
-        _ = try value(typed, fields: sourceFields)
-        XCTAssertEqual(try take(last)["body"] as? Bool, true)
+        XCTAssertEqual(try takeRaw(last)["body"] as? Bool, true)
         XCTAssertEqual(Data(base64Encoded: jobs.body()), Data([7]))
         XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
     }
@@ -411,20 +428,20 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
     func testTypedNativeFailuresRemainFixedAndRespectExistingURLAdmission() throws {
         let source = try file(Data("source".utf8)), secret = "private-source-secret"
         let malformed = try jobs.submitDraft(.snapshotSource(sourceURI: "https://name:private-source-secret@example.test/file"))
-        XCTAssertEqual(try take(malformed)["error"] as? String, "Attachment file request is invalid")
+        XCTAssertEqual(try takeDraft(malformed)["error"] as? String, "Attachment file request is invalid")
         let missing = try jobs.submitDraft(.snapshotSource(sourceURI: cache.appendingPathComponent("missing").absoluteString))
-        XCTAssertEqual(try take(missing)["error"] as? String, "ENOENT: no such file or directory")
+        XCTAssertEqual(try takeDraft(missing)["error"] as? String, "ENOENT: no such file or directory")
         let foreign = try jobs.submitDraft(.snapshotSource(sourceURI: documents.appendingPathComponent("unowned").absoluteString))
-        XCTAssertNotNil(try take(foreign)["error"])
+        XCTAssertNotNil(try takeDraft(foreign)["error"])
         let link = cache.appendingPathComponent("link")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
-        XCTAssertNotNil(try take(jobs.submitDraft(.snapshotSource(sourceURI: link.absoluteString)))["error"])
+        XCTAssertNotNil(try takeDraft(jobs.submitDraft(.snapshotSource(sourceURI: link.absoluteString)))["error"])
         let badTarget = try jobs.submitDraft(.prepareStage(targetURI: "https://name:private-source-secret@example.test/target", operationID: operationID))
-        let refusal = try take(badTarget)
+        let refusal = try takeDraft(badTarget)
         XCTAssertEqual(refusal["error"] as? String, "Attachment installer request is invalid")
         XCTAssertFalse(try json(refusal).contains(secret))
         jobs.beforeWork = { _, _ in throw NSError(domain: "sensitive", code: 1, userInfo: [NSLocalizedDescriptionKey: secret]) }
-        let failed = try take(jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString)))
+        let failed = try takeDraft(jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString)))
         XCTAssertEqual(failed["error"] as? String, "Attachment file operation is unavailable")
         XCTAssertFalse(try json(failed).contains(secret))
         XCTAssertEqual(try Data(contentsOf: source), Data("source".utf8))
@@ -433,11 +450,114 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
 
     func testCompatibilityJSONAllowlistsDoNotExposeTypedOperations() throws {
         for op in ["snapshotSource", "prepareStage", "fillStage", "publishStage", "verifyPublication", "cleanupImmutableStage"] {
-            XCTAssertEqual(try take(raw(["op": op]))["error"] as? String, "Attachment file request is invalid")
-            XCTAssertEqual(try take(raw(["op": op], installer: true))["error"] as? String, "Attachment installer request is invalid")
+            XCTAssertEqual(try takeRaw(raw(["op": op]))["error"] as? String, "Attachment file request is invalid")
+            XCTAssertEqual(try takeRaw(raw(["op": op], installer: true))["error"] as? String, "Attachment installer request is invalid")
         }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: managed.path), [])
         XCTAssertEqual(jobs.counters.bytes, 0)
+    }
+
+    func testInterleavedConsumersPreserveExecutionAndRawFIFOWithoutExposingTypedProofs() throws {
+        let source = try file(Data("source".utf8))
+        var execution: [String] = []
+        jobs.beforeWork = { id, _ in execution.append(id) }
+        let first = try raw(["op": "barrier"])
+        let typed = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
+        let second = try raw(["op": "barrier"])
+        let typedError = try jobs.submitDraft(.snapshotSource(sourceURI: cache.appendingPathComponent("missing").absoluteString))
+        jobs.drain()
+        XCTAssertEqual(execution, [first, typed, second, typedError])
+        let initialBytes = jobs.counters.bytes
+        XCTAssertEqual(jobs.takeDraft("unknown"), "")
+        XCTAssertEqual(jobs.takeDraft(first), "")
+        XCTAssertEqual(jobs.takeDraft(second), "")
+        XCTAssertEqual(jobs.counters.jobs, 4)
+        XCTAssertEqual(jobs.counters.bytes, initialBytes)
+        XCTAssertEqual(try takeRaw(first)["id"] as? String, first)
+        XCTAssertEqual(try takeRaw(second)["id"] as? String, second)
+        let retainedBytes = jobs.counters.bytes
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.counters.jobs, 2)
+        XCTAssertEqual(jobs.counters.bytes, retainedBytes)
+        // Typed delivery is by exact requested ID, independent of delivery of
+        // other typed answers, while the worker itself remains one FIFO.
+        XCTAssertEqual(try takeDraft(typedError)["error"] as? String, "ENOENT: no such file or directory")
+        XCTAssertEqual(jobs.counters.jobs, 1)
+        _ = try value(typed, fields: sourceFields)
+        XCTAssertEqual(jobs.takeDraft(typed), "")
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
+    }
+
+    func testPendingTypedAndWrongIDsCannotTakeRawAnswersOrOtherReservations() throws {
+        let source = try file(Data("source".utf8))
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        jobs.beforeWork = { id, _ in if id == "2" { entered.signal(); release.wait() } }
+        let first = try raw(["op": "barrier"])
+        let typed = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
+        let last = try raw(["op": "barrier"])
+        XCTAssertEqual(entered.wait(timeout: .now() + 5), .success)
+        let reserved = jobs.counters.bytes
+        XCTAssertEqual(jobs.takeDraft(typed), "")
+        XCTAssertEqual(jobs.takeDraft(first), "")
+        XCTAssertEqual(jobs.takeDraft(last), "")
+        XCTAssertEqual(jobs.counters.jobs, 3)
+        XCTAssertEqual(jobs.counters.bytes, reserved)
+        let firstAnswer = try object(jobs.next()) // Do not drain a held worker.
+        XCTAssertEqual(firstAnswer["id"] as? String, first)
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.counters.jobs, 2)
+        release.signal(); jobs.drain()
+        XCTAssertEqual(try takeRaw(last)["id"] as? String, last)
+        _ = try value(typed, fields: sourceFields)
+        XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
+    }
+
+    func testTypedErrorsAndCancellationStayIsolatedAndDrainOwnerRemainsReusable() throws {
+        let source = try file(Data("source".utf8))
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        jobs.beforeWork = { id, _ in if id == "1" { entered.signal(); release.wait() } }
+        let first = try raw(["op": "barrier"])
+        XCTAssertEqual(entered.wait(timeout: .now() + 5), .success)
+        let typedError = try jobs.submitDraft(.snapshotSource(sourceURI: cache.appendingPathComponent("missing").absoluteString))
+        let typedCancelled = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
+        let rawError = try raw(["op": "unknown"])
+        jobs.abort(typedCancelled)
+        release.signal(); jobs.drain()
+        XCTAssertEqual(jobs.takeDraft(rawError), "")
+        XCTAssertNil(try takeRaw(first)["error"])
+        XCTAssertEqual(try takeRaw(rawError)["error"] as? String, "Attachment file request is invalid")
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.counters.jobs, 2)
+        XCTAssertEqual(try takeDraft(typedCancelled)["error"] as? String, "Attachment file operation was cancelled")
+        XCTAssertEqual(try takeDraft(typedError)["error"] as? String, "ENOENT: no such file or directory")
+        XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
+        jobs.cancelAndDrain(); jobs.beforeWork = nil
+        let newTyped = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
+        let newRaw = try raw(["op": "barrier"])
+        XCTAssertNil(try takeRaw(newRaw)["error"])
+        _ = try value(newTyped, fields: sourceFields)
+        XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
+    }
+
+    func testShutdownClearsHeldRawBodyAndTypedRepliesTogether() throws {
+        let bytes = Data("retained bytes".utf8), source = try file(Data("retained bytes".utf8))
+        let read = try raw(["op": "readBytes", "uri": source.absoluteString])
+        let typed = try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString))
+        _ = try raw(["op": "barrier"])
+        XCTAssertEqual(try takeRaw(read)["body"] as? Bool, true)
+        XCTAssertEqual(jobs.counters.jobs, 3)
+        XCTAssertGreaterThan(jobs.counters.bytes, NativeAttachmentFiles.maximumBytes)
+        jobs.shutdown()
+        XCTAssertEqual(jobs.next(), "")
+        XCTAssertEqual(jobs.body(), "")
+        XCTAssertEqual(jobs.takeDraft(typed), "")
+        XCTAssertEqual(jobs.counters.jobs, 0); XCTAssertEqual(jobs.counters.bytes, 0)
+        XCTAssertThrowsError(try raw(["op": "barrier"]))
+        XCTAssertThrowsError(try jobs.submitDraft(.snapshotSource(sourceURI: source.absoluteString)))
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
     }
 
     func testShutdownDiscardsTypedMailboxAndRefusesFurtherTypedAdmission() throws {

@@ -133,6 +133,7 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
         let id: String
         let json: String
         let body: String?
+        let isDraft: Bool
     }
     private enum Work: Sendable {
         case raw(String, installer: Bool)
@@ -141,6 +142,12 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
             switch self {
             case .raw(_, let installer): return installer
             case .draft(let request): return request.isInstaller
+            }
+        }
+        var isDraft: Bool {
+            switch self {
+            case .raw: return false
+            case .draft: return true
             }
         }
     }
@@ -238,7 +245,7 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
                 if bytes != nil { envelope["body"] = true }
                 let encoded = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
                 guard encoded.count <= replyReservation else { throw NativeAttachmentFileJobsError.capacity }
-                answer = Answer(id: id, json: String(decoding: encoded, as: UTF8.self), body: bytes?.base64EncodedString())
+                answer = Answer(id: id, json: String(decoding: encoded, as: UTF8.self), body: bytes?.base64EncodedString(), isDraft: work.isDraft)
             } catch {
                 let message: String
                 if let fixed = error as? NativeAttachmentFilesError { message = fixed.localizedDescription }
@@ -247,7 +254,7 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
                 else { message = NativeAttachmentFileJobsError.unavailable.localizedDescription }
                 let envelope = ["id": id, "error": message]
                 let encoded = try! JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
-                answer = Answer(id: id, json: String(decoding: encoded, as: UTF8.self), body: nil)
+                answer = Answer(id: id, json: String(decoding: encoded, as: UTF8.self), body: nil, isDraft: work.isDraft)
             }
             #if DEBUG
             afterWork?(id, isInstaller)
@@ -293,9 +300,18 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         // The polyfill takes a body immediately after its metadata. Retain its
         // admission reservation until that body is actually consumed.
-        guard taken == nil, !answers.isEmpty else { return "" }
-        let answer = answers.removeFirst()
+        guard taken == nil, let index = answers.firstIndex(where: { !$0.isDraft }) else { return "" }
+        let answer = answers.remove(at: index)
         if answer.body != nil { taken = answer } else { release(answer.id) }
+        return answer.json
+    }
+    /// Native callers consume only their own completed typed proof. This never
+    /// takes another ID, a raw reply, or the raw body awaiting consumption.
+    func takeDraft(_ id: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = answers.firstIndex(where: { $0.isDraft && $0.id == id }) else { return "" }
+        let answer = answers.remove(at: index)
+        release(answer.id)
         return answer.json
     }
     func body() -> String {
