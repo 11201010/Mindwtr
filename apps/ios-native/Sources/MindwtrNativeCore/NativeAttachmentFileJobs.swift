@@ -43,6 +43,83 @@ enum NativeAttachmentFileJobsError: LocalizedError {
     }
 }
 
+/// Native-owned proofs only. This is not an extension of either JSON allowlist.
+enum NativeAttachmentDraftFileRequest: Sendable {
+    case snapshotSource(sourceURI: String)
+    case prepareStage(targetURI: String, operationID: String)
+    case fillStage(source: NativeAttachmentFiles.CacheSourceProof, stage: NativeAttachmentFiles.ReservedAttachmentStageProof)
+    case publishStage(stage: NativeAttachmentFiles.ReservedAttachmentStageProof, targetURI: String, sha256: String)
+    case verifyPublication(targetURI: String, stage: NativeAttachmentFiles.ReservedAttachmentStageProof, sha256: String, size: Int64)
+
+    fileprivate var isInstaller: Bool {
+        switch self {
+        case .prepareStage, .publishStage: return true
+        case .snapshotSource, .fillStage, .verifyPublication: return false
+        }
+    }
+
+    fileprivate func encodedInputSize() throws -> Int {
+        func uri(_ value: String) throws {
+            guard !value.isEmpty, value.utf8.count <= 16 * 1024, !value.utf8.contains(0) else {
+                throw NativeAttachmentFilesError.invalidRequest
+            }
+        }
+        func digest(_ value: String) throws {
+            guard value.utf8.count == 64,
+                  value.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw NativeAttachmentFilesError.invalidRequest
+            }
+        }
+        func token(_ value: String) throws {
+            guard value.utf8.count <= 41 else { throw NativeAttachmentFilesError.invalidRequest }
+            let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2, parts.allSatisfy({ part in
+                guard let number = UInt64(part) else { return false }
+                return String(number) == part
+            }) else { throw NativeAttachmentFilesError.invalidRequest }
+        }
+        func stageObject(_ stage: NativeAttachmentFiles.ReservedAttachmentStageProof) throws -> [String: String] {
+            try uri(stage.stageURI)
+            try token(stage.stagedIdentity); try token(stage.directoryIdentity); try token(stage.privateDirectoryIdentity)
+            return ["stageURI": stage.stageURI, "stagedIdentity": stage.stagedIdentity,
+                    "directoryIdentity": stage.directoryIdentity, "privateDirectoryIdentity": stage.privateDirectoryIdentity]
+        }
+        let input: [String: Any]
+        switch self {
+        case .snapshotSource(let sourceURI):
+            try uri(sourceURI)
+            input = ["op": "snapshotSource", "sourceURI": sourceURI]
+        case .prepareStage(let targetURI, let operationID):
+            try uri(targetURI)
+            guard operationID.utf8.count == 32,
+                  operationID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw NativeAttachmentInstallerError.invalidRequest
+            }
+            input = ["op": "prepareStage", "targetURI": targetURI, "operationID": operationID]
+        case .fillStage(let source, let stage):
+            try uri(source.sourceURI); try digest(source.sha256)
+            try token(source.identity); try token(source.cacheRootIdentity); try token(source.parentIdentity)
+            guard source.size >= 0, source.size <= 9_007_199_254_740_991 else { throw NativeAttachmentFilesError.invalidRequest }
+            input = ["op": "fillStage", "source": ["sourceURI": source.sourceURI, "sha256": source.sha256,
+                "size": source.size, "identity": source.identity, "cacheRootIdentity": source.cacheRootIdentity,
+                "parentIdentity": source.parentIdentity], "stage": try stageObject(stage)]
+        case .publishStage(let stage, let targetURI, let sha256):
+            try uri(targetURI); try digest(sha256)
+            input = ["op": "publishStage", "stage": try stageObject(stage), "targetURI": targetURI, "sha256": sha256]
+        case .verifyPublication(let targetURI, let stage, let sha256, let size):
+            try uri(targetURI); try digest(sha256)
+            guard size >= 0, size <= 9_007_199_254_740_991 else { throw NativeAttachmentFilesError.invalidRequest }
+            input = ["op": "verifyPublication", "targetURI": targetURI, "stage": try stageObject(stage),
+                     "sha256": sha256, "size": size]
+        }
+        // Count the actual escaped encoding; bounded individual strings are
+        // checked first, so no oversized caller string is copied into a frame.
+        let count = try JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]).count
+        guard count <= 64 * 1024 else { throw NativeAttachmentFileJobsError.capacity }
+        return count
+    }
+}
+
 /// Swift-only FIFO and mailbox. The engine takes serialized replies itself,
 /// including while its synchronous JSC invoke occupies the engine queue.
 final class NativeAttachmentFileJobs: @unchecked Sendable {
@@ -56,6 +133,16 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
         let id: String
         let json: String
         let body: String?
+    }
+    private enum Work: Sendable {
+        case raw(String, installer: Bool)
+        case draft(NativeAttachmentDraftFileRequest)
+        var isInstaller: Bool {
+            switch self {
+            case .raw(_, let installer): return installer
+            case .draft(let request): return request.isInstaller
+            }
+        }
     }
     private let files: NativeAttachmentFiles
     private let installer: NativeAttachmentInstaller
@@ -76,6 +163,10 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
     var beforeFilePublish: (() throws -> Void)? {
         get { files.beforePublish }
         set { files.beforePublish = newValue }
+    }
+    var beforeStageSync: (() throws -> Void)? {
+        get { files.beforeStageSync }
+        set { files.beforeStageSync = newValue }
     }
     var counters: (jobs: Int, bytes: Int) {
         lock.lock(); defer { lock.unlock() }; return (jobs.count, reservedBytes)
@@ -100,7 +191,15 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
            let op = value["op"] as? String, ["readBytes", "readBytesRange", "readDirectory"].contains(op) {
             replyReservation = NativeAttachmentFiles.maximumBytes
         }
-        let reservation = count + replyReservation
+        return try enqueue(.raw(json, installer: isInstaller), inputBytes: count, replyReservation: replyReservation)
+    }
+
+    func submitDraft(_ request: NativeAttachmentDraftFileRequest) throws -> String {
+        try enqueue(.draft(request), inputBytes: request.encodedInputSize(), replyReservation: 64 * 1024)
+    }
+
+    private func enqueue(_ work: Work, inputBytes: Int, replyReservation: Int) throws -> String {
+        let reservation = inputBytes + replyReservation
         lock.lock()
         guard accepting, jobs.count < Self.maximumJobs,
               reservation <= Self.maximumReservedBytes - reservedBytes, nextID < UInt64.max else {
@@ -111,6 +210,7 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
         jobs[id] = Job(token: token, reserved: reservation)
         reservedBytes += reservation
         queue.async { [self] in
+            let isInstaller = work.isInstaller
             let answer: Answer
             do {
                 try token.check()
@@ -122,14 +222,17 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
                 defer { mutationLock.unlock() }
                 let value: Any
                 let bytes: Data?
-                if isInstaller {
+                switch work {
+                case .raw(let json, true):
                     // Once begun the RN installer must finish; cancellation
                     // cannot undo publication or release the library early.
                     value = try NativeJSON.jsonObject(with: Data(installer.handle(json).utf8))
                     bytes = nil
-                } else {
+                case .raw(let json, false):
                     let reply = try files.call(json, checkCancellation: token.check)
                     value = reply.value ?? NSNull(); bytes = reply.bytes
+                case .draft(let request):
+                    value = try executeDraft(request, token: token); bytes = nil
                 }
                 var envelope: [String: Any] = ["id": id, "value": value]
                 if bytes != nil { envelope["body"] = true }
@@ -154,6 +257,35 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
         }
         lock.unlock()
         return id
+    }
+
+    /// Called only inside the shared FIFO and mutation lock. Prepare/publish
+    /// must finish once begun; source/fill continue checking their queue token.
+    private func executeDraft(_ request: NativeAttachmentDraftFileRequest,
+                              token: NativeAttachmentCancellation) throws -> [String: Any] {
+        switch request {
+        case .snapshotSource(let sourceURI):
+            let proof = try files.snapshotCacheSource(sourceURI, checkCancellation: token.check)
+            return ["sourceURI": proof.sourceURI, "sha256": proof.sha256, "size": proof.size,
+                    "identity": proof.identity, "cacheRootIdentity": proof.cacheRootIdentity,
+                    "parentIdentity": proof.parentIdentity]
+        case .prepareStage(let targetURI, let operationID):
+            let proof = try installer.prepareStage(targetURI: targetURI, operationID: operationID)
+            return ["stageURI": proof.stageURI, "stagedIdentity": proof.stagedIdentity,
+                    "directoryIdentity": proof.directoryIdentity, "privateDirectoryIdentity": proof.privateDirectoryIdentity]
+        case .fillStage(let source, let stage):
+            let content = try files.fillReservedAttachmentStage(sourceProof: source, stageProof: stage,
+                                                                checkCancellation: token.check)
+            // Task221 proves successful fill retains the reserved inode.
+            return ["sha256": content.sha256, "size": content.size, "identity": stage.stagedIdentity]
+        case .publishStage(let stage, let targetURI, let sha256):
+            return ["status": try installer.publishStage(stage: stage, targetURI: targetURI, sha256: sha256)]
+        case .verifyPublication(let targetURI, let stage, let sha256, let size):
+            let proof = try files.verifyPublishedAttachment(targetURI: targetURI, stageProof: stage,
+                sha256: sha256, size: size, checkCancellation: token.check)
+            return ["sha256": proof.sha256, "size": proof.size, "identity": proof.identity,
+                    "directoryIdentity": proof.directoryIdentity]
+        }
     }
 
     func abort(_ id: String) { lock.lock(); let token = jobs[id]?.token; lock.unlock(); token?.cancel() }

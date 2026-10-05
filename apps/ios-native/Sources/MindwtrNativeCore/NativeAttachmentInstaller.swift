@@ -79,6 +79,37 @@ final class NativeAttachmentInstaller {
         return String(decoding: try JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]), as: UTF8.self)
     }
 
+    /// Native-only FIFO operation; never reachable from the compatibility JSON
+    /// handler. The RN facade retains all reservation/publication semantics.
+    func prepareStage(targetURI: String, operationID: String) throws -> NativeAttachmentFiles.ReservedAttachmentStageProof {
+        let target = try fileURL(targetURI)
+        guard operationID.utf8.count == 32,
+              operationID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw NativeAttachmentInstallerError.invalidRequest
+        }
+        do {
+            let prepared = try installer.prepareImmutableStage(targetInput: target, operationId: operationID)
+            return NativeAttachmentFiles.ReservedAttachmentStageProof(
+                stageURI: prepared.stagedUrl.absoluteString, stagedIdentity: prepared.stagedIdentity,
+                directoryIdentity: prepared.directoryIdentity, privateDirectoryIdentity: prepared.privateDirectoryIdentity)
+        } catch { throw NativeAttachmentInstallerError.unavailable }
+    }
+
+    func publishStage(stage: NativeAttachmentFiles.ReservedAttachmentStageProof,
+                      targetURI: String, sha256: String) throws -> String {
+        let staged = try fileURL(stage.stageURI), target = try fileURL(targetURI)
+        let hash = try digest(sha256)
+        do {
+            switch try installer.publishImmutable(stagedInput: staged, targetInput: target,
+                expectedStagedSha256: hash, expectedStagedIdentity: stage.stagedIdentity,
+                expectedDirectoryIdentity: stage.directoryIdentity,
+                expectedPrivateDirectoryIdentity: stage.privateDirectoryIdentity) {
+            case .published: return "published"
+            case .alreadyExists: return "alreadyExists"
+            }
+        } catch { throw NativeAttachmentInstallerError.unavailable }
+    }
+
     private func digest(_ value: Any?) throws -> String {
         guard let text = value as? String, text.utf8.count == 64,
               text.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {

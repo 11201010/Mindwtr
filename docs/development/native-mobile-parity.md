@@ -1702,3 +1702,7 @@ Internal exact checkpoint replacement and discard now compare the complete retai
 ### iOS attachment publication recovery proof (2026-10-05)
 
 A native-only helper now rechecks an interrupted publication using the recorded stage inode, streamed content hash and size, and managed-directory identity. Equal-hash files with different identities are refused; uncertain stages/namespaces are retained. Mac validation: 12 publication-proof cases plus 48 existing stage/file tests passed. The durable draft coordinator and editor integration remain pending.
+
+### iOS attachment draft file jobs (2026-10-05)
+
+Native-only source proofs, stage reservation/fill, exclusive publication, and publication verification now share the existing bounded FIFO, cancellation, reply retention, and shutdown drain. Raw JavaScript file-operation allowlists are unchanged. Mac validation: 15 new queue tests, 17 existing file-job/installer tests, and 12 JavaScriptCore host tests passed. Durable editor coordination remains unbound.
