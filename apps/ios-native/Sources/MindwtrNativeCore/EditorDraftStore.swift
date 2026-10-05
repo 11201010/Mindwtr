@@ -141,6 +141,40 @@ struct EditorDraftStore {
         try write(snapshot)
     }
 
+    /// Caller owns the durable operation intent; this store only compares the
+    /// complete opaque checkpoint and performs its existing durable file write.
+    func checkpointMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot) throws {
+        try validate(StoredEditorDraft(snapshot: before, attempt: nil))
+        try validate(StoredEditorDraft(snapshot: after, attempt: nil))
+        let next = before.generation.addingReportingOverflow(1)
+        guard !next.overflow, after.generation == next.partialValue,
+              before.sessionID == after.sessionID, before.taskID.utf8.elementsEqual(after.taskID.utf8) else {
+            throw HostFailure("Editor draft checkpoint transition is invalid")
+        }
+        guard let current = try read(), current.attempt == nil else {
+            throw HostFailure("Editor draft checkpoint is missing or pending")
+        }
+        if matches(current.snapshot, after) { return }
+        guard matches(current.snapshot, before) else { throw HostFailure("Editor draft checkpoint changed") }
+        try write(after)
+    }
+
+    /// Missing is idempotent only because the caller retains its discard intent.
+    func discardMatching(expected: EditorDraftSnapshot) throws {
+        try validate(StoredEditorDraft(snapshot: expected, attempt: nil))
+        guard let current = try read() else { return }
+        guard current.attempt == nil, matches(current.snapshot, expected) else {
+            throw HostFailure("Editor draft checkpoint changed or is pending")
+        }
+        try DurableFile.remove(url)
+    }
+
+    private func matches(_ snapshot: EditorDraftSnapshot, _ expected: EditorDraftSnapshot) -> Bool {
+        snapshot.version == expected.version && snapshot.sessionID == expected.sessionID
+            && snapshot.taskID.utf8.elementsEqual(expected.taskID.utf8) && snapshot.generation == expected.generation
+            && snapshot.payloadJSON.utf8.elementsEqual(expected.payloadJSON.utf8)
+    }
+
     func freeze(sessionID: String, generation: Int, method: String, argumentsJSON: String) throws -> EditorDraftAttempt {
         guard let current = try read(), current.attempt == nil,
               current.snapshot.sessionID == sessionID, current.snapshot.generation == generation else {
