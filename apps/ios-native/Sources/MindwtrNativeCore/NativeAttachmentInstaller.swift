@@ -110,6 +110,27 @@ final class NativeAttachmentInstaller {
         } catch { throw NativeAttachmentInstallerError.unavailable }
     }
 
+    /// Native-only strict retirement; the caller owns its durable decision and
+    /// latest live-reference check. The compatibility JSON allowlist is sealed.
+    func retirePrivateStage(stage: NativeAttachmentFiles.ReservedAttachmentStageProof,
+                            targetURI: String, operationID: String) throws -> String {
+        let staged = try fileURL(stage.stageURI), target = try fileURL(targetURI)
+        guard operationID.utf8.count == 32,
+              operationID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw NativeAttachmentInstallerError.invalidRequest
+        }
+        do {
+            switch try installer.retireOwnedPrivateStage(stagedInput: staged, targetInput: target,
+                operationId: operationID, expectedStagedIdentity: stage.stagedIdentity,
+                expectedDirectoryIdentity: stage.directoryIdentity,
+                expectedPrivateDirectoryIdentity: stage.privateDirectoryIdentity) {
+            case .removed: return "removed"
+            case .missing: return "missing"
+            case .conflict: return "conflict"
+            }
+        } catch { throw NativeAttachmentInstallerError.unavailable }
+    }
+
     private func digest(_ value: Any?) throws -> String {
         guard let text = value as? String, text.utf8.count == 64,
               text.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {

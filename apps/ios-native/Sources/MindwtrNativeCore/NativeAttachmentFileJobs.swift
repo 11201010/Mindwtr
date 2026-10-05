@@ -44,6 +44,9 @@ enum NativeAttachmentFileJobsError: LocalizedError {
 }
 
 /// Native-owned proofs only. This is not an extension of either JSON allowlist.
+/// Retirement grants no domain authority: a future coordinator must persist its
+/// decision and check latest shared live references under Engine/library ownership,
+/// held without JSC pumping until the typed operation has completed.
 enum NativeAttachmentDraftFileRequest: Sendable {
     case ensureManagedDirectory
     case snapshotSource(sourceURI: String)
@@ -51,11 +54,13 @@ enum NativeAttachmentDraftFileRequest: Sendable {
     case fillStage(source: NativeAttachmentFiles.CacheSourceProof, stage: NativeAttachmentFiles.ReservedAttachmentStageProof)
     case publishStage(stage: NativeAttachmentFiles.ReservedAttachmentStageProof, targetURI: String, sha256: String)
     case verifyPublication(targetURI: String, stage: NativeAttachmentFiles.ReservedAttachmentStageProof, sha256: String, size: Int64)
+    case retirePublished(targetURI: String, proof: NativeAttachmentFiles.PublishedAttachmentProof)
+    case retirePrivateStage(stage: NativeAttachmentFiles.ReservedAttachmentStageProof, targetURI: String, operationID: String)
 
     fileprivate var isInstaller: Bool {
         switch self {
-        case .prepareStage, .publishStage: return true
-        case .ensureManagedDirectory, .snapshotSource, .fillStage, .verifyPublication: return false
+        case .prepareStage, .publishStage, .retirePrivateStage: return true
+        case .ensureManagedDirectory, .snapshotSource, .fillStage, .verifyPublication, .retirePublished: return false
         }
     }
 
@@ -114,6 +119,21 @@ enum NativeAttachmentDraftFileRequest: Sendable {
             guard size >= 0, size <= 9_007_199_254_740_991 else { throw NativeAttachmentFilesError.invalidRequest }
             input = ["op": "verifyPublication", "targetURI": targetURI, "stage": try stageObject(stage),
                      "sha256": sha256, "size": size]
+        case .retirePublished(let targetURI, let proof):
+            try uri(targetURI); try digest(proof.sha256)
+            try token(proof.identity); try token(proof.directoryIdentity)
+            guard proof.size >= 0, proof.size <= 9_007_199_254_740_991 else { throw NativeAttachmentFilesError.invalidRequest }
+            input = ["op": "retirePublished", "targetURI": targetURI,
+                     "proof": ["sha256": proof.sha256, "size": proof.size,
+                               "identity": proof.identity, "directoryIdentity": proof.directoryIdentity]]
+        case .retirePrivateStage(let stage, let targetURI, let operationID):
+            try uri(targetURI)
+            guard operationID.utf8.count == 32,
+                  operationID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw NativeAttachmentInstallerError.invalidRequest
+            }
+            input = ["op": "retirePrivateStage", "stage": try stageObject(stage),
+                     "targetURI": targetURI, "operationID": operationID]
         }
         // Count the actual escaped encoding; bounded individual strings are
         // checked first, so no oversized caller string is copied into a frame.
@@ -177,6 +197,14 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
     var beforeStageSync: (() throws -> Void)? {
         get { files.beforeStageSync }
         set { files.beforeStageSync = newValue }
+    }
+    var beforeRetirementUnlink: (() throws -> Void)? {
+        get { files.beforeRetirementUnlink }
+        set { files.beforeRetirementUnlink = newValue }
+    }
+    var afterRetirementUnlink: (() throws -> Void)? {
+        get { files.afterRetirementUnlink }
+        set { files.afterRetirementUnlink = newValue }
     }
     var counters: (jobs: Int, bytes: Int) {
         lock.lock(); defer { lock.unlock() }; return (jobs.count, reservedBytes)
@@ -270,7 +298,8 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
     }
 
     /// Called only inside the shared FIFO and mutation lock. Prepare/publish
-    /// must finish once begun; source/fill continue checking their queue token.
+    /// and private retirement must finish once begun; source/fill and published
+    /// retirement retain the existing primitive's cancellation cutover.
     private func executeDraft(_ request: NativeAttachmentDraftFileRequest,
                               token: NativeAttachmentCancellation) throws -> [String: Any] {
         switch request {
@@ -299,6 +328,16 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
                 sha256: sha256, size: size, checkCancellation: token.check)
             return ["sha256": proof.sha256, "size": proof.size, "identity": proof.identity,
                     "directoryIdentity": proof.directoryIdentity]
+        case .retirePublished(let targetURI, let proof):
+            switch try files.retirePublishedAttachment(targetURI: targetURI, proof: proof, checkCancellation: token.check) {
+            case .removed: return ["status": "removed"]
+            case .absent: return ["status": "absent"]
+            }
+        case .retirePrivateStage(let stage, let targetURI, let operationID):
+            try token.check()
+            // Once entered, the existing installer finishes durability even if
+            // cancellation arrives. Keep its actual result for the owner.
+            return ["status": try installer.retirePrivateStage(stage: stage, targetURI: targetURI, operationID: operationID)]
         }
     }
 

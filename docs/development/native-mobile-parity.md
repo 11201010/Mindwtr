@@ -1742,3 +1742,9 @@ Validation: 269 distinct shared cases passed, with core typecheck, scoped lint, 
 The shared Apple installer now offers a separate native-only retirement entry for recorded private stages. It checks the recorded managed root, private directory and stage identities, refuses replacements and hardlinks, and confirms parent-directory durability before acknowledging removal or an already-missing stage. It never recreates a missing root. The existing RN cleanup entry retains its behavior.
 
 Validation: 71 Apple package tests passed (32 new, 39 existing), no skips; the signed iPhone development build passed. Independent review passed. No phone installation or user-facing cleanup acceptance is claimed. Native lifecycle ownership and the latest shared live-reference check are still required before this primitive may delete draft files.
+
+### iOS typed retirement transport (2026-10-05)
+
+Recorded publication and private-stage retirement now run through the native attachment FIFO with bounded proof inputs and isolated typed replies. Cancellation before work preserves bytes; after deletion begins the operation finishes and reports its actual durability outcome. Raw JavaScript file APIs remain unchanged.
+
+Validation: 93 native Mac tests passed with no skips, including 25 new queue cases; signed iPhone development build and independent review passed. These internal jobs remain unbound: the coordinator must still retain a durable cleanup decision and check current shared live references before using them. No new phone UI behavior is claimed.
