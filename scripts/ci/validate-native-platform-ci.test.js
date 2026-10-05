@@ -530,7 +530,10 @@ test("SwiftUI client changes and shared host changes select the isolated Apple b
   const job = workflow.jobs["ios-client"];
   expect(job.if).toContain("needs.changes.outputs.ios_client == 'true'");
   expect(job.if).toContain("needs.changes.outputs.macmini != 'true'");
-  expect(job.steps.some((step) => step.run === "bash apps/ios-native/scripts/validate.sh")).toBe(true);
+  const validation = job.steps.find((step) => step.run?.includes("bash apps/ios-native/scripts/validate.sh"));
+  expect(validation).toBeDefined();
+  expect(validation.run).toContain("set -o pipefail");
+  expect(validation.run).toContain('bash apps/ios-native/scripts/validate.sh 2>&1 | tee "$RUNNER_TEMP/ios-swiftui-artifacts/validation.log"');
   expect(readFileSync("apps/ios-native/scripts/validate.sh", "utf8")).toContain("export TZ=America/New_York");
   expect(workflow.jobs["ios-macmini"].if).toContain("needs.changes.outputs.ios_client == 'true'");
 });
