@@ -3722,6 +3722,12 @@ export function logInfo(message, meta) {
   throw new Error('diagnostic sink failed');
 }
 export function logWarn() { throw new Error('diagnostic sink failed'); }
+// The durable iOS draft owner is exercised by the actual-core Swift host tests.
+// Boot fixtures must never invoke its private projection helpers.
+export function validateNativeAttachmentDraftBegin() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftLineage() { throw new Error('attachment draft owner unbound'); }
+export function prepareNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
+export function completeNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
 // Only the explicit iOS local-capability fixture may construct these. Backends
 // and sync triggers retain the throwing stand-ins below.
 export function createMobileAttachmentFiles(host) {

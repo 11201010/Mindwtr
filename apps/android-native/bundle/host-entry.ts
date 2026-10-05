@@ -19,6 +19,10 @@ import {
     inspectNativeBackupDocument,
     prepareNativeBackupDocument,
     readNativeBackupDocumentOutcome,
+    validateNativeAttachmentDraftBegin,
+    validateNativeAttachmentDraftLineage,
+    prepareNativeAttachmentDraftAdd,
+    completeNativeAttachmentDraftAdd,
     formatI18nTemplate,
     canSaveTaskListTag,
     createNativeHostContract,
@@ -984,6 +988,28 @@ const backupTranslate = (key: string, values?: Record<string, number | string>):
     const template = unwrap(contract.getStrings({ keys: [key] })).strings[key];
     if (typeof template !== 'string') throw new Error('INVALID_INPUT: Backup translation is unavailable');
     return values ? formatI18nTemplate(template, values) : template;
+};
+
+// Only the native owner supplies these frozen checkpoints and preparations,
+// after reading its private evidence. They never enter the raw attachment API.
+const attachmentDraftJson = (json: string): unknown => {
+    try {
+        if (typeof json === 'string' && json.length <= 8 * 1024 * 1024
+            && new TextEncoder().encode(json).byteLength <= 8 * 1024 * 1024) return JSON.parse(json);
+    } catch { /* A parser excerpt could expose draft content or a picked path. */ }
+    throw new Error('INVALID_INPUT');
+};
+const attachmentDraftDependencies = {
+    assertEditable(taskID: string): void {
+        if (globalThis.__mindwtrHostPlatform !== 'ios' || !localAttachments
+            || isSandboxMode() || isWorkspaceTransitionActive()) {
+            throw new Error('NOT_READY: Attachment draft capability is unavailable');
+        }
+        requireSaved();
+        const result = contract.getTaskView({ id: taskID });
+        if (!result.ok || result.value.readOnly) throw new Error('INVALID_INPUT: Task draft attachments cannot be edited');
+    },
+    t(key: string): string { return unwrap(contract.getStrings({ keys: [key] })).strings[key] ?? key; },
 };
 
 globalThis.MindwtrHost = {
@@ -3030,6 +3056,32 @@ globalThis.MindwtrHost = {
             const answer = await request(JSON.parse(json) as never, signal);
             if (signal.aborted) throw new Error('The AI request was cancelled');
             return unwrap(answer);
+        });
+    },
+    attachmentDraftBegin(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftBegin(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftValidateLineage(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftLineage(attachmentDraftJson(json)));
+    },
+    attachmentDraftPrepare(json: string): string {
+        return submit(async () => prepareNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftResult(json: string): string {
+        return submit(async () => completeNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    /** Called only after the native private record and exact checkpoint are durable. */
+    attachmentDraftAcknowledged(operation: string, outcome: string): string {
+        return submit(async () => {
+            if (globalThis.__mindwtrHostPlatform !== 'ios' || !localAttachments
+                || !(operation === 'add' && ['confirmed', 'replayed'].includes(outcome)
+                    || operation === 'discard' && outcome === 'retained')) return {};
+            try {
+                await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',
+                    message: 'Native iOS attachment draft acknowledged',
+                    context: { releaseCheck: 'v1.3.4/ios-attachment-draft-owned', operation, outcome } }, { force: true });
+            } catch { /* Diagnostics cannot invalidate a durable acknowledgment. */ }
+            return {};
         });
     },
     /** `name` is one of ATTACHMENT_REQUESTS; `json` is that call's input. It writes no journaled command. */

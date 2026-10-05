@@ -13,7 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
-    // ios-local-attachment-host reuses releaseCheck, operation, and outcome below.
+    // ios-local-attachment-host and ios-attachment-draft-owned reuse releaseCheck, operation, and outcome below.
     // automation concurrent-write replay; capture routing reuses outcome below.
     'retryCount',
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.

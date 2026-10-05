@@ -39,6 +39,27 @@ final class AttachmentDraftFileJobsTests: XCTestCase {
         if let root { try FileManager.default.removeItem(at: root) }
     }
 
+    func testFreshManagedDirectoryTypedEnsureThenPrepare() throws {
+        try FileManager.default.removeItem(at: managed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: managed.path))
+        _ = try run(.ensureManagedDirectory, fields: [])
+        let target = managed.appendingPathComponent("fresh.bin")
+        let proof = try prepare(target)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try stageURL(proof).path))
+    }
+    func testTypedEnsureRefusesSymlinkManagedDirectoryWithoutOutsideMutation() throws {
+        try FileManager.default.removeItem(at: managed)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: managed, withDestinationURL: outside)
+        let answer = try takeDraft(jobs.submitDraft(.ensureManagedDirectory))
+        XCTAssertNotNil(answer["error"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outside.path), [])
+        var info = stat()
+        XCTAssertEqual(lstat(managed.path, &info), 0)
+        XCTAssertEqual(info.st_mode & S_IFMT, S_IFLNK)
+    }
+
     private func json(_ value: Any) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
     }

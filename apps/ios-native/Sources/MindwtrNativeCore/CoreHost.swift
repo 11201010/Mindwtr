@@ -69,6 +69,39 @@ public final class CoreHost: @unchecked Sendable {
         }, onCancel: { token.cancel() })
     }
 
+    public func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) async throws -> String {
+        try await perform { try $0.beginAttachmentDraft(expectedSession: expectedSession, expectedGeneration: expectedGeneration) }
+    }
+    public func readAttachmentDraft() async throws -> String {
+        try await perform { try $0.readAttachmentDraft() }
+    }
+    public func discardAttachmentDraft(requestJSON: String) async throws -> String {
+        try await perform { try $0.discardAttachmentDraft(requestJSON: requestJSON) }
+    }
+    public func addAttachmentDraft(requestJSON: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.addAttachmentDraft(requestJSON: requestJSON, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+    public func recoverAttachmentDraft(expectedSession: String) async throws -> String {
+        let id = UUID(), token = NativeAttachmentCancellation()
+        localAttachmentRequests.register(token, id: id)
+        defer { localAttachmentRequests.remove(id) }
+        if Task.isCancelled { token.cancel() }
+        return try await withTaskCancellationHandler(operation: {
+            try await perform { try $0.recoverAttachmentDraft(expectedSession: expectedSession, cancellation: token) }
+        }, onCancel: { token.cancel() })
+    }
+    #if DEBUG
+    func configureAttachmentDraftHost(_ hooks: AttachmentDraftHostHooks) async {
+        _ = try? await perform { $0.attachmentDraftHooks = hooks }
+    }
+    #endif
+
     #if DEBUG
     func configureAttachmentHost(_ hooks: NativeAttachmentHostHooks) async {
         _ = try? await perform { $0.attachmentHooks = hooks }
@@ -218,6 +251,7 @@ private final class Engine: @unchecked Sendable {
     private var invoking = false
     #if DEBUG
     var attachmentHooks: NativeAttachmentHostHooks?
+    var attachmentDraftHooks: AttachmentDraftHostHooks?
     #endif
     private var lockFD: Int32 = -1
     private var started = false
@@ -1265,11 +1299,55 @@ private final class Engine: @unchecked Sendable {
         try call(method, argumentsJSON: argumentsJSON, editorAttempt: nil)
     }
 
+    private var attachmentDraftEvidence: Bool {
+        NativeAttachmentDraftCoordinator.hasEvidence(databaseURL: databaseURL)
+    }
+    private func requireNoAttachmentDraft() throws {
+        guard !attachmentDraftEvidence else { throw HostFailure("Attachment draft ownership requires exact recovery") }
+    }
+    private func attachmentDraftCoordinator() throws -> NativeAttachmentDraftCoordinator {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed, pending == nil, !recoveryActivationPending, let jobs = attachmentJobs else {
+            throw HostFailure("Attachment draft recovery is not ready")
+        }
+        let coordinator = try NativeAttachmentDraftCoordinator(databaseURL: databaseURL, jobs: jobs) { [unowned self] method, arguments in
+            try self.invoke(method, arguments: arguments)
+        }
+        #if DEBUG
+        coordinator.hooks = attachmentDraftHooks
+        #endif
+        return coordinator
+    }
+    private func attachmentDraftOperation(_ action: () throws -> String) throws -> String {
+        do { return try action() }
+        catch { throw HostFailure("Attachment draft operation could not be confirmed; retained evidence requires exact recovery") }
+    }
+    func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().begin(session: expectedSession, generation: expectedGeneration) }
+    }
+    func readAttachmentDraft() throws -> String {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard started, !closed else { throw HostFailure("Attachment draft recovery is not ready") }
+        // Reading private evidence does not activate or replay pending domain work.
+        do { return try NativeAttachmentDraftCoordinator.readSummary(databaseURL: databaseURL) }
+        catch { throw HostFailure("Attachment draft capability is unavailable") }
+    }
+    func addAttachmentDraft(requestJSON: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().add(requestJSON, cancellation: cancellation) }
+    }
+    func recoverAttachmentDraft(expectedSession: String, cancellation: NativeAttachmentCancellation) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().recover(session: expectedSession, cancellation: cancellation) }
+    }
+    func discardAttachmentDraft(requestJSON: String) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().discard(requestJSON) }
+    }
+
     func readEditorDraft() throws -> EditorDraftSnapshot? {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor draft recovery is not settled") }
         guard let current = try editorDrafts.read() else { return nil }
         if let attempt = current.attempt {
+            try requireNoAttachmentDraft()
             // No journal means the invocation never began, or a definite refusal settled.
             try editorDrafts.thaw(attempt)
         }
@@ -1279,17 +1357,20 @@ private final class Engine: @unchecked Sendable {
     func checkpointEditorDraft(_ snapshot: EditorDraftSnapshot) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor draft is not ready") }
+        try requireNoAttachmentDraft()
         try editorDrafts.checkpoint(snapshot)
     }
 
     func discardEditorDraft(expectedSession: String) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor Save must settle before discard") }
+        try requireNoAttachmentDraft()
         try editorDrafts.discard(sessionID: expectedSession)
     }
 
     func discardCorruptEditorDraft() throws {
         dispatchPrecondition(condition: .onQueue(queue))
+        try requireNoAttachmentDraft()
         // A failed start may not yet have assigned `pending`. Inspect the durable
         // journal itself before removing the only frozen proof of an editor Save.
         let saved = try loadPendingJournal(checkingEditorSnapshot: false)
@@ -1326,6 +1407,7 @@ private final class Engine: @unchecked Sendable {
         guard started, !closed, pending == nil, ["saveDraft", "checklistSave", "boardAction", "taskDelete", "taskPromote"].contains(method) else {
             throw HostFailure("Editor Save is not ready")
         }
+        try requireNoAttachmentDraft()
         let args = try arguments(method, argumentsJSON)
         guard let encoded = args.first as? String,
               let request = try NativeJSON.jsonObject(with: Data(encoded.utf8)) as? [String: Any],
@@ -1345,7 +1427,7 @@ private final class Engine: @unchecked Sendable {
         } catch {
             // A command that never entered the journal, or a definite refusal,
             // cannot have written. Keep uncertain attempts frozen for exact replay.
-            if pending == nil { try editorDrafts.thaw(attempt) }
+            if pending == nil { try requireNoAttachmentDraft(); try editorDrafts.thaw(attempt) }
             throw error
         }
         // A prepared draft no-op returns before a journal exists. Cleanup errors
@@ -1355,6 +1437,7 @@ private final class Engine: @unchecked Sendable {
             #if DEBUG
             try faults?.editorDraftRemove?()
             #endif
+            try requireNoAttachmentDraft()
             try editorDrafts.removeMatching(attempt)
         }
         return value
@@ -1407,6 +1490,7 @@ private final class Engine: @unchecked Sendable {
     }
 
     private func backupAdmission() throws {
+        try requireNoAttachmentDraft()
         _ = try call("menuRead", argumentsJSON: "[\"dataSettings\",\"{}\"]")
         guard try editorDrafts.read() == nil else {
             throw CoreHostRejection(message: "INVALID_INPUT: Finish or discard the saved task draft before importing a backup")
@@ -1632,6 +1716,7 @@ private final class Engine: @unchecked Sendable {
     private func call(_ method: String, argumentsJSON: String, editorAttempt: EditorDraftAttempt?) throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, !recoveryActivationPending else { throw HostFailure("Core host is not ready; retry startup") }
+        if Self.mutations.contains(method) { try requireNoAttachmentDraft() }
         if editorAttempt == nil, ["taskCompletion", "taskCompletionUndo"].contains(method) {
             let completionRequest: [String: Any]?
             if method == "taskCompletion" {
@@ -4446,6 +4531,9 @@ private final class Engine: @unchecked Sendable {
         // Once persisted, restart can clean up without entering core again.
         pending = finished
         try persist(finished)
+        // Both removal after success and thaw after definite refusal belong to
+        // this exact editor proof. Retain the terminal journal on a conflict.
+        if command.editorDraft != nil { try requireNoAttachmentDraft() }
         if command.method == "backupDocumentCommit", case .success = terminal {
             try backupOperationFiles.complete(backupOperationReference(command))
         }
@@ -4453,6 +4541,7 @@ private final class Engine: @unchecked Sendable {
             #if DEBUG
             try faults?.editorDraftRemove?()
             #endif
+            try requireNoAttachmentDraft()
             try editorDrafts.removeMatching(attempt)
         }
         try clearPending()
@@ -4465,6 +4554,7 @@ private final class Engine: @unchecked Sendable {
             try? backupOperationFiles.discard(backupOperationReference(command), provenRejected: rejected)
         }
         if let attempt = command.editorDraft, case .rejected = terminal {
+            try requireNoAttachmentDraft()
             try editorDrafts.thaw(attempt)
         }
         if command.method == "draftCommit", case .success = terminal {
@@ -11239,6 +11329,7 @@ private final class Engine: @unchecked Sendable {
         #if DEBUG
         try faults?.journalRemove?()
         #endif
+        if pending?.editorDraft != nil { try requireNoAttachmentDraft() }
         try DurableFile.remove(journalURL)
         pending = nil
     }
@@ -11249,6 +11340,7 @@ private final class Engine: @unchecked Sendable {
             throw HostFailure("Core host is not ready; retry startup")
         }
         guard attachmentJobs != nil else { throw HostFailure("Attachment file operation is unavailable") }
+        if ["draftAddFile", "draftRemove", "settleTaskDraftAttachments"].contains(name) { try requireNoAttachmentDraft() }
         if cancellation.isCancelled { throw CancellationError() }
         guard requestJSON.utf8.count <= 6_400_000,
               let request = try? NativeJSON.jsonObject(with: Data(requestJSON.utf8)) as? [String: Any] else {

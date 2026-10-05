@@ -45,6 +45,7 @@ enum NativeAttachmentFileJobsError: LocalizedError {
 
 /// Native-owned proofs only. This is not an extension of either JSON allowlist.
 enum NativeAttachmentDraftFileRequest: Sendable {
+    case ensureManagedDirectory
     case snapshotSource(sourceURI: String)
     case prepareStage(targetURI: String, operationID: String)
     case fillStage(source: NativeAttachmentFiles.CacheSourceProof, stage: NativeAttachmentFiles.ReservedAttachmentStageProof)
@@ -54,7 +55,7 @@ enum NativeAttachmentDraftFileRequest: Sendable {
     fileprivate var isInstaller: Bool {
         switch self {
         case .prepareStage, .publishStage: return true
-        case .snapshotSource, .fillStage, .verifyPublication: return false
+        case .ensureManagedDirectory, .snapshotSource, .fillStage, .verifyPublication: return false
         }
     }
 
@@ -86,6 +87,8 @@ enum NativeAttachmentDraftFileRequest: Sendable {
         }
         let input: [String: Any]
         switch self {
+        case .ensureManagedDirectory:
+            input = ["op": "ensureManagedDirectory"]
         case .snapshotSource(let sourceURI):
             try uri(sourceURI)
             input = ["op": "snapshotSource", "sourceURI": sourceURI]
@@ -271,6 +274,10 @@ final class NativeAttachmentFileJobs: @unchecked Sendable {
     private func executeDraft(_ request: NativeAttachmentDraftFileRequest,
                               token: NativeAttachmentCancellation) throws -> [String: Any] {
         switch request {
+        case .ensureManagedDirectory:
+            let request = try JSONSerialization.data(withJSONObject: ["op": "makeDirectory", "uri": files.managedRoot.absoluteString])
+            _ = try files.call(String(decoding: request, as: UTF8.self), checkCancellation: token.check)
+            return [:]
         case .snapshotSource(let sourceURI):
             let proof = try files.snapshotCacheSource(sourceURI, checkCancellation: token.check)
             return ["sourceURI": proof.sourceURI, "sha256": proof.sha256, "size": proof.size,

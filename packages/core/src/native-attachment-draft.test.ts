@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { addPickedAttachment } from './attachment-editor-model';
 import * as validation from './attachment-validation';
 import { getManagedAttachmentFileName } from './mobile-attachment-files';
-import { completeNativeAttachmentDraftAdd, prepareNativeAttachmentDraftAdd, validateNativeAttachmentDraftBegin,
-    type NativeAttachmentDraftDependencies, type NativeAttachmentDraftPrepared, type NativeAttachmentDraftPrepareInput } from './native-attachment-draft';
+import { completeNativeAttachmentDraftAdd, prepareNativeAttachmentDraftAdd, validateNativeAttachmentDraftBegin, validateNativeAttachmentDraftLineage,
+    type NativeAttachmentDraftDependencies, type NativeAttachmentDraftLineageInput, type NativeAttachmentDraftPrepared,
+    type NativeAttachmentDraftPrepareInput } from './native-attachment-draft';
 import type { Attachment } from './types';
 
 const AT = '2026-10-05T00:00:00.000Z';
@@ -48,6 +49,10 @@ const next = (previous: NativeAttachmentDraftPrepared[], fields: Partial<NativeA
     beforePayloadJSON: previous.at(-1)!.afterPayloadJSON, priorAdditions: previous, requestId: SECOND, ...fields,
 });
 const refused = (work: Promise<unknown>) => expect(work).rejects.toThrow(/^INVALID_INPUT$/);
+const lineageInput = (previous: readonly NativeAttachmentDraftPrepared[] = [], fields: Partial<NativeAttachmentDraftLineageInput> = {}): NativeAttachmentDraftLineageInput => ({
+    version: 1, taskID: TASK, initialPayloadJSON: initial(), beforePayloadJSON: previous.at(-1)?.afterPayloadJSON ?? initial(),
+    priorAdditions: previous, managedDirectoryURI: ROOT, ...fields,
+});
 
 describe('native attachment Add projection foundation', () => {
     afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -337,5 +342,116 @@ describe('native attachment Add projection foundation', () => {
         await refused(completeNativeAttachmentDraftAdd({ prepared, persist: callback }, deps()));
         await refused(completeNativeAttachmentDraftAdd({ prepared, published: true }, deps()));
         expect(callback).not.toHaveBeenCalled();
+    });
+});
+
+describe('native attachment retained lineage validation', () => {
+    afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+    it('returns the exact initial string for empty history without claiming current authority', () => {
+        const payloadJSON = ` \n${initial()}\n `;
+        const readonly = deps(); readonly.assertEditable = () => { throw new Error('Task is readonly'); };
+        expect(() => validateNativeAttachmentDraftBegin({ taskID: TASK, payloadJSON }, readonly)).toThrow('Task is readonly');
+        const value = lineageInput([], { initialPayloadJSON: payloadJSON, beforePayloadJSON: payloadJSON });
+        const result = validateNativeAttachmentDraftLineage(value);
+        expect(result).toEqual({ version: 1, taskID: TASK, payloadJSON });
+        expect(Object.isFrozen(result)).toBe(true);
+        expect(Object.keys(result).sort()).toEqual(['payloadJSON', 'taskID', 'version']);
+        expect(validateNativeAttachmentDraftLineage).toHaveLength(1);
+    });
+
+    it('validates serialized single and multiple Adds, preserving opaque chain bytes and historical metadata', async () => {
+        vi.useFakeTimers(); vi.setSystemTime(AT);
+        const first = copy(await prepare());
+        first.afterPayloadJSON = ` \n${first.afterPayloadJSON}\n `;
+        const second = copy(await prepare(next([first])));
+        vi.setSystemTime(LATER);
+        const policy = vi.spyOn(validation, 'validateAttachmentForUpload').mockRejectedValue(new Error('Current policy must not run'));
+        const now = vi.spyOn(Date, 'now');
+        for (const previous of [[first], [first, second]]) {
+            const value = copy(lineageInput(previous)), before = copy(value);
+            expect(validateNativeAttachmentDraftLineage(value)).toEqual({ version: 1, taskID: TASK, payloadJSON: value.beforePayloadJSON });
+            expect(value).toEqual(before);
+        }
+        expect(policy).not.toHaveBeenCalled();
+        expect(now).not.toHaveBeenCalled();
+    });
+
+    it.each(['root', 'task', 'before', 'chain', 'projection', 'old-file', 'title', 'id', 'duplicate', 'order'])('rejects a forged historical chain: %s', async (field) => {
+        const first = copy(await prepare()), second = copy(await prepare(next([first])));
+        const value = lineageInput([first, second]);
+        if (field === 'root') value.managedDirectoryURI = 'file:///different/attachments/';
+        if (field === 'task') value.taskID = 'different-task';
+        if (field === 'before') value.beforePayloadJSON = initial();
+        if (field === 'chain') second.beforePayloadJSON = ` ${second.beforePayloadJSON}`;
+        if (field === 'projection') first.afterPayloadJSON = JSON.stringify({ ...JSON.parse(first.afterPayloadJSON), checklist: [] });
+        if (field === 'old-file') {
+            const payload = JSON.parse(first.afterPayloadJSON); payload.attachments[0].uri = 'file:///changed';
+            first.afterPayloadJSON = JSON.stringify(payload);
+        }
+        if (field === 'title') first.prepared.attachment.title = 'Forged metadata';
+        if (field === 'id') first.requestId = THIRD;
+        if (field === 'duplicate') value.priorAdditions = [first, first];
+        if (field === 'order') value.priorAdditions = [second, first];
+        expect(() => validateNativeAttachmentDraftLineage(value)).toThrow(/^INVALID_INPUT$/);
+    });
+
+    it('preserves acknowledged history after current upload policy changes', async () => {
+        const historical = copy(await prepare(input({ picked: { ...input().picked, mimeType: 'application/historical' } })));
+        const policy = vi.spyOn(validation, 'validateAttachmentForUpload').mockResolvedValue({ valid: false, error: 'mime_type_blocked' });
+        expect(validateNativeAttachmentDraftLineage(lineageInput([historical])).payloadJSON).toBe(historical.afterPayloadJSON);
+        expect(policy).not.toHaveBeenCalled();
+        await refused(completeNativeAttachmentDraftAdd({ prepared: historical }, deps()));
+        expect(policy).toHaveBeenCalledExactlyOnceWith(historical.prepared.attachment, historical.measuredSize);
+    });
+
+    it.each([
+        { version: 2 }, { priorAdditions: Array(129).fill({}) }, { managedDirectoryURI: 'file:///a/../attachments/' },
+        { taskID: '' }, { taskID: '界'.repeat(167) }, { beforePayloadJSON: '{}'}, { initialPayloadJSON: '[]' },
+        { initialPayloadJSON: 'x'.repeat(1_000_001) }, { owned: true }, { assertEditable: () => {} },
+    ])('rejects malformed, oversized, or authority-bearing lineage input %#', (fields) => {
+        expect(() => validateNativeAttachmentDraftLineage({ ...lineageInput(), ...fields })).toThrow(/^INVALID_INPUT$/);
+    });
+
+    it('validates the original unchanged-file half, not just a current Add projection', async () => {
+        const first = copy(await prepare()), value = lineageInput([first]);
+        const forged = JSON.parse(value.initialPayloadJSON); forged.attachments[0].title = 'Changed old file';
+        value.initialPayloadJSON = JSON.stringify(forged);
+        expect(() => validateNativeAttachmentDraftLineage(value)).toThrow(/^INVALID_INPUT$/);
+    });
+
+    it('rejects aggregate overflow before parsing historical payloads', async () => {
+        const prior = copy(await prepare());
+        prior.beforePayloadJSON = 'x'.repeat(700_000); prior.afterPayloadJSON = 'y'.repeat(700_000);
+        const parse = vi.spyOn(JSON, 'parse');
+        expect(() => validateNativeAttachmentDraftLineage(lineageInput(Array(7).fill(prior)))).toThrow(/^INVALID_INPUT$/);
+        expect(parse).not.toHaveBeenCalledWith(prior.beforePayloadJSON, expect.anything());
+        expect(parse).not.toHaveBeenCalledWith(prior.afterPayloadJSON, expect.anything());
+    });
+
+    it('admits 128 complete ordered additions and refuses a 129th retained entry', async () => {
+        const original = JSON.stringify({ version: 2, taskID: TASK, attachmentsOwned: true, attachmentsBase: [], attachments: [] });
+        const template = await prepare(input({ initialPayloadJSON: original, beforePayloadJSON: original }));
+        const previous: NativeAttachmentDraftPrepared[] = [];
+        let before = original;
+        for (let index = 0; index < 128; index++) {
+            const frozen = copy(template), id = `${index.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`;
+            frozen.requestId = id; frozen.prepared.attachment.id = id; frozen.attachment.id = id;
+            frozen.targetURI = ROOT + getManagedAttachmentFileName(frozen.prepared.attachment);
+            frozen.attachment.uri = frozen.targetURI; frozen.beforePayloadJSON = before;
+            const payload = JSON.parse(before);
+            frozen.afterPayloadJSON = JSON.stringify({ ...payload, attachments: [...payload.attachments, frozen.attachment] });
+            previous.push(frozen); before = frozen.afterPayloadJSON;
+        }
+        const value = lineageInput(previous, { initialPayloadJSON: original, beforePayloadJSON: before });
+        expect(validateNativeAttachmentDraftLineage(value).payloadJSON).toBe(before);
+        expect(() => validateNativeAttachmentDraftLineage({ ...value, priorAdditions: [...previous, previous[127]] })).toThrow(/^INVALID_INPUT$/);
+    });
+
+    it('rejects envelope getters without invoking a caller authority callback', () => {
+        const getter = vi.fn(() => initial()), value = lineageInput();
+        Object.defineProperty(value, 'beforePayloadJSON', { enumerable: true, get: getter });
+        expect(() => validateNativeAttachmentDraftLineage(value)).toThrow(/^INVALID_INPUT$/);
+        expect(getter).not.toHaveBeenCalled();
     });
 });
