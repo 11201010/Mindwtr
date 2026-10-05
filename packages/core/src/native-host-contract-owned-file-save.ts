@@ -42,7 +42,7 @@ const capture = (input: unknown, bytes: number): unknown => {
         if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
         if (typeof value === 'number') return Number.isFinite(value);
         if (Array.isArray(value)) {
-            if (value.length > 10_000 || Reflect.ownKeys(value).length !== value.length + 1) return false;
+            if (Object.getPrototypeOf(value) !== Array.prototype || value.length > 10_000 || Reflect.ownKeys(value).length !== value.length + 1) return false;
             for (let index = 0; index < value.length; index++) {
                 const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
                 if (!descriptor?.enumerable || !own(descriptor, 'value') || !check(descriptor.value, depth + 1)) return false;
@@ -65,6 +65,27 @@ const payload = (json: string): Record<string, unknown> | null => {
     catch { return null; }
 };
 
+/** Internal shared capture/merge seams; these grant no native file authority. */
+export { capture as captureNativeOwnedFileAddSaveData };
+export const readNativeOwnedFileAddHalf = (input: unknown): NativeTaskLinkHalf | null => {
+    if (!exact(input, ['base', 'value'])) return null;
+    const base = readNativeAttachments(input.base), value = readNativeAttachments(input.value);
+    if (!base || !value) return null;
+    const old = new Map(base.map((item) => [item.id, item]));
+    if (base.some((before) => !taskEditValuesEqual(before, value.find((item) => item.id === before.id)))
+        || value.length <= base.length || value.some((item) => !old.has(item.id) && item.kind !== 'file')) return null;
+    return { base, value };
+};
+export const mergeNativeOwnedFileAddAttachments = (stored: readonly Attachment[], half: NativeTaskLinkHalf): Attachment[] | null => {
+    const baseIDs = new Set(half.base.map((item) => item.id));
+    const additions = half.value.filter((item) => !baseIDs.has(item.id));
+    if (stored.some((item) => additions.some((added) => added.id === item.id))) return null;
+    const merged = mergeTaskDraftAttachments(stored, half.base, half.value);
+    if (stored.some((item) => !taskEditValuesEqual(item, merged.find((row) => row.id === item.id)))
+        || additions.some((item) => !taskEditValuesEqual(item, merged.find((row) => row.id === item.id)))) return null;
+    return readNativeAttachments(merged);
+};
+
 /** Internal metadata authority only. Native publication/ownership proof is separate. */
 export function createOwnedFileAddTaskDraftSaveMethods(deps: NativeTaskDraftSaveDependencies) {
     const readSaveRequest = (input: unknown): OwnedFileAddSaveRequest['saveRequest'] | null => {
@@ -74,12 +95,8 @@ export function createOwnedFileAddTaskDraftSaveMethods(deps: NativeTaskDraftSave
         // no checklist or lifecycle field is admitted by this entry.
         const fields = readNativeTaskDraftSaveRequest({ id: input.id, base: input.base, patch: input.patch,
             scheduleBase: input.scheduleBase }, deps.validateField, true, true);
-        const base = readNativeAttachments(input.attachments.base), value = readNativeAttachments(input.attachments.value);
-        if (!fields || !base || !value) return null;
-        const old = new Map(base.map((item) => [item.id, item]));
-        if (base.some((before) => !taskEditValuesEqual(before, value.find((item) => item.id === before.id)))
-            || value.length <= base.length || value.some((item) => !old.has(item.id) && item.kind !== 'file')) return null;
-        return { ...fields, base: {}, patch: {}, attachments: { base, value } };
+        const half = readNativeOwnedFileAddHalf(input.attachments);
+        return fields && half ? { ...fields, base: {}, patch: {}, attachments: half } : null;
     };
     const readRequest = (input: unknown): OwnedFileAddSaveRequest | null => {
         const value = capture(input, REQUEST_BYTES);
@@ -106,17 +123,8 @@ export function createOwnedFileAddTaskDraftSaveMethods(deps: NativeTaskDraftSave
             return { ...value, saveRequest } as OwnedFileAddSaveRequest;
         } catch { return null; }
     };
-    const mergeAttachments = (stored: readonly Attachment[], half: NativeTaskLinkHalf): Attachment[] | null => {
-        const baseIDs = new Set(half.base.map((item) => item.id));
-        const additions = half.value.filter((item) => !baseIDs.has(item.id));
-        if (stored.some((item) => additions.some((added) => added.id === item.id))) return null;
-        const merged = mergeTaskDraftAttachments(stored, half.base, half.value);
-        if (stored.some((item) => !taskEditValuesEqual(item, merged.find((row) => row.id === item.id)))
-            || additions.some((item) => !taskEditValuesEqual(item, merged.find((row) => row.id === item.id)))) return null;
-        return readNativeAttachments(merged);
-    };
     const authority = createOwnedFileTaskDraftSaveAuthority(deps, {
-        readRequest: readSaveRequest, mergeAttachments,
+        readRequest: readSaveRequest, mergeAttachments: mergeNativeOwnedFileAddAttachments,
         detachPrepared: (input) => capture(input, PREPARED_BYTES),
     });
     const inner = (prepared: PreparedOwnedFileAddSave): NativePreparedTaskDraftSaveV2 => {

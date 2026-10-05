@@ -1760,3 +1760,15 @@ Validation: 142 shared cases passed (111 existing, 31 new), with typecheck, scop
 A shared validator now checks the full ordinary editor checkpoint against its explicit Save request and frozen opening task, including touched no-op fields, raw text/token buffers, schedule queues, field groups and attachment lists. It reuses existing opening-field and recurrence-display helpers. Pending, unknown, checklist and lifecycle inputs are refused intact; this ordinary route does not cover their separate Save semantics.
 
 The final focused suite passed122 cases; the earlier eight-suite run passed323 cases before the token-only review correction. Core typecheck, scoped lint and independent review passed. Review corrected a long-token exemption to match native/RN policy: only assignee text has the literal bypass, while marked tags and contexts retain shared canonicality. The helper is unbound and does not itself grant Save or filesystem authority.
+
+### iOS durable owned editor checkpoint storage (2026-10-05)
+
+Private version2 records now retain exact before/after checkpoint intent while ordinary editor fields advance between file additions. The editor file accepts only the recorded before or after; retrying the exact after rewrites it durably before acknowledgment. Complete encoded-record capacity is checked before mutation. Existing version1 records retain their original contract.
+
+Validation: 83 focused Mac tests passed with no skips, independent review passed, and the signed iPhone development build passed. The permission-failure tests cover pre-write refusal and cold retry, not injected failure after rename. No phone installation is claimed. Native routing is being integrated separately; this storage change does not enable file-aware Save or the attachment UI.
+
+### iOS combined ordinary editor and owned-file Save authority (2026-10-05)
+
+A separate shared Save entry now combines ordinary editor fields with privately recorded file additions. Every prepared Save checks the complete raw checkpoint against the explicit request and frozen opening task, then uses the existing RN merge and full-task durable comparison. Old URL-only and attachment-only entries retain their original scope. Checklist/lifecycle edits and file removal remain separate work.
+
+Validation: 464 shared tests passed (71 new and 393 existing), including actual SQLite lost-acknowledgment recovery, cold replay, intervening-edit refusal, metadata preservation and input-hook refusal. Typecheck, scoped lint, both bundles, boot gates and independent review passed. Native Save admission, exact editor cleanup, file ownership release and user-facing attachment controls remain unfinished; these checks do not establish native or physical-device Save acceptance.

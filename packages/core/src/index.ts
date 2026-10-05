@@ -344,3 +344,5 @@ export { validateNativeAttachmentDraftBegin, validateNativeAttachmentDraftLineag
     prepareNativeAttachmentDraftAddV2 } from './native-attachment-draft';
 
 export type { OwnedFileAddSaveRequest, PreparedOwnedFileAddSave } from './native-host-contract-owned-file-save';
+
+export type { OwnedEditorFileAddSaveRequest, PreparedOwnedEditorFileAddSave } from './native-host-contract-owned-editor-save';
