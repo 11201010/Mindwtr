@@ -712,6 +712,7 @@ export const InboxProcessingWizard = memo(function InboxProcessingWizard({
                                 t={t}
                                 fields={scheduleFields}
                                 visibleFieldKeys={['review']}
+                                requiredFieldKeys={['review']}
                                 variant="guided"
                             />
                             <button

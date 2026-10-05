@@ -574,7 +574,7 @@ export function DateField({
                         </div>
                     </div>
                     <div className="flex w-32 shrink-0 flex-col gap-0.5 border-l border-border p-2">
-                        {QUICK_DATE_PRESETS_EXTENDED.map((preset) => {
+                        {QUICK_DATE_PRESETS_EXTENDED.filter((preset) => onClear || preset !== 'no_date').map((preset) => {
                             const labelConfig = QUICK_DATE_LABELS[preset];
                             const suggestionLabel = tFallback(t, labelConfig.key, labelConfig.fallback);
                             const active = isQuickDatePresetSelected(preset, selectedDate, now);

@@ -14,6 +14,7 @@ type Props = {
   quickDatePresets?: readonly QuickDatePreset[];
   onOpen: () => void;
   onClear: () => void;
+  required?: boolean;
   onQuickDateSelect?: (date: Date | null, preset: QuickDatePreset) => void;
   dateOnly?: boolean;
   onDateOnly?: () => void;
@@ -33,6 +34,7 @@ export function InboxDateSelectorRow({
   quickDatePresets,
   onOpen,
   onClear,
+  required = false,
   onQuickDateSelect,
   dateOnly,
   onDateOnly,
@@ -64,7 +66,7 @@ export function InboxDateSelectorRow({
             {displayValue}
           </Text>
         </TouchableOpacity>
-        {value && (
+        {value && !required && (
           <TouchableOpacity
             accessibilityLabel={describeAction(clearLabel)}
             accessibilityRole="button"
@@ -90,6 +92,7 @@ export function InboxDateSelectorRow({
       {onQuickDateSelect ? (
         <QuickDateChips
           t={t}
+          allowClear={!required}
           tc={tc}
           accessibilityLabelPrefix={label}
           selectedDate={value}
