@@ -1706,3 +1706,7 @@ A native-only helper now rechecks an interrupted publication using the recorded 
 ### iOS attachment draft file jobs (2026-10-05)
 
 Native-only source proofs, stage reservation/fill, exclusive publication, and publication verification now share the existing bounded FIFO, cancellation, reply retention, and shutdown drain. Raw JavaScript file-operation allowlists are unchanged. Mac validation: 15 new queue tests, 17 existing file-job/installer tests, and 12 JavaScriptCore host tests passed. Durable editor coordination remains unbound.
+
+### iOS private attachment draft evidence store (2026-10-05)
+
+A bounded private record now retains versioned operation phases, exact editor checkpoints, and file proofs. Writes refuse corrupt evidence, phase regression, replacement of immutable proofs, or removal of prior operations; reads reject symlinks and nonregular leaves without blocking on FIFOs. Mac validation: 25 record tests and 18 exact-checkpoint tests passed. This structural store remains unbound to editor lifecycle and grants no filesystem ownership by itself.
