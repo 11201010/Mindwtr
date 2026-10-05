@@ -8,6 +8,8 @@ enum AttachmentDraftBoundary: Sendable, Equatable {
     case beforeFilled, afterFilled, beforePublication, afterPublication, afterPublicationProof
     case beforeResult, afterResult, beforeCheckpoint, afterCheckpoint, beforeMarker, afterMarker
     case beforeDiscardDecision, afterDiscardDecision, beforeDetach, afterDetach
+    case beforeAdvanceIntent, afterAdvanceIntent, beforeAdvanceEditor, afterAdvanceEditor
+    case beforeAdvanceMarker, afterAdvanceMarker
 }
 final class AttachmentDraftHostHooks: @unchecked Sendable {
     var boundary: ((AttachmentDraftBoundary) throws -> Void)?
@@ -105,19 +107,26 @@ final class NativeAttachmentDraftCoordinator {
                   request.generation == discard.expected.generation, Self.equal(request.json, discard.requestJSON) else { throw Self.failure }
             if let reply = discard.replyJSON { guard Self.equal(reply, try discardReply(record, discard)) else { throw Self.failure } }
         }
-        let initial = record.operations.first?.before.payloadJSON ?? record.session.checkpoint.payloadJSON
-        let projected = record.operations.last?.after.payloadJSON ?? initial
-        let input: [String: Any] = ["version": 1, "taskID": record.session.taskID, "initialPayloadJSON": initial,
-            "beforePayloadJSON": projected, "priorAdditions": try record.operations.map { try prepared($0) }, "managedDirectoryURI": managedURI]
-        let validated = try Self.object(invoke("attachmentDraftValidateLineage", [Self.json(input)]))
-        guard Set(validated.keys) == Set(["version", "taskID", "payloadJSON"]), Self.integer(validated["version"]) == 1,
-              let task = validated["taskID"] as? String, Self.equal(task, record.session.taskID),
-              let payload = validated["payloadJSON"] as? String, Self.equal(payload, projected) else { throw Self.failure }
+        let pendingAdd = record.operations.last.map { $0.phase != .checkpointed } == true
+        let projected = record.version == 2 && !pendingAdd ? record.session.checkpoint.payloadJSON
+            : record.operations.last?.after.payloadJSON ?? record.session.checkpoint.payloadJSON
+        try projection(record, payload: projected)
+        if let advance = record.checkpointAdvance { try projection(record, payload: advance.after.payloadJSON) }
         if record.session.state == .active {
             guard let value = try editor.read(), value.attempt == nil else { throw Self.failure }
             let after = record.operations.last.flatMap { $0.phase == .resultDurable ? $0.after : nil }
-            guard Self.equal(value.snapshot, record.session.checkpoint) || after.map({ Self.equal(value.snapshot, $0) }) == true else { throw Self.failure }
+            guard Self.equal(value.snapshot, record.session.checkpoint) || after.map({ Self.equal(value.snapshot, $0) }) == true
+                || record.checkpointAdvance.map({ Self.equal(value.snapshot, $0.after) }) == true else { throw Self.failure }
         }
+    }
+    private func projection(_ record: Store.Record, payload projected: String) throws {
+        let initial = record.operations.first?.before.payloadJSON ?? record.session.checkpoint.payloadJSON
+        let input: [String: Any] = ["version": record.version, "taskID": record.session.taskID, "initialPayloadJSON": initial,
+            "beforePayloadJSON": projected, "priorAdditions": try record.operations.map { try prepared($0) }, "managedDirectoryURI": managedURI]
+        let validated = try Self.object(invoke(record.version == 2 ? "attachmentDraftValidateLineageV2" : "attachmentDraftValidateLineage", [Self.json(input)]))
+        guard Set(validated.keys) == Set(["version", "taskID", "payloadJSON"]), Self.integer(validated["version"]) == Int64(record.version),
+              let task = validated["taskID"] as? String, Self.equal(task, record.session.taskID),
+              let payload = validated["payloadJSON"] as? String, Self.equal(payload, projected) else { throw Self.failure }
     }
     private func prepared(_ op: Store.Operation) throws -> [String: Any] {
         let value = try Self.object(op.preparedJSON, limit: 2 * 1024 * 1024)
@@ -149,34 +158,139 @@ final class NativeAttachmentDraftCoordinator {
         return try Self.summary(record)
     }
     private static func summary(_ record: Store.Record) throws -> String {
-        let status = record.session.state == .cleanupPending ? "cleanupPending" : (record.operations.last?.reason == nil ? "active" : "uncertain")
-        return try Self.json(["version": 1, "status": status, "sessionID": record.session.sessionID,
+        let status = record.checkpointAdvance != nil ? "checkpointPending"
+            : record.session.state == .cleanupPending ? "cleanupPending" : (record.operations.last?.reason == nil ? "active" : "uncertain")
+        return try Self.json(["version": record.version, "status": status, "sessionID": record.session.sessionID,
                        "checkpoint": try Self.object(String(decoding: JSONEncoder().encode(record.session.checkpoint), as: UTF8.self)),
                        "operations": record.operations.map { ["requestId": $0.requestId, "phase": $0.phase.rawValue, "reason": $0.reason.map { $0.rawValue as Any } ?? NSNull()] }])
     }
     func begin(session: String, generation: Int) throws -> String {
+        try begin(session: session, generation: generation, version: 1)
+    }
+    func beginV2(session: String, generation: Int) throws -> String {
+        try begin(session: session, generation: generation, version: 2)
+    }
+    private func begin(session: String, generation: Int, version: Int) throws -> String {
+        if version == 2 { jobs.drain() }
         guard Self.uuid(session) != nil, generation > 0, generation <= 9_007_199_254_740_991,
               let value = try editor.read(), value.attempt == nil, value.snapshot.sessionID == session, value.snapshot.generation == generation else { throw Self.failure }
         let snapshot = value.snapshot
         let existing = try store.read()
         if let existing {
-            guard existing.session.state == .active, Self.equal(existing.session.checkpoint, snapshot) else { throw Self.failure }
+            guard existing.version == version, existing.session.state == .active, Self.equal(existing.session.checkpoint, snapshot),
+                  version == 1 || (existing.checkpointAdvance == nil && existing.operations.allSatisfy { $0.phase == .checkpointed }) else { throw Self.failure }
         }
         let initial = existing?.operations.first?.before.payloadJSON ?? snapshot.payloadJSON
-        let reply = try Self.object(invoke("attachmentDraftBegin", [Self.json(["taskID": snapshot.taskID, "payloadJSON": initial])]))
-        guard Set(reply.keys) == Set(["version", "taskID", "payloadJSON"]), Self.integer(reply["version"]) == 1,
+        let reply = try Self.object(invoke(version == 2 ? "attachmentDraftBeginV2" : "attachmentDraftBegin", [Self.json(["taskID": snapshot.taskID, "payloadJSON": initial])]))
+        guard Set(reply.keys) == Set(["version", "taskID", "payloadJSON"]), Self.integer(reply["version"]) == Int64(version),
               let task = reply["taskID"] as? String, Self.equal(task, snapshot.taskID),
               let payload = reply["payloadJSON"] as? String, Self.equal(payload, initial) else { throw Self.failure }
         if let existing {
             try lineage(existing)
         } else {
-            try store.write(Store.Record(session: .init(sessionID: session, taskID: snapshot.taskID, state: .active, checkpoint: snapshot), operations: []))
+            try store.write(Store.Record(version: version, session: .init(sessionID: session, taskID: snapshot.taskID, state: .active, checkpoint: snapshot), operations: []))
         }
-        return try Self.json(["version": 1, "status": "begun", "sessionID": session, "generation": generation])
+        return try Self.json(["version": version, "status": "begun", "sessionID": session, "generation": generation])
     }
+
+    /// Ordinary raw editor retention only. Shared lineage proves attachment
+    /// continuity; this does not admit Save or recheck upload/task edit policy.
+    func advance(_ snapshot: EditorDraftSnapshot) throws {
+        // Finish all existing file work before invoking the pure JS validator.
+        // No JSC invocation occurs between the durable intent and final marker.
+        jobs.drain()
+        guard let record = try store.read(), record.version == 2, record.session.state == .active,
+              record.discard == nil, record.operations.allSatisfy({ $0.phase == .checkpointed }),
+              snapshot.generation > 0, snapshot.generation <= 9_007_199_254_740_991,
+              Self.equal(snapshot.sessionID, record.session.sessionID), Self.equal(snapshot.taskID, record.session.taskID) else { throw Self.failure }
+        try editor.preflightCheckpoint(snapshot)
+        try lineage(record)
+        if let pending = record.checkpointAdvance {
+            guard Self.equal(snapshot, pending.after) else { throw Self.failure }
+            _ = try finishAdvance(record)
+            acknowledge("checkpoint", "replayed")
+            return
+        }
+        try current(record.session.checkpoint)
+        if Self.equal(snapshot, record.session.checkpoint) {
+            // An earlier marker may have been promoted before its parent-sync
+            // acknowledgment failed. A read alone cannot confirm that write.
+            try requireRecord(record)
+            try store.write(record)
+            acknowledge("checkpoint", "replayed")
+            return
+        }
+        guard snapshot.generation > record.session.checkpoint.generation else { throw Self.failure }
+        try projection(record, payload: snapshot.payloadJSON)
+        let pending = checkpointRecord(record, checkpoint: record.session.checkpoint,
+            advance: .init(before: record.session.checkpoint, after: snapshot))
+        try preflightAdvance(pending)
+        #if DEBUG
+        try hooks?.boundary?(.beforeAdvanceIntent)
+        #endif
+        try current(record.session.checkpoint)
+        try requireRecord(record)
+        try store.write(pending)
+        #if DEBUG
+        try hooks?.boundary?(.afterAdvanceIntent)
+        #endif
+        _ = try finishAdvance(pending)
+        acknowledge("checkpoint", "confirmed")
+    }
+
+    private func checkpointRecord(_ record: Store.Record, checkpoint: EditorDraftSnapshot,
+                                  advance: Store.CheckpointAdvance?) -> Store.Record {
+        Store.Record(version: record.version, session: .init(sessionID: record.session.sessionID,
+            taskID: record.session.taskID, state: record.session.state, checkpoint: checkpoint),
+            operations: record.operations, discard: record.discard, checkpointAdvance: advance)
+    }
+    private func requireRecord(_ expected: Store.Record) throws {
+        guard let actual = try store.read() else { throw Self.failure }
+        // Codable's synthesized String equality is Unicode-normalizing. Compare
+        // a stable complete model encoding to retain every opaque byte instead.
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard try encoder.encode(actual) == encoder.encode(expected) else { throw Self.failure }
+    }
+    private func preflightAdvance(_ record: Store.Record) throws {
+        guard record.version == 2, let advance = record.checkpointAdvance else { throw Self.failure }
+        try editor.preflightCheckpoint(advance.after)
+        let settled = checkpointRecord(record, checkpoint: advance.after, advance: nil)
+        for candidate in [record, settled] {
+            guard try JSONEncoder().encode(candidate).count <= Store.maximumBytes else { throw Self.failure }
+        }
+        // Before intent, only the pending record can pass retained-write checks;
+        // the settled record requires that intent already present on disk.
+        try store.preflight(record)
+    }
+    private func finishAdvance(_ record: Store.Record) throws -> Store.Record {
+        guard record.version == 2, let advance = record.checkpointAdvance else { throw Self.failure }
+        try preflightAdvance(record)
+        try requireRecord(record)
+        #if DEBUG
+        try hooks?.boundary?(.beforeAdvanceEditor)
+        #endif
+        try editor.checkpointOwnedAdvanceMatching(before: advance.before, after: advance.after)
+        #if DEBUG
+        try hooks?.boundary?(.afterAdvanceEditor)
+        #endif
+        try current(advance.after)
+        let settled = checkpointRecord(record, checkpoint: advance.after, advance: nil)
+        #if DEBUG
+        try hooks?.boundary?(.beforeAdvanceMarker)
+        #endif
+        try current(advance.after)
+        try requireRecord(record)
+        try store.write(settled)
+        #if DEBUG
+        try hooks?.boundary?(.afterAdvanceMarker)
+        #endif
+        return settled
+    }
+
     func add(_ raw: String, cancellation: NativeAttachmentCancellation) throws -> String {
         let request = try Self.request(raw, add: true)
-        guard var record = try store.read(), record.session.state == .active, record.session.sessionID == request.session else { throw Self.failure }
+        guard var record = try store.read(), record.session.state == .active, record.session.sessionID == request.session,
+              record.checkpointAdvance == nil else { throw Self.failure }
         if let existing = record.operations.first(where: { $0.requestId == request.id }) {
             guard Self.equal(existing.requestJSON, request.json) else { throw Self.failure }
         }
@@ -192,15 +306,16 @@ final class NativeAttachmentDraftCoordinator {
         try cancellation.check()
         guard record.operations.count < 128, record.session.checkpoint.generation == request.generation,
               request.generation < 9_007_199_254_740_991 else { throw Self.failure }
+        if record.version == 2 { guard request.generation < 9_007_199_254_740_990 else { throw Self.failure } }
         try current(record.session.checkpoint)
         let sourceValue = try file(.snapshotSource(sourceURI: request.picked!["uri"] as! String), cancellation: cancellation)
         let source = try JSONDecoder().decode(Store.Source.self, from: Data(Self.json(sourceValue).utf8))
-        let input: [String: Any] = ["version": 1, "taskID": record.session.taskID,
+        let input: [String: Any] = ["version": record.version, "taskID": record.session.taskID,
             "initialPayloadJSON": record.operations.first?.before.payloadJSON ?? record.session.checkpoint.payloadJSON,
             "beforePayloadJSON": record.session.checkpoint.payloadJSON,
             "priorAdditions": try record.operations.map { try Self.object($0.preparedJSON, limit: 2 * 1024 * 1024) },
             "requestId": request.id, "picked": request.picked!, "measuredSize": source.size, "managedDirectoryURI": managedURI]
-        let frozenJSON = try invoke("attachmentDraftPrepare", [Self.json(input)])
+        let frozenJSON = try invoke(record.version == 2 ? "attachmentDraftPrepareV2" : "attachmentDraftPrepare", [Self.json(input)])
         let frozen = try Self.object(frozenJSON, limit: 2 * 1024 * 1024)
         guard let afterPayload = frozen["afterPayloadJSON"] as? String, let target = frozen["targetURI"] as? String else { throw Self.failure }
         let before = record.session.checkpoint
@@ -208,7 +323,8 @@ final class NativeAttachmentDraftCoordinator {
         let op = Store.Operation(requestId: request.id, requestJSON: request.json, phase: .intent, before: before, after: after,
                                  preparedJSON: frozenJSON, targetURI: target, source: source)
         _ = try prepared(op)
-        record = Store.Record(session: record.session, operations: record.operations + [op])
+        record = Store.Record(version: record.version, session: record.session, operations: record.operations + [op],
+                              discard: record.discard, checkpointAdvance: record.checkpointAdvance)
         try preflight(record)
         try cancellation.check()
         #if DEBUG
@@ -225,7 +341,13 @@ final class NativeAttachmentDraftCoordinator {
     }
     func recover(session: String, cancellation: NativeAttachmentCancellation) throws -> String {
         guard Self.uuid(session) != nil, var record = try store.read(), record.session.sessionID == session else { throw Self.failure }
+        if record.version == 2 { jobs.drain() }
         try lineage(record)
+        if record.checkpointAdvance != nil {
+            try cancellation.check()
+            record = try finishAdvance(record)
+            acknowledge("checkpoint", "confirmed")
+        }
         if record.session.state == .cleanupPending { record = try detach(record); return try Self.summary(record) }
         if !record.operations.isEmpty, record.operations.last?.phase != .checkpointed {
             record = try resume(record, cancellation: cancellation)
@@ -238,8 +360,8 @@ final class NativeAttachmentDraftCoordinator {
     }
     private func replacing(_ record: Store.Record, _ op: Store.Operation) -> Store.Record {
         let checkpoint = op.phase == .checkpointed ? op.after : record.session.checkpoint
-        return Store.Record(session: .init(sessionID: record.session.sessionID, taskID: record.session.taskID, state: record.session.state, checkpoint: checkpoint),
-                            operations: Array(record.operations.dropLast()) + [op], discard: record.discard)
+        return Store.Record(version: record.version, session: .init(sessionID: record.session.sessionID, taskID: record.session.taskID, state: record.session.state, checkpoint: checkpoint),
+                            operations: Array(record.operations.dropLast()) + [op], discard: record.discard, checkpointAdvance: record.checkpointAdvance)
     }
     private func advancing(_ op: Store.Operation, phase: Store.Phase, stage: Store.Stage? = nil,
                            filled: Store.Filled? = nil, published: Store.Published? = nil, reply: String? = nil,
@@ -386,16 +508,27 @@ final class NativeAttachmentDraftCoordinator {
         let discardID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
         let request = try Self.json(["version": 1, "requestId": discardID, "sessionID": op.after.sessionID, "generation": op.after.generation])
         let reply = try Self.json(["version": 1, "status": "cleanupPending", "requestId": discardID, "sessionID": op.after.sessionID])
-        let retained = Store.Record(session: .init(sessionID: checkpointed.session.sessionID, taskID: checkpointed.session.taskID,
+        let retained = Store.Record(version: record.version, session: .init(sessionID: checkpointed.session.sessionID, taskID: checkpointed.session.taskID,
             state: .cleanupPending, checkpoint: op.after), operations: checkpointed.operations,
-            discard: .init(requestId: discardID, requestJSON: request, expected: op.after, phase: .detached, replyJSON: reply))
+            discard: .init(requestId: discardID, requestJSON: request, expected: op.after, phase: .detached, replyJSON: reply), checkpointAdvance: record.checkpointAdvance)
         let pendingRequest = try Self.json(["version": 1, "requestId": discardID, "sessionID": op.before.sessionID, "generation": op.before.generation])
         // Before may contain more opaque whitespace than canonical after. A
         // failed Add must still leave room to retain that exact before-half.
-        let retainedPending = Store.Record(session: .init(sessionID: failed.session.sessionID, taskID: failed.session.taskID,
+        let retainedPending = Store.Record(version: record.version, session: .init(sessionID: failed.session.sessionID, taskID: failed.session.taskID,
             state: .cleanupPending, checkpoint: op.before), operations: failed.operations,
-            discard: .init(requestId: discardID, requestJSON: pendingRequest, expected: op.before, phase: .detached, replyJSON: reply))
-        for candidate in [checkpointed, failed, retained, retainedPending] {
+            discard: .init(requestId: discardID, requestJSON: pendingRequest, expected: op.before, phase: .detached, replyJSON: reply), checkpointAdvance: record.checkpointAdvance)
+        var candidates = [checkpointed, failed, retained, retainedPending]
+        if record.version == 2 {
+            guard op.after.generation < 9_007_199_254_740_991 else { throw Self.failure }
+            // Budget only incorporation of the acknowledged Add list, using
+            // captured after bytes. Arbitrary later edits require their own budget.
+            let next = EditorDraftSnapshot(sessionID: op.after.sessionID, taskID: op.after.taskID,
+                generation: op.after.generation + 1, payloadJSON: op.after.payloadJSON)
+            candidates.append(checkpointRecord(checkpointed, checkpoint: op.after,
+                advance: .init(before: op.after, after: next)))
+            candidates.append(checkpointRecord(checkpointed, checkpoint: next, advance: nil))
+        }
+        for candidate in candidates {
             guard try JSONEncoder().encode(candidate).count <= Store.maximumBytes else { throw Self.failure }
         }
     }
@@ -417,7 +550,8 @@ final class NativeAttachmentDraftCoordinator {
     }
     func discard(_ raw: String) throws -> String {
         let request = try Self.request(raw, add: false)
-        guard var record = try store.read(), record.session.sessionID == request.session else { throw Self.failure }
+        guard var record = try store.read(), record.session.sessionID == request.session,
+              record.checkpointAdvance == nil else { throw Self.failure }
         if record.operations.contains(where: { $0.requestId == request.id }) { throw Self.failure }
         try lineage(record)
         if let existing = record.discard {
@@ -436,8 +570,8 @@ final class NativeAttachmentDraftCoordinator {
         #if DEBUG
         try hooks?.boundary?(.beforeDiscardDecision)
         #endif
-        record = Store.Record(session: .init(sessionID: record.session.sessionID, taskID: record.session.taskID, state: .cleanupPending, checkpoint: record.session.checkpoint), operations: record.operations,
-                              discard: .init(requestId: request.id, requestJSON: request.json, expected: record.session.checkpoint, phase: .decided))
+        record = Store.Record(version: record.version, session: .init(sessionID: record.session.sessionID, taskID: record.session.taskID, state: .cleanupPending, checkpoint: record.session.checkpoint), operations: record.operations,
+                              discard: .init(requestId: request.id, requestJSON: request.json, expected: record.session.checkpoint, phase: .decided), checkpointAdvance: record.checkpointAdvance)
         try store.write(record)
         #if DEBUG
         try hooks?.boundary?(.afterDiscardDecision)
@@ -465,8 +599,8 @@ final class NativeAttachmentDraftCoordinator {
         #endif
         guard try editor.read() == nil else { throw Self.failure }
         let reply = try discardReply(record, discard)
-        let detached = Store.Record(session: record.session, operations: record.operations,
-            discard: .init(requestId: discard.requestId, requestJSON: discard.requestJSON, expected: discard.expected, phase: .detached, replyJSON: reply))
+        let detached = Store.Record(version: record.version, session: record.session, operations: record.operations,
+            discard: .init(requestId: discard.requestId, requestJSON: discard.requestJSON, expected: discard.expected, phase: .detached, replyJSON: reply), checkpointAdvance: record.checkpointAdvance)
         try store.write(detached)
         return detached
     }

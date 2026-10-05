@@ -22,6 +22,9 @@ import {
     validateNativeAttachmentDraftBegin,
     validateNativeAttachmentDraftLineage,
     prepareNativeAttachmentDraftAdd,
+    validateNativeAttachmentDraftBeginV2,
+    validateNativeAttachmentDraftLineageV2,
+    prepareNativeAttachmentDraftAddV2,
     completeNativeAttachmentDraftAdd,
     formatI18nTemplate,
     canSaveTaskListTag,
@@ -3067,6 +3070,15 @@ globalThis.MindwtrHost = {
     attachmentDraftPrepare(json: string): string {
         return submit(async () => prepareNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
     },
+    attachmentDraftBeginV2(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftBeginV2(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
+    attachmentDraftValidateLineageV2(json: string): string {
+        return submit(async () => validateNativeAttachmentDraftLineageV2(attachmentDraftJson(json)));
+    },
+    attachmentDraftPrepareV2(json: string): string {
+        return submit(async () => prepareNativeAttachmentDraftAddV2(attachmentDraftJson(json), attachmentDraftDependencies));
+    },
     attachmentDraftResult(json: string): string {
         return submit(async () => completeNativeAttachmentDraftAdd(attachmentDraftJson(json), attachmentDraftDependencies));
     },
@@ -3074,7 +3086,7 @@ globalThis.MindwtrHost = {
     attachmentDraftAcknowledged(operation: string, outcome: string): string {
         return submit(async () => {
             if (globalThis.__mindwtrHostPlatform !== 'ios' || !localAttachments
-                || !(operation === 'add' && ['confirmed', 'replayed'].includes(outcome)
+                || !(['add', 'checkpoint'].includes(operation) && ['confirmed', 'replayed'].includes(outcome)
                     || operation === 'discard' && outcome === 'retained')) return {};
             try {
                 await diagnosticsLog.append({ ts: new Date().toISOString(), level: 'info', scope: 'native-ios',

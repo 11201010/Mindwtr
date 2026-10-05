@@ -3727,6 +3727,9 @@ export function logWarn() { throw new Error('diagnostic sink failed'); }
 export function validateNativeAttachmentDraftBegin() { throw new Error('attachment draft owner unbound'); }
 export function validateNativeAttachmentDraftLineage() { throw new Error('attachment draft owner unbound'); }
 export function prepareNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftBeginV2() { throw new Error('attachment draft owner unbound'); }
+export function validateNativeAttachmentDraftLineageV2() { throw new Error('attachment draft owner unbound'); }
+export function prepareNativeAttachmentDraftAddV2() { throw new Error('attachment draft owner unbound'); }
 export function completeNativeAttachmentDraftAdd() { throw new Error('attachment draft owner unbound'); }
 // Only the explicit iOS local-capability fixture may construct these. Backends
 // and sync triggers retain the throwing stand-ins below.

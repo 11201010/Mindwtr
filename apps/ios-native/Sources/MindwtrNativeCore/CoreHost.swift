@@ -72,6 +72,9 @@ public final class CoreHost: @unchecked Sendable {
     public func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) async throws -> String {
         try await perform { try $0.beginAttachmentDraft(expectedSession: expectedSession, expectedGeneration: expectedGeneration) }
     }
+    public func beginAttachmentDraftV2(expectedSession: String, expectedGeneration: Int) async throws -> String {
+        try await perform { try $0.beginAttachmentDraftV2(expectedSession: expectedSession, expectedGeneration: expectedGeneration) }
+    }
     public func readAttachmentDraft() async throws -> String {
         try await perform { try $0.readAttachmentDraft() }
     }
@@ -1325,6 +1328,9 @@ private final class Engine: @unchecked Sendable {
     func beginAttachmentDraft(expectedSession: String, expectedGeneration: Int) throws -> String {
         try attachmentDraftOperation { try attachmentDraftCoordinator().begin(session: expectedSession, generation: expectedGeneration) }
     }
+    func beginAttachmentDraftV2(expectedSession: String, expectedGeneration: Int) throws -> String {
+        try attachmentDraftOperation { try attachmentDraftCoordinator().beginV2(session: expectedSession, generation: expectedGeneration) }
+    }
     func readAttachmentDraft() throws -> String {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed else { throw HostFailure("Attachment draft recovery is not ready") }
@@ -1357,7 +1363,16 @@ private final class Engine: @unchecked Sendable {
     func checkpointEditorDraft(_ snapshot: EditorDraftSnapshot) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         guard started, !closed, pending == nil else { throw HostFailure("Editor draft is not ready") }
-        try requireNoAttachmentDraft()
+        if attachmentDraftEvidence {
+            guard (try? NativeAttachmentDraftStore(databaseURL: databaseURL).read())?.version == 2 else {
+                throw HostFailure("Attachment draft ownership requires exact recovery")
+            }
+            _ = try attachmentDraftOperation {
+                try attachmentDraftCoordinator().advance(snapshot)
+                return ""
+            }
+            return
+        }
         try editorDrafts.checkpoint(snapshot)
     }
 
