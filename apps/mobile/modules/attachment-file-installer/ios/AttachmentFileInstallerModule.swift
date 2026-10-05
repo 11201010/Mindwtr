@@ -33,24 +33,24 @@ public enum AttachmentInstallOutcome {
   case conflict(preservedUrl: URL)
 }
 
-enum ImmutableAttachmentPublishOutcome {
+public enum ImmutableAttachmentPublishOutcome {
   case published
   case alreadyExists
 }
 
-struct ImmutableAttachmentStageIdentity {
-  let stagedIdentity: String
-  let directoryIdentity: String
+public struct ImmutableAttachmentStageIdentity {
+  public let stagedIdentity: String
+  public let directoryIdentity: String
 }
 
-struct ImmutableAttachmentPreparedStage {
-  let stagedUrl: URL
-  let stagedIdentity: String
-  let directoryIdentity: String
-  let privateDirectoryIdentity: String
+public struct ImmutableAttachmentPreparedStage {
+  public let stagedUrl: URL
+  public let stagedIdentity: String
+  public let directoryIdentity: String
+  public let privateDirectoryIdentity: String
 }
 
-enum ImmutableAttachmentStageCleanupOutcome {
+public enum ImmutableAttachmentStageCleanupOutcome {
   case removed
   case missing
   case conflict
@@ -100,6 +100,84 @@ public final class AttachmentFileInstaller {
   public func hash(_ input: URL) throws -> AttachmentFileHashSnapshot {
     try Self.validateFileURL(input)
     return try hasher.hash(input)
+  }
+
+  /// Reserves an exclusive private stage using the existing RN installer.
+  /// This facade is transport, not a durable reservation record: the caller must
+  /// persist its operation/intent and every returned identity token across crashes.
+  public func prepareImmutableStage(
+    targetInput: URL,
+    operationId: String
+  ) throws -> ImmutableAttachmentPreparedStage {
+    try Self.validateFileURL(targetInput)
+    return try installer.prepareImmutableStage(targetInput: targetInput, operationId: operationId)
+  }
+
+  /// Records the written stage's proof. Atomic replacement invalidates the
+  /// prepared stage token; snapshot the actual bytes before publication.
+  public func snapshotImmutableStage(
+    stagedInput: URL,
+    targetInput: URL,
+    expectedStagedSha256: String
+  ) throws -> ImmutableAttachmentStageIdentity {
+    try Self.validateFileURL(stagedInput)
+    try Self.validateFileURL(targetInput)
+    return try installer.snapshotImmutableStage(
+      stagedInput: stagedInput,
+      targetInput: targetInput,
+      expectedStagedSha256: try parseInstallerSha256(expectedStagedSha256, label: "Expected staged attachment")
+    )
+  }
+
+  /// Publishes without adopting or overwriting an existing target. All expected
+  /// identity tokens are required; the engine owns path and no-replace semantics.
+  public func publishImmutable(
+    stagedInput: URL,
+    targetInput: URL,
+    expectedStagedSha256: String,
+    expectedStagedIdentity: String,
+    expectedDirectoryIdentity: String,
+    expectedPrivateDirectoryIdentity: String
+  ) throws -> ImmutableAttachmentPublishOutcome {
+    try Self.validateFileURL(stagedInput)
+    try Self.validateFileURL(targetInput)
+    return try installer.publishImmutable(
+      stagedInput: stagedInput,
+      targetInput: targetInput,
+      expectedStagedSha256: try parseInstallerSha256(expectedStagedSha256, label: "Expected staged attachment"),
+      expectedStagedIdentity: expectedStagedIdentity,
+      expectedDirectoryIdentity: expectedDirectoryIdentity,
+      expectedPrivateDirectoryIdentity: expectedPrivateDirectoryIdentity
+    )
+  }
+
+  /// Retires only a stage proved owned under the engine's existing contract.
+  /// Private-stage cleanup uses identity tokens and can remove partial bytes;
+  /// legacy-stage cleanup also verifies the digest and may retain uncertain bytes
+  /// in quarantine. No orphan sweep or cleanup of an existing target is performed.
+  public func cleanupImmutableStage(
+    stagedInput: URL,
+    targetInput: URL,
+    operationId: String,
+    expectedStagedSha256: String?,
+    expectedStagedIdentity: String?,
+    expectedDirectoryIdentity: String?,
+    expectedPrivateDirectoryIdentity: String?
+  ) throws -> ImmutableAttachmentStageCleanupOutcome {
+    try Self.validateFileURL(stagedInput)
+    try Self.validateFileURL(targetInput)
+    let digest = try expectedStagedSha256.map {
+      try parseInstallerSha256($0, label: "Expected staged attachment")
+    }
+    return try installer.cleanupImmutableStage(
+      stagedInput: stagedInput,
+      targetInput: targetInput,
+      operationId: operationId,
+      expectedStagedSha256: digest,
+      expectedStagedIdentity: expectedStagedIdentity,
+      expectedDirectoryIdentity: expectedDirectoryIdentity,
+      expectedPrivateDirectoryIdentity: expectedPrivateDirectoryIdentity
+    )
   }
 
   private static func validateFileURL(_ input: URL) throws {
