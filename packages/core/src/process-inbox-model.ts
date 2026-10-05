@@ -1629,6 +1629,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
 
     const dateRow = (field: ProcessInboxDateField, label: string, presets: QuickDatePreset[]): ProcessInboxViewDateRow => {
         const value = draft[field];
+        const allowClear = !(step === 'incubate' && field === 'reviewAt');
         const selectedDate = value ? safeParseDate(value.date) : null;
         return {
             field,
@@ -1636,7 +1637,7 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
             date: value?.date ?? null,
             display: value ? input.formatDate(value.date, 'P') : t('common.notSet'),
             dateOnly: value?.dateOnly ?? false,
-            clear: value ? { label: t('common.clear'), selected: false, edit: { type: 'setDate', field, value: null } } : null,
+            clear: value && allowClear ? { label: t('common.clear'), selected: false, edit: { type: 'setDate', field, value: null } } : null,
             timeMode: value && defaultScheduleTime
                 ? {
                     label: value.dateOnly ? defaultScheduleTime : dateOnlyLabel,
@@ -1645,9 +1646,9 @@ export function buildProcessInboxStepView(input: ProcessInboxViewInput): Process
                 }
                 : null,
             pick: { type: 'setPickedDate', field },
-            quickDates: presets.map((preset) => {
+            quickDates: presets.filter((preset) => allowClear || preset !== 'no_date').map((preset) => {
                 const active = isQuickDatePresetSelected(preset, selectedDate, input.now);
-                const picked = active ? null : getQuickDate(preset, input.now);
+                const picked = active && allowClear ? null : getQuickDate(preset, input.now);
                 const labels = PROCESS_INBOX_QUICK_DATE_LABELS[preset];
                 return {
                     label: tf(labels.key, labels.fallback),

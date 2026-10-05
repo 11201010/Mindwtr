@@ -428,6 +428,7 @@ export function InboxStepFlow({ controller, mode }: { controller: Controller; mo
             <Text style={[styles.stepQuestion, { color: tc.text }]}>{prompt.question}</Text>
             <Text style={[styles.stepHint, { color: tc.secondaryText }]}>{prompt.hint}</Text>
             <InboxDateSelectorRow
+              required
               t={t}
               label={t('taskEdit.reviewDateLabel')}
               value={controller.pendingReviewDate}

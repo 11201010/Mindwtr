@@ -29,6 +29,7 @@ type InboxProcessingScheduleFieldsProps = {
     fields: InboxProcessingScheduleFieldsControls;
     visibleFieldKeys?: InboxProcessingScheduleFieldKey[];
     variant?: 'quick' | 'guided';
+    requiredFieldKeys?: InboxProcessingScheduleFieldKey[];
 };
 
 const FIELD_CONFIG = [
@@ -54,6 +55,7 @@ export function InboxProcessingScheduleFields({
     fields,
     visibleFieldKeys,
     variant = 'quick',
+    requiredFieldKeys = [],
 }: InboxProcessingScheduleFieldsProps) {
     const compact = variant === 'quick';
     const { nativeDateInputLocale, dateFormatSetting } = useNativeDateInputLocale();
@@ -65,6 +67,7 @@ export function InboxProcessingScheduleFields({
         <div className="space-y-3">
             {renderedFieldConfig.map(({ key, labelKey, timeAriaKey }) => {
                 const field = fields[key];
+                const allowClear = !requiredFieldKeys.includes(key);
                 const label = t(labelKey);
                 const showClear = Boolean(field.date || field.timeDraft);
 
@@ -105,10 +108,11 @@ export function InboxProcessingScheduleFields({
                             )}
                             hasValue={showClear}
                             onDateChange={field.onDateChange}
-                            onClear={field.onClear}
+                            onClear={allowClear ? field.onClear : undefined}
                             onDateOnly={field.hasTime ? field.onDateOnly : undefined}
                         />
                         <QuickDateChips
+                            allowClear={allowClear}
                             t={t}
                             selectedDate={safeParseDate(field.date)}
                             onSelect={(date) => {
