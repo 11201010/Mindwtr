@@ -38,6 +38,7 @@ enum McpError {
     StartFailed,
     Exited,
     ConfigFailed,
+    #[cfg(any(target_os = "macos", test))]
     UnsupportedOs,
 }
 
@@ -49,6 +50,7 @@ impl McpError {
             Self::StartFailed => "start_failed",
             Self::Exited => "exited",
             Self::ConfigFailed => "config_failed",
+            #[cfg(any(target_os = "macos", test))]
             Self::UnsupportedOs => "unsupported_os",
         }
     }
