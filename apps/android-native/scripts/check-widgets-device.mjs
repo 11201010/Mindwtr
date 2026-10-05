@@ -15,7 +15,8 @@
 // more; (6) RN's quick capture dialog (through the debug-only exported alias; RN's activity is not exported) stores its capture
 // once; (7) with the widgets' language set to German, then Chinese (debug `widget_language`; the synced setting is left alone),
 // the payload equals core's for that language,
-// its dates from the phone's ICU. Titles are 94 + a 12-digit run id + 1 to 6 (check-projects-device.mjs --prune-old removes
+// its dates from the phone's ICU; (8) after the app is left, the stored payload (header date, Inbox count, every row) equals
+// core's publication on a copy of the database. Titles are 94 + a 12-digit run id + 1 to 6 (check-projects-device.mjs --prune-old removes
 // earlier runs'). It grants this package widget binding (`appwidget grantbind`) and revokes it at the end, types only digits,
 // never launches over another app, and leaves the device on its home screen. It needs host `bun` and `sqlite3`. Exit 0 = pass,
 // 1 = fail, 2 = refused before touching the device, 3 = stopped.
@@ -183,7 +184,7 @@ const parity = (step) => {
     const difference = firstDifference(JSON.parse(stored), JSON.parse(expected));
     check(difference === null, `${step} the payload Kotlin stored equals core's publication on a copy of the database (${context.language}, ${context.locale}, `
         + `${context.scheme}, ${stored.length} characters)${difference ? `: ${difference}` : ''}`);
-    return { payload: JSON.parse(stored), context };
+    return { payload: JSON.parse(stored), expected: JSON.parse(expected), context };
 };
 
 const restore = async () => {
@@ -328,7 +329,20 @@ try {
     setProp('widget_language', '');
     await killApp();
     await openApp();
+    // (8) Leaving the app: what the app stored for its widgets is core's publication for the database it left, so a widget on
+    // the home screen shows today's date and the Inbox count the database holds (nothing is placed: the stored payload is
+    // what every placed widget of this app draws).
+    // Counted from here: a process killed earlier in the check can leave a publication without its stored line.
+    const [publishedBefore, storedBefore] = (() => { const text = allLogs(); return [count(text, PUBLISHED), count(text, REFRESHED)]; })();
     sh('input keyevent KEYCODE_HOME');
+    await sleep(3000);
+    await waitUntil('the publication on leaving the app to be stored', () => {
+        const text = allLogs();
+        return count(text, REFRESHED) - storedBefore >= count(text, PUBLISHED) - publishedBefore;
+    }, 30_000);
+    const left = parity('(8)');
+    check(left.payload.dateLabel === left.expected.dateLabel && left.payload.inboxCount === left.expected.inboxCount,
+        `(8) after leaving the app the stored header is core's: "${left.payload.dateLabel}", Inbox ${left.payload.inboxCount}`);
     console.log('Widgets device check passed');
 } catch (error) {
     evidenced(error);
