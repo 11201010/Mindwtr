@@ -43,6 +43,7 @@ final class NativeAttachmentFiles {
         let identity: String
         let directoryIdentity: String
     }
+    enum PublishedAttachmentRetirementOutcome: Sendable, Equatable { case removed, absent }
     static let maximumBytes = 16 * 1024 * 1024
     private static let chunkBytes = 64 * 1024
     private let libraryRoot: URL
@@ -64,6 +65,9 @@ final class NativeAttachmentFiles {
     var afterSourceOpened: (() throws -> Void)?
     var beforePublish: (() throws -> Void)?
     var beforeStageSync: (() throws -> Void)?
+    var beforeRetirementUnlink: (() throws -> Void)?
+    var afterRetirementUnlink: (() throws -> Void)?
+    var beforeRetirementSync: (() throws -> Void)?
     #endif
 
     init(libraryRoot: URL) throws {
@@ -326,6 +330,91 @@ final class NativeAttachmentFiles {
         try validate(flushNamespace: true)
         return PublishedAttachmentProof(sha256: content.sha256, size: content.size,
                                         identity: stageProof.stagedIdentity, directoryIdentity: stageProof.directoryIdentity)
+    }
+
+    /// Native-only retirement of one recorded publication. The caller must
+    /// separately own the durable retirement decision and latest shared keep
+    /// check, and serialize this whole operation under the same library owner.
+    /// A failure after unlink is uncertain; an exact missing retry still syncs.
+    func retirePublishedAttachment(targetURI: String, proof: PublishedAttachmentProof,
+                                   checkCancellation: () throws -> Void = {}) throws -> PublishedAttachmentRetirementOutcome {
+        guard Self.validDigest(proof.sha256), proof.size >= 0, proof.size <= 9_007_199_254_740_991,
+              Self.validToken(proof.identity), Self.validToken(proof.directoryIdentity) else {
+            throw NativeAttachmentFilesError.invalidRequest
+        }
+        let path = try reference(targetURI)
+        guard !path.cache, path.components.count == 2, path.components[0] == "attachments",
+              !path.components[1].hasPrefix(".") else { throw NativeAttachmentFilesError.invalidRequest }
+        try checkCancellation()
+        let parent: Parent
+        do { parent = try openParent(path) }
+        catch { throw NativeAttachmentFilesError.unavailable }
+        defer { Darwin.close(parent.fd) }
+        func validateParent() throws {
+            try verify(parent, path: path)
+            guard try Self.token(Self.identity(parent.fd)) == proof.directoryIdentity else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+        }
+        func validateAbsence() throws {
+            try validateParent()
+            var named = stat()
+            guard Darwin.fstatat(parent.fd, parent.leaf, &named, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+            try validateParent()
+        }
+        try validateParent()
+        let fd: Int32
+        do { fd = try openFile(parent) }
+        catch NativeAttachmentFilesError.missing {
+            try checkCancellation()
+            try validateAbsence()
+            do {
+                #if DEBUG
+                try beforeRetirementSync?()
+                #endif
+                try validateAbsence()
+                guard Darwin.fsync(parent.fd) == 0 else { throw NativeAttachmentFilesError.unavailable }
+                try validateAbsence()
+                return .absent
+            } catch { throw NativeAttachmentFilesError.unavailable }
+        }
+        defer { Darwin.close(fd) }
+        let before = try Self.regular(fd)
+        func validateFile() throws {
+            try stable(fd, before: before, parent: parent, path: path)
+            try validateParent()
+            guard Self.token(Identity(before)) == proof.identity, before.st_size == proof.size,
+                  before.st_nlink == 1 else { throw NativeAttachmentFilesError.unavailable }
+        }
+        func check() throws { try checkCancellation(); try validateFile() }
+        try check()
+        let content = try hashContents(fd, checkCancellation: check)
+        try check()
+        guard content.sha256 == proof.sha256, content.size == proof.size else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        #if DEBUG
+        try beforeRetirementUnlink?()
+        #endif
+        // The final cancellation/identity check and unlink have no intervening
+        // await. Once unlink starts, a late cancellation cannot undo its effect.
+        try check()
+        guard Darwin.unlinkat(parent.fd, parent.leaf, 0) == 0 else { throw NativeAttachmentFilesError.unavailable }
+        do {
+            #if DEBUG
+            try afterRetirementUnlink?()
+            #endif
+            try validateAbsence()
+            #if DEBUG
+            try beforeRetirementSync?()
+            #endif
+            try validateAbsence()
+            guard Darwin.fsync(parent.fd) == 0 else { throw NativeAttachmentFilesError.unavailable }
+            try validateAbsence()
+            return .removed
+        } catch { throw NativeAttachmentFilesError.unavailable }
     }
 
     private static func token(_ identity: Identity) -> String { "\(UInt64(identity.device)):\(UInt64(identity.inode))" }
