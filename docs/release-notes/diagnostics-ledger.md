@@ -22,6 +22,8 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 ## v1.3.4 (add before tagging, trim in the release after)
 
+- **`v1.3.4/android-detailed-capture`** — `apps/mobile/app/(drawer)/(tabs)/capture-quick.tsx`. `Android detailed capture opened` proves the text capture route requested the existing in-app sheet. Launch **Add task…**, select Focus and save once; separately confirm the task appears in the ordinary Focus widget. This line alone does not prove saving or widget publication. No task content or identifiers are logged. (#1333)
+
 - **`v1.3.4/bundled-mcp`** — `apps/desktop/src-tauri/src/mcp_server.rs`. `Managed MCP server ready` proves the bundled helper started and reported its authenticated loopback listener ready. Enable MCP in Settings → Integrations and confirm this line in Settings → Diagnostics; separately connect a client and test read-only access, optional writes, and shutdown. The line does not prove client connectivity or task writes. No credentials, task data, paths, or raw helper errors are logged. (#1337)
 
 - **`v1.3.4/mcp-local-api`** — `apps/mcp-server/src/local-api-service.ts`, MCP helper stderr after the first successful authenticated desktop Local API request. Proves this helper reached the API, not that SQLite was installed or the app UI refreshed. Test with the native addon omitted, read tasks, create a synthetic task with writes enabled, and confirm it appears in the app. No token, URL, task content, identifiers or response body is logged. This helper diagnostic is collected from the MCP client's stderr log, not desktop Settings → Diagnostics.
