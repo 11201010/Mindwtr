@@ -37,6 +37,12 @@ final class NativeAttachmentFiles {
         let sha256: String
         let size: Int64
     }
+    struct PublishedAttachmentProof: Sendable, Equatable {
+        let sha256: String
+        let size: Int64
+        let identity: String
+        let directoryIdentity: String
+    }
     static let maximumBytes = 16 * 1024 * 1024
     private static let chunkBytes = 64 * 1024
     private let libraryRoot: URL
@@ -250,6 +256,76 @@ final class NativeAttachmentFiles {
             throw NativeAttachmentFilesError.unavailable
         }
         return content
+    }
+
+    /// Re-proves a lost publication acknowledgment from the recorded stage inode.
+    /// Equal content alone is never ownership. This reads/flushes and retains every
+    /// uncertain file/namespace for the future durable draft owner.
+    func verifyPublishedAttachment(targetURI: String, stageProof: ReservedAttachmentStageProof,
+                                   sha256: String, size: Int64,
+                                   checkCancellation: () throws -> Void = {}) throws -> PublishedAttachmentProof {
+        guard Self.validDigest(sha256), size >= 0, size <= 9_007_199_254_740_991,
+              [stageProof.stagedIdentity, stageProof.directoryIdentity,
+               stageProof.privateDirectoryIdentity].allSatisfy(Self.validToken) else {
+            throw NativeAttachmentFilesError.invalidRequest
+        }
+        let targetPath = try reference(targetURI), stagePath = try reference(stageProof.stageURI)
+        guard !targetPath.cache, targetPath.components.count == 2, targetPath.components[0] == "attachments",
+              !stagePath.cache, stagePath.components.count == 3, stagePath.components[0] == "attachments",
+              stagePath.components[1].range(of: "^\\.mindwtr-install-[a-f0-9]{32}\\.candidate$", options: .regularExpression) != nil,
+              stagePath.components[2] == "stage" else { throw NativeAttachmentFilesError.invalidRequest }
+        let parent = try openParent(targetPath); defer { Darwin.close(parent.fd) }
+        let fd = try openFile(parent); defer { Darwin.close(fd) }
+        let before = try Self.regular(fd)
+        func validate(flushNamespace: Bool = false) throws {
+            try stable(fd, before: before, parent: parent, path: targetPath)
+            guard Self.token(Identity(before)) == stageProof.stagedIdentity, before.st_size == size,
+                  before.st_nlink == 1,
+                  try Self.token(Self.identity(parent.fd)) == stageProof.directoryIdentity else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+            // A completed publication removes its private directory. If a crash
+            // retained it, only that exact directory with an absent stage agrees
+            // with rename publication. Never remove it here.
+            var namespace = stat()
+            let name = stagePath.components[1]
+            if Darwin.fstatat(parent.fd, name, &namespace, AT_SYMLINK_NOFOLLOW) != 0 {
+                guard errno == ENOENT else { throw NativeAttachmentFilesError.unavailable }
+                return
+            }
+            guard namespace.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+                  Self.token(Identity(namespace)) == stageProof.privateDirectoryIdentity else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+            let privateFD = Darwin.openat(parent.fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard privateFD >= 0 else { throw NativeAttachmentFilesError.unavailable }
+            defer { Darwin.close(privateFD) }
+            guard try Self.token(Self.identity(privateFD)) == stageProof.privateDirectoryIdentity else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+            var stage = stat()
+            guard Darwin.fstatat(privateFD, "stage", &stage, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+            if flushNamespace, Darwin.fsync(privateFD) != 0 { throw NativeAttachmentFilesError.unavailable }
+            var named = stat()
+            guard Darwin.fstatat(parent.fd, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+                  named.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+                  Self.token(Identity(named)) == stageProof.privateDirectoryIdentity else {
+                throw NativeAttachmentFilesError.unavailable
+            }
+        }
+        func check() throws { try checkCancellation(); try validate() }
+        try check()
+        let content = try hashContents(fd, checkCancellation: check)
+        try check()
+        guard content.sha256 == sha256, content.size == size,
+              Darwin.fsync(fd) == 0, Darwin.fcntl(fd, F_FULLFSYNC) == 0, Darwin.fsync(parent.fd) == 0 else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        try validate(flushNamespace: true)
+        return PublishedAttachmentProof(sha256: content.sha256, size: content.size,
+                                        identity: stageProof.stagedIdentity, directoryIdentity: stageProof.directoryIdentity)
     }
 
     private static func token(_ identity: Identity) -> String { "\(UInt64(identity.device)):\(UInt64(identity.inode))" }

@@ -1698,3 +1698,7 @@ Twenty-three focused stage tests and 54 existing file/installer/job/actual-JavaS
 ### iOS exact editor checkpoint prerequisite (2026-10-05)
 
 Internal exact checkpoint replacement and discard now compare the complete retained snapshot, including opaque UTF-8 payload bytes, and refuse pending Save attempts. Replays accept only the exact resulting checkpoint; later edits and corrupt evidence remain untouched. Mac validation: 18 focused tests and 25 existing JavaScriptCore editor recovery tests passed. These helpers have no attachment lifecycle or UI caller yet; durable file draft ownership, Save/Discard settlement, and picker/viewer integration remain open.
+
+### iOS attachment publication recovery proof (2026-10-05)
+
+A native-only helper now rechecks an interrupted publication using the recorded stage inode, streamed content hash and size, and managed-directory identity. Equal-hash files with different identities are refused; uncertain stages/namespaces are retained. Mac validation: 12 publication-proof cases plus 48 existing stage/file tests passed. The durable draft coordinator and editor integration remain pending.
