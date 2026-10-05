@@ -73,13 +73,6 @@ export function SearchView({ savedSearchId, onDelete }: SearchViewProps) {
 
     const projectMapById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const areaById = useMemo(() => new Map(areas.map((area) => [area.id, area])), [areas]);
-    const bulkAreaOptions = useMemo(
-        () => [...areas]
-            .filter((area) => !area.deletedAt)
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((area) => ({ id: area.id, name: area.name })),
-        [areas],
-    );
     const resolvedAreaFilter = useMemo(
         () => resolveAreaFilterSelection(settings?.filters, areas),
         [settings?.filters, areas],
@@ -107,7 +100,7 @@ export function SearchView({ savedSearchId, onDelete }: SearchViewProps) {
     const {
         activeAction,
         allVisibleTasksSelected,
-        assignAreaToSelectedTasks,
+        moveSelectedTasksToDestination,
         clearTaskSelection,
         deleteSelectedTasks,
         exportSelectedTasks,
@@ -143,7 +136,7 @@ export function SearchView({ savedSearchId, onDelete }: SearchViewProps) {
     });
 
     const handleBatchMove = moveSelectedTasks;
-    const handleBatchAssignArea = assignAreaToSelectedTasks;
+    const handleBatchMoveToDestination = moveSelectedTasksToDestination;
 
     const handleApplyTaskBulkOrganize = useCallback(async (input: BulkOrganizeTaskUpdateInput) => {
         await organizeSelectedTasks(input, {
@@ -257,8 +250,9 @@ export function SearchView({ savedSearchId, onDelete }: SearchViewProps) {
                         <ListBulkActions
                             selectionCount={selectedIdsArray.length}
                             onMoveToStatus={handleBatchMove}
-                            onAssignArea={handleBatchAssignArea}
-                            areaOptions={bulkAreaOptions}
+                            onMoveToDestination={handleBatchMoveToDestination}
+                            projects={projects}
+                            areas={areas}
                             onBulkOrganize={() => setBulkOrganizeOpen(true)}
                             onAddTag={handleBatchAddTag}
                             onRemoveTag={handleBatchRemoveTag}

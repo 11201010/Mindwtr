@@ -12,6 +12,7 @@ import type {
     BulkOrganizeTaskUpdateInput,
     Task,
     TaskStatus,
+    TaskMoveDestination,
     RangeSelectionOptions,
 } from '@mindwtr/core';
 
@@ -55,7 +56,7 @@ type UseListSelectionResult = {
     exitSelectionMode: () => void;
     handleBatchAddContext: () => void;
     handleBatchAddTag: () => void;
-    handleBatchAssignArea: (areaId: string | null) => Promise<void>;
+    handleBatchMoveToDestination: (destination: TaskMoveDestination) => Promise<void>;
     handleBatchDelete: () => Promise<void>;
     handleBatchMove: (newStatus: TaskStatus) => Promise<void>;
     handleBatchRemoveContext: () => void;
@@ -136,7 +137,7 @@ export function useListSelection({
     const {
         activeAction,
         allVisibleTasksSelected,
-        assignAreaToSelectedTasks,
+        moveSelectedTasksToDestination,
         clearTaskSelection,
         deleteSelectedTasks,
         exitSelectionMode,
@@ -383,9 +384,9 @@ export function useListSelection({
         await deleteSelectedTasks();
     }, [deleteSelectedTasks]);
 
-    const handleBatchAssignArea = useCallback(async (areaId: string | null) => {
-        await assignAreaToSelectedTasks(areaId);
-    }, [assignAreaToSelectedTasks]);
+    const handleBatchMoveToDestination = useCallback(async (destination: TaskMoveDestination) => {
+        await moveSelectedTasksToDestination(destination);
+    }, [moveSelectedTasksToDestination]);
 
     const handleBatchAddTag = useCallback(() => {
         if (selectedIdsArray.length === 0) return;
@@ -454,7 +455,7 @@ export function useListSelection({
         exitSelectionMode,
         handleBatchAddContext,
         handleBatchAddTag,
-        handleBatchAssignArea,
+        handleBatchMoveToDestination,
         handleBatchDelete,
         handleBatchMove,
         handleBatchRemoveContext,
