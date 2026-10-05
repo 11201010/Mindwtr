@@ -69,7 +69,7 @@ export const buildSidecar = (target, { root = repoRoot, outputDirectory, platfor
     const temporary = `${plan.output}.building`;
     try {
       run('lipo', ['-create', ...plan.builds.map((build) => build.output), '-output', temporary], { cwd: root, env: environment });
-      run('lipo', ['-verify_arch', 'x86_64', 'arm64', temporary], { cwd: root, env: environment });
+      run('lipo', [temporary, '-verify_arch', 'x86_64', 'arm64'], { cwd: root, env: environment });
       renameSync(temporary, plan.output);
       chmodSync(plan.output, 0o755);
     } finally { rmSync(temporary, { force: true }); }

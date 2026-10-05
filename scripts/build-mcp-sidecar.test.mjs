@@ -70,7 +70,7 @@ test('universal macOS assembles and verifies both slices before publishing, reje
     expect(readFileSync(output, 'utf8')).toBe('universal fixture');
     expect(calls[2][0]).toBe('lipo');
     expect(calls[2][1]).toContain('-create');
-    expect(calls[3][1]).toEqual(['-verify_arch', 'x86_64', 'arm64', output + '.building']);
+    expect(calls[3][1]).toEqual([output + '.building', '-verify_arch', 'x86_64', 'arm64']);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
