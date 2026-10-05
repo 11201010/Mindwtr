@@ -51,7 +51,11 @@ export const buildSidecar = (target, { root = repoRoot, outputDirectory, platfor
     throw new Error('The universal macOS MCP sidecar must be assembled with lipo on macOS.');
   }
   mkdirSync(dirname(plan.output), { recursive: true });
-  const environment = { ...process.env, TMPDIR: dirname(plan.output), BUN_TMPDIR: dirname(plan.output) };
+  // Bun 1.3.5 extracts cross-compile runtimes in cwd; the cache must share its drive on Windows.
+  const environment = {
+    ...process.env, TMPDIR: dirname(plan.output), BUN_TMPDIR: dirname(plan.output),
+    BUN_INSTALL_CACHE_DIR: join(root, 'node_modules', '.cache', 'mcp-sidecar'),
+  };
   const bun = typeof globalThis.Bun === 'undefined' ? 'bun' : process.execPath;
   for (const build of plan.builds) {
     const temporary = `${build.output}.building${build.target.includes('windows') ? '.exe' : ''}`;

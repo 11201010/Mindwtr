@@ -35,6 +35,26 @@ test('explicit target wins, Tauri cross-build target precedes rustc host, malfor
   expect(() => resolveTarget([], {}, () => ({ status: 1 }))).toThrow('Cannot determine');
 });
 
+test('Windows baseline compilation keeps downloaded runtimes on the checkout drive', () => {
+  const directory = mkdtempSync(join(homedir(), 'mindwtr-mcp-cache-test-'));
+  try {
+    const outputDirectory = join(directory, 'binaries');
+    let invocation;
+    const run = (command, args, options) => {
+      invocation = { command, args, options };
+      writeFileSync(args.find((arg) => arg.startsWith('--outfile=')).slice('--outfile='.length), 'Windows fixture');
+    };
+    const output = buildSidecar('x86_64-pc-windows-msvc', {
+      outputDirectory, platform: 'win32', run,
+    });
+    expect(readFileSync(output, 'utf8')).toBe('Windows fixture');
+    expect(invocation.args).toContain('--target=bun-windows-x64-baseline');
+    expect(invocation.options.env.BUN_INSTALL_CACHE_DIR).toBe(join(invocation.options.cwd, 'node_modules', '.cache', 'mcp-sidecar'));
+    expect(invocation.options.env.TMPDIR).toBe(outputDirectory);
+    expect(invocation.options.env.BUN_TMPDIR).toBe(outputDirectory);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('universal macOS assembles and verifies both slices before publishing, rejects non-mac host', () => {
   const directory = mkdtempSync(join(homedir(), 'mindwtr-mcp-build-test-'));
   try {
