@@ -412,7 +412,27 @@ jobs:
           bun-version-file: ".bun-version"
 
       - name: Install bundled MCP build dependencies
-        run: bun install --frozen-lockfile
+        shell: pwsh
+        run: |
+          node scripts/ci/prepare-windows-bun-install.js
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-1'
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 8
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "bun install failed, retrying from clean project and cache directories..."
+            if (Test-Path node_modules) {
+              Remove-Item node_modules -Recurse -Force
+            }
+            $cacheDir = Join-Path $env:RUNNER_TEMP 'bun-install-cache-2'
+            if (Test-Path $cacheDir) {
+              Remove-Item $cacheDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+            bun install --frozen-lockfile --cache-dir "$cacheDir" --backend copyfile --network-concurrency 1 --concurrent-scripts 1
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
 
       - name: Build bundled MCP before native compilation
         run: bun scripts/build-mcp-sidecar.mjs

@@ -105,3 +105,15 @@ test('clean native CI prepares the sidecar before the first Cargo build script',
     expect(compile).toBeGreaterThan(prepare);
   }
 });
+
+test('Windows native jobs use the established patch-safe dependency install', () => {
+  for (const [file, job] of [['ci.yml', 'desktop-native-windows'], ['native-platform-ci.yml', 'windows-rust']]) {
+    const steps = parse(readFileSync(`.github/workflows/${file}`, 'utf8')).jobs[job].steps;
+    const install = steps.find((step) => step.name === 'Install bundled MCP build dependencies');
+    expect(install.shell).toBe('pwsh');
+    expect(install.run).toContain('node scripts/ci/prepare-windows-bun-install.js');
+    expect(install.run).toContain('--backend copyfile');
+    expect(install.run).toContain('--concurrent-scripts 1');
+    expect(install.run).toContain('exit $LASTEXITCODE');
+  }
+});
