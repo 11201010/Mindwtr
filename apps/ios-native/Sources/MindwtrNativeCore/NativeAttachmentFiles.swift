@@ -19,6 +19,24 @@ enum NativeAttachmentFilesError: LocalizedError, Equatable {
 /// shared core continues to own attachment persistence, cleanup and sync policy.
 final class NativeAttachmentFiles {
     struct Reply { let value: Any?; let bytes: Data? }
+    struct CacheSourceProof: Sendable {
+        let sourceURI: String
+        let sha256: String
+        let size: Int64
+        let identity: String
+        let cacheRootIdentity: String
+        let parentIdentity: String
+    }
+    struct ReservedAttachmentStageProof: Sendable {
+        let stageURI: String
+        let stagedIdentity: String
+        let directoryIdentity: String
+        let privateDirectoryIdentity: String
+    }
+    struct AttachmentStageContent: Sendable, Equatable {
+        let sha256: String
+        let size: Int64
+    }
     static let maximumBytes = 16 * 1024 * 1024
     private static let chunkBytes = 64 * 1024
     private let libraryRoot: URL
@@ -134,6 +152,118 @@ final class NativeAttachmentFiles {
     /// Only one named regular file or symlink entry; folder durability is a
     /// separate file-thread syncParent call after the core ownership decision.
     func deleteNow(_ uri: String) throws { try remove(reference(uri), directories: false, sync: false) }
+
+    /// Native-only evidence for a future durable copy intent, not editor ownership.
+    func snapshotCacheSource(_ uri: String, checkCancellation: () throws -> Void = {}) throws -> CacheSourceProof {
+        let path = try reference(uri)
+        guard path.cache, !path.components.isEmpty else { throw NativeAttachmentFilesError.invalidRequest }
+        let root = try openRoot(true); defer { Darwin.close(root) }
+        let parent = try openParent(path); defer { Darwin.close(parent.fd) }
+        let fd = try openFile(parent); defer { Darwin.close(fd) }
+        let before = try Self.regular(fd)
+        #if DEBUG
+        try afterSourceOpened?()
+        #endif
+        let content = try hashContents(fd, checkCancellation: checkCancellation)
+        try stable(fd, before: before, parent: parent, path: path)
+        guard content.size == before.st_size, content.size <= 9_007_199_254_740_991 else {
+            throw NativeAttachmentFilesError.invalidRequest
+        }
+        return CacheSourceProof(sourceURI: uri, sha256: content.sha256, size: content.size,
+                                identity: Self.token(Identity(before)), cacheRootIdentity: try Self.token(Self.identity(root)),
+                                parentIdentity: try Self.token(Self.identity(parent.fd)))
+    }
+
+    /// Fills only a recorded exclusive immutable stage. Failure retains its inode
+    /// and partial bytes; the caller must persist intent/proof before invoking.
+    func fillReservedAttachmentStage(sourceProof: CacheSourceProof, stageProof: ReservedAttachmentStageProof,
+                                     checkCancellation: () throws -> Void = {}) throws -> AttachmentStageContent {
+        guard Self.validDigest(sourceProof.sha256), sourceProof.size >= 0, sourceProof.size <= 9_007_199_254_740_991,
+              [sourceProof.identity, sourceProof.cacheRootIdentity, sourceProof.parentIdentity,
+               stageProof.stagedIdentity, stageProof.directoryIdentity, stageProof.privateDirectoryIdentity].allSatisfy(Self.validToken) else {
+            throw NativeAttachmentFilesError.invalidRequest
+        }
+        let sourcePath = try reference(sourceProof.sourceURI), stagePath = try reference(stageProof.stageURI)
+        guard sourcePath.cache, !sourcePath.components.isEmpty,
+              !stagePath.cache, stagePath.components.count == 3, stagePath.components[0] == "attachments",
+              stagePath.components[1].range(of: "^\\.mindwtr-install-[a-f0-9]{32}\\.candidate$", options: .regularExpression) != nil,
+              stagePath.components[2] == "stage" else { throw NativeAttachmentFilesError.invalidRequest }
+        let cacheRoot = try openRoot(true); defer { Darwin.close(cacheRoot) }
+        let source = try openParent(sourcePath); defer { Darwin.close(source.fd) }
+        let input = try openFile(source); defer { Darwin.close(input) }
+        let before = try Self.regular(input)
+        let managedPath = Reference(cache: false, components: ["attachments"])
+        let managed = try openDirectory(managedPath); defer { Darwin.close(managed) }
+        let stage = try openParent(stagePath); defer { Darwin.close(stage.fd) }
+        let output = Darwin.openat(stage.fd, stage.leaf, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard output >= 0 else { throw Self.failure() }
+        defer { Darwin.close(output) }
+        #if DEBUG
+        try afterSourceOpened?()
+        #endif
+        func validate() throws {
+            try stable(input, before: before, parent: source, path: sourcePath)
+            let currentManaged = try openDirectory(managedPath); defer { Darwin.close(currentManaged) }
+            let currentCache = try openRoot(true); defer { Darwin.close(currentCache) }
+            try verify(stage, path: stagePath)
+            let outputInfo = try Self.regular(output), namedStage = try Self.named(stage)
+            guard Self.token(Identity(before)) == sourceProof.identity, before.st_size == sourceProof.size,
+                  try Self.token(Self.identity(cacheRoot)) == sourceProof.cacheRootIdentity,
+                  try Self.identity(currentCache) == Self.identity(cacheRoot),
+                  try Self.token(Self.identity(source.fd)) == sourceProof.parentIdentity,
+                  try Self.token(Self.identity(managed)) == stageProof.directoryIdentity,
+                  try Self.identity(currentManaged) == Self.identity(managed),
+                  try Self.token(Self.identity(stage.fd)) == stageProof.privateDirectoryIdentity,
+                  Self.token(Identity(outputInfo)) == stageProof.stagedIdentity,
+                  Self.unchanged(outputInfo, namedStage), outputInfo.st_nlink == 1, namedStage.st_nlink == 1,
+                  Identity(before) != Identity(outputInfo) else { throw NativeAttachmentFilesError.unavailable }
+        }
+        // Cancellation callbacks can mutate paths too. Always validate after them,
+        // including before each write to avoid using a newly hard-linked stage.
+        func checkedCancellation() throws { try checkCancellation(); try validate() }
+        try checkedCancellation()
+        guard Darwin.ftruncate(output, 0) == 0, Darwin.lseek(output, 0, SEEK_SET) == 0 else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        let content = try hashContents(input, checkCancellation: checkedCancellation) { try Self.write(output, $0) }
+        guard content.sha256 == sourceProof.sha256, content.size == sourceProof.size else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        let written = try Self.regular(output)
+        #if DEBUG
+        try beforeStageSync?()
+        #endif
+        try checkedCancellation()
+        guard written.st_size == content.size, try Self.unchanged(written, Self.regular(output)),
+              try Self.unchanged(written, Self.named(stage)), Darwin.lseek(output, 0, SEEK_SET) == 0 else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        // The source digest proves what was read, not what is still in the stage:
+        // a cancellation callback may have rewritten an earlier copied chunk.
+        let stagedContent = try hashContents(output, checkCancellation: checkedCancellation)
+        guard stagedContent == content, try Self.unchanged(written, Self.regular(output)),
+              try Self.unchanged(written, Self.named(stage)), Darwin.fsync(output) == 0,
+              Darwin.fcntl(output, F_FULLFSYNC) == 0, Darwin.fsync(stage.fd) == 0,
+              Darwin.fsync(managed) == 0 else { throw NativeAttachmentFilesError.unavailable }
+        try validate()
+        guard try Self.unchanged(written, Self.regular(output)), try Self.unchanged(written, Self.named(stage)) else {
+            throw NativeAttachmentFilesError.unavailable
+        }
+        return content
+    }
+
+    private static func token(_ identity: Identity) -> String { "\(UInt64(identity.device)):\(UInt64(identity.inode))" }
+    private static func validToken(_ value: String) -> Bool {
+        guard value.utf8.count <= 41 else { return false }
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        return parts.count == 2 && parts.allSatisfy { part in
+            guard let number = UInt64(part) else { return false }
+            return String(number) == part
+        }
+    }
+    private static func validDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
 
     private struct Identity: Equatable {
         let device: dev_t; let inode: ino_t
@@ -350,10 +480,21 @@ final class NativeAttachmentFiles {
         #if DEBUG
         try afterSourceOpened?()
         #endif
-        var digest = SHA256()
-        try consume(fd, checkCancellation: checkCancellation) { digest.update(data: $0) }
+        let content = try hashContents(fd, checkCancellation: checkCancellation)
         try stable(fd, before: before, parent: parent, path: path)
-        return digest.finalize().map { String(format: "%02x", $0) }.joined()
+        return content.sha256
+    }
+    private func hashContents(_ fd: Int32, checkCancellation: () throws -> Void,
+                              chunk: (Data) throws -> Void = { _ in }) throws -> AttachmentStageContent {
+        var digest = SHA256(), size: Int64 = 0
+        try consume(fd, checkCancellation: checkCancellation) { bytes in
+            let next = size.addingReportingOverflow(Int64(bytes.count))
+            guard !next.overflow else { throw NativeAttachmentFilesError.unavailable }
+            size = next.partialValue
+            digest.update(data: bytes)
+            try chunk(bytes)
+        }
+        return AttachmentStageContent(sha256: digest.finalize().map { String(format: "%02x", $0) }.joined(), size: size)
     }
     private func copy(_ from: Reference, to: Reference, checkCancellation: () throws -> Void) throws {
         let source = try openParent(from); defer { Darwin.close(source.fd) }
