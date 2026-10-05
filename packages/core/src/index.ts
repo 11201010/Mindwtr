@@ -338,3 +338,6 @@ export type { NativeReferenceTasksAddTagRequest, NativeReferenceTasksAddTagPrepa
 
 export type { NativeReferenceTasksRemoveTagRequest, NativeReferenceTasksRemoveTagPrepared, NativeReferenceTasksRemoveTagEnvelope,
     NativeReferenceTasksRemoveTagResult, NativeReferenceTasksRemoveTagPreparation } from './native-host-contract-reference-bulk-remove-tag';
+
+export { validateNativeAttachmentDraftBegin, prepareNativeAttachmentDraftAdd,
+    completeNativeAttachmentDraftAdd } from './native-attachment-draft';

@@ -1710,3 +1710,9 @@ Native-only source proofs, stage reservation/fill, exclusive publication, and pu
 ### iOS private attachment draft evidence store (2026-10-05)
 
 A bounded private record now retains versioned operation phases, exact editor checkpoints, and file proofs. Writes refuse corrupt evidence, phase regression, replacement of immutable proofs, or removal of prior operations; reads reject symlinks and nonregular leaves without blocking on FIFOs. Mac validation: 25 record tests and 18 exact-checkpoint tests passed. This structural store remains unbound to editor lifecycle and grants no filesystem ownership by itself.
+
+### iOS shared attachment draft projection (2026-10-05)
+
+Shared helpers now validate an initial editor checkpoint, prepare an Add using RN's existing metadata and naming rules, and validate its frozen result without generating new IDs or timestamps. Ordered additions preserve prior attachments and all other editor fields. Current upload policy is checked at completion; historical additions remain structurally validated without applying a newer policy retroactively. Native file ownership remains a separate responsibility.
+
+Validation: 84 new projection cases and 87 existing editor/file cases passed, along with core typecheck and scoped lint. Native lifecycle integration, file-aware Save, cleanup settlement, picker and viewer remain open; this shared slice alone makes no device or filesystem recovery claim.
