@@ -1736,3 +1736,9 @@ Thirty focused cases and 60 existing file cases passed on the Mac, and the signe
 A separate shared prepare/validate/commit path now accepts frozen file additions and an exact attachment-only checkpoint. It reuses RN attachment merging and the existing full-task comparison and durable-save machinery. Existing URL-only Save contracts remain unchanged. An uncertain commit can replay only against its exact before/after task state; an intervening edit is retained and refused rather than overwritten.
 
 Validation: 269 distinct shared cases passed, with core typecheck, scoped lint, both native bundles and boot gates. The rebuilt bundle passed 65 native host attachment/editor-recovery tests on the Mac, with no skips. Independent review passed. This is shared infrastructure: full editor checkpoint correspondence, native Save lifecycle, file Remove and UI remain unfinished.
+
+### iOS owned private-stage retirement (2026-10-05)
+
+The shared Apple installer now offers a separate native-only retirement entry for recorded private stages. It checks the recorded managed root, private directory and stage identities, refuses replacements and hardlinks, and confirms parent-directory durability before acknowledging removal or an already-missing stage. It never recreates a missing root. The existing RN cleanup entry retains its behavior.
+
+Validation: 71 Apple package tests passed (32 new, 39 existing), no skips; the signed iPhone development build passed. Independent review passed. No phone installation or user-facing cleanup acceptance is claimed. Native lifecycle ownership and the latest shared live-reference check are still required before this primitive may delete draft files.
