@@ -8,7 +8,7 @@ By default this is a **stdio** server: MCP clients launch it as a subprocess and
 
 ## App Binaries vs. MCP Helper
 
-The next desktop release bundles an app-managed MCP server in **Settings → Integrations → MCP**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
+The desktop app bundles an app-managed MCP server in **Settings → Integrations → MCP**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
 
 You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`, or use the Local API backend below.
 
@@ -95,7 +95,7 @@ The npm package is read-only by default. Add `--write` only when you explicitly 
 
 ### Desktop Local API mode
 
-> This backend is included in the next MCP helper release. Until that package is published, build the helper from the repository and run `node apps/mcp-server/dist/cli.js` with the options below.
+> Requires mindwtr-mcp 1.1.11 or later.
 
 Enable the desktop app's **Local API** in Settings and copy its bearer token. Keep the app and API running. This backend uses the app's REST endpoints and never opens a database or falls back to SQLite.
 
@@ -267,7 +267,7 @@ mindwtr-mcp --db "/path/to/mindwtr.db"
 
 ### Desktop app toggle?
 
-The next desktop release has **Settings → Integrations → MCP**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
+The desktop app has **Settings → Integrations → MCP**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
 
 Enable **Allow changes** only to permit creating, editing, and deleting tasks and projects, including completing tasks. Connected AI clients can read exposed Mindwtr data and may send it to their provider. Keep the copied bearer token private; regenerating it disconnects old clients.
 
