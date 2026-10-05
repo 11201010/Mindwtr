@@ -30,6 +30,16 @@ export type PickedAttachmentOutcome =
     | { kind: 'refused'; message: string }
     | { kind: 'added'; attachment: Attachment };
 
+/** Complete pick metadata before persistence. Callers retain their own immutable copy;
+ * this preparation is not proof of durable ownership or of a successful file copy. */
+export type PreparedPickedAttachment = {
+    kind: 'prepared';
+    attachment: Readonly<Attachment>;
+};
+export type PickedAttachmentPreparation =
+    | { kind: 'refused'; message: string }
+    | PreparedPickedAttachment;
+
 /** A screen's download or open: the availability outcome, or `stale` when the screen moved on. */
 export type AttachmentResolution = AttachmentAvailabilityOutcome | { status: 'stale' };
 
@@ -102,17 +112,15 @@ export const resolveAttachmentValidationMessage = (error: string | undefined, t:
 };
 
 /**
- * A picked file or image, as React Native adds it: validated when the picker gave a size,
- * then copied into the managed attachments folder by `persist`. A copy that left the
- * attachment where it was is refused: the picked file could not be read.
+ * Prepare a picked file or image using React Native's metadata and validation policy.
+ * This does no file IO. The UUID and timestamps are generated only here, after validation.
  */
-export async function addPickedAttachment(input: {
+export async function preparePickedAttachment(input: {
     source: 'file' | 'image';
     asset: PickedAttachmentAsset;
     newId: () => string;
-    persist: (attachment: Attachment) => Promise<Attachment>;
     t: Translate;
-}): Promise<PickedAttachmentOutcome> {
+}): Promise<PickedAttachmentPreparation> {
     const { asset, source, t } = input;
     const title = source === 'file'
         ? asset.name || 'file'
@@ -147,9 +155,38 @@ export async function addPickedAttachment(input: {
         updatedAt: now,
         localStatus: 'available',
     };
+    return { kind: 'prepared', attachment };
+}
+
+/** Persist the prepared metadata without regenerating it. The platform receives a mutable
+ * copy so its changes cannot alter the caller's retained preparation. An unchanged URI
+ * retains React Native's refusal behavior; this result is not a durable copy receipt. */
+export async function persistPreparedPickedAttachment(input: {
+    prepared: PreparedPickedAttachment;
+    persist: (attachment: Attachment) => Promise<Attachment>;
+    t: Translate;
+}): Promise<PickedAttachmentOutcome> {
+    const { t } = input;
+    const attachment = { ...input.prepared.attachment };
     const cached = await input.persist(attachment);
     if (cached.uri === attachment.uri) return { kind: 'refused', message: t('attachments.fileNotReadable') };
     return { kind: 'added', attachment: cached };
+}
+
+/** A picked file or image, as React Native adds it: prepare metadata, then copy with
+ * `persist`. A copy that leaves the attachment where it was is refused. */
+export async function addPickedAttachment(input: {
+    source: 'file' | 'image';
+    asset: PickedAttachmentAsset;
+    newId: () => string;
+    persist: (attachment: Attachment) => Promise<Attachment>;
+    t: Translate;
+}): Promise<PickedAttachmentOutcome> {
+    const { t } = input;
+    const prepared = await preparePickedAttachment(input);
+    return prepared.kind === 'refused' ? prepared : persistPreparedPickedAttachment({
+        prepared, persist: input.persist, t,
+    });
 }
 
 /** The link field's text when editing `attachment`: "title | uri", or the uri alone. */

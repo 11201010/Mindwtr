@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppData, Attachment } from './types';
-import { createMobileAttachmentFiles, type MobileAttachmentFileSystemPort, type MobileAttachmentSafPort } from './mobile-attachment-files';
+import { createMobileAttachmentFiles, getManagedAttachmentFileName, type MobileAttachmentFileSystemPort, type MobileAttachmentSafPort } from './mobile-attachment-files';
 import { DropboxUnauthorizedError } from './dropbox';
 import { CLOUD_ALLOW_INSECURE_HTTP_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, SYNC_BACKEND_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY } from './sync-storage-keys';
 import { CACHE, createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGED } from './__fixtures__/mobile-attachment-fakes';
@@ -64,6 +64,65 @@ const documentWith = (attachments: Attachment[], settings: AppData['settings'] =
 });
 
 describe('mobile attachment files: storage home and safe writes', () => {
+  const namingCases = [
+    ['Report.PDF', 'file:///pick/photo.JPG', 'att-1.pdf'],
+    ['No extension', 'file:///pick/photo.JPG', 'att-1.jpg'],
+    ['', 'file:///pick/source', 'att-1'],
+    ['Report.PDF?download=1#part', 'file:///pick/photo.jpg', 'att-1.pdf'],
+    ['No extension', 'content://provider/source.TXT?download=1#part', 'att-1.txt'],
+    ['Résumé.ÉXT', 'file:///pick/source.bin', 'att-1.bin'],
+    ['照片.JpG', 'file:///pick/source.bin', 'att-1.jpg'],
+    ['.hidden', 'file:///pick/source.bin', 'att-1.hidden'],
+    ['file.', 'file:///pick/source', 'att-1'],
+    ['file..TXT', 'file:///pick/source', 'att-1.txt'],
+    ['file.12345678', 'file:///pick/source', 'att-1.12345678'],
+    ['file.123456789', 'file:///pick/source.gz', 'att-1.gz'],
+    ['folder.with.dot/name', 'file:///pick/source', 'att-1'],
+    ['C:\\folder\\name.DOCX', 'file:///pick/source', 'att-1.docx'],
+    ['file.PDF ', 'file:///pick/source.zip#fragment', 'att-1.zip'],
+  ];
+
+  it.each(namingCases)('uses the existing pure managed filename rule for %s and %s', (title, uri, expected) => {
+    const { memory } = setup();
+    expect(getManagedAttachmentFileName({ id: 'att-1', title, uri })).toBe(expected);
+    expect(memory.calls).toEqual([]);
+  });
+
+  it.each(namingCases)('persists with the same managed filename for %s and %s', async (title, uri, expected) => {
+    const { files, memory } = setup();
+    memory.put(uri, bytes(1, 2));
+    const picked = attachment({ title, uri });
+    const result = await files.persistAttachmentLocallyDetailed(picked);
+    expect(result.status).toBe('copied');
+    expect(result.attachment.uri).toBe(`${MANAGED}${expected}`);
+    expect(memory.read(`${MANAGED}${expected}`)).toEqual(bytes(1, 2));
+  });
+
+  it('keeps the source URI captured before directory setup while preserving later title and ID reads', async () => {
+    const source = 'content://provider/original.PDF';
+    const changed = 'content://provider/changed.JPG';
+    const picked = attachment({ title: 'No extension', uri: source });
+    let entered!: () => void;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const { files, memory } = setup({ fs: (fs) => ({
+      ...fs,
+      makeDirectory: async (uri) => { entered(); await held; await fs.makeDirectory(uri); },
+    }) });
+    memory.put(source, bytes(1, 2));
+    memory.put(changed, bytes(9));
+    const pending = files.persistAttachmentLocallyDetailed(picked);
+    await waiting;
+    Object.assign(picked, { uri: changed, id: 'later-id', title: 'Later title' });
+    release();
+    const result = await pending;
+    expect(result).toMatchObject({ status: 'copied', attachment: { id: 'later-id', title: 'Later title', uri: `${MANAGED}later-id.pdf` } });
+    expect(memory.read(`${MANAGED}later-id.pdf`)).toEqual(bytes(1, 2));
+    expect(memory.files.has(`${MANAGED}later-id.jpg`)).toBe(false);
+    expect(memory.calls.find((call) => call.startsWith('copy'))).toContain(`copy ${source} -> `);
+  });
+
   it('writes to a temp file beside the target and renames it into place', async () => {
     const { files, memory } = setup();
 

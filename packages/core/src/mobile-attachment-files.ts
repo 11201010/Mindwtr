@@ -41,6 +41,12 @@ export const FILE_BACKEND_VALIDATION_CONFIG = {
   blockedMimeTypes: [],
 };
 
+/** The existing managed filename policy only. This does not validate an ID/path or prove
+ * ownership, and callers must still authorize the directory and any file operation. */
+export const getManagedAttachmentFileName = (attachment: Pick<Attachment, 'id' | 'title' | 'uri'>): string => (
+  `${attachment.id}${extractExtension(attachment.title) || extractExtension(attachment.uri)}`
+);
+
 // A per-session count of permanent upload refusals (the mobile twin of desktop's
 // sync-attachment-validation.ts). A third first-upload refusal is terminal; a replacement
 // remains pending and suppresses further attempts for the same content identity.
@@ -723,8 +729,7 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
 
     if (canUploadAttachmentFrom(uri)) return { attachment, status: 'already-local' };
 
-    const ext = extractExtension(attachment.title) || extractExtension(uri);
-    const filename = `${attachment.id}${ext}`;
+    const filename = getManagedAttachmentFileName({ ...attachment, uri });
     const targetUri = `${attachmentsDir}${filename}`;
     try {
       logAttachmentInfo('Cache attachment start', {
