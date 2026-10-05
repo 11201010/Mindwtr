@@ -77,7 +77,7 @@ struct EditorDraftStore {
     }
 
     private func bytes() throws -> Data? {
-        let fd = open(url.path, O_RDONLY | O_NOFOLLOW)
+        let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if fd < 0 {
             if errno == ENOENT { return nil }
             if errno == ELOOP { throw EditorDraftStoreError.corrupt }
@@ -117,11 +117,20 @@ struct EditorDraftStore {
         return (stored.snapshot, stored.attempt)
     }
 
-    private func write(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws {
+    private func encodedBytes(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws -> Data {
         let value = StoredEditorDraft(snapshot: snapshot, attempt: attempt)
         try validate(value)
         let data = try JSONEncoder().encode(value)
         guard data.count <= Self.maxFile else { throw EditorDraftStoreError.corrupt }
+        return data
+    }
+
+    /// Pure validation and exact encoded-file capacity admission. The caller
+    /// separately reads the actual editor/attempt and retains its sidecar intent.
+    func preflightCheckpoint(_ snapshot: EditorDraftSnapshot) throws { _ = try encodedBytes(snapshot) }
+
+    private func write(_ snapshot: EditorDraftSnapshot, attempt: EditorDraftAttempt? = nil) throws {
+        let data = try encodedBytes(snapshot, attempt: attempt)
         try DurableFile.write(data, to: url, privateDraft: true)
     }
 
@@ -144,17 +153,36 @@ struct EditorDraftStore {
     /// Caller owns the durable operation intent; this store only compares the
     /// complete opaque checkpoint and performs its existing durable file write.
     func checkpointMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot) throws {
+        try checkpointMatching(before: before, after: after, mode: .add)
+    }
+
+    /// A retained v2 sidecar pair and shared projection proof belong to the
+    /// caller. This distinct exact CAS accepts safe generation gaps and confirms
+    /// durability by rewriting matched after, including after a lost write ack.
+    func checkpointOwnedAdvanceMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot) throws {
+        try checkpointMatching(before: before, after: after, mode: .ownedAdvance)
+    }
+
+    private enum ExactCheckpointMode { case add, ownedAdvance }
+    private func checkpointMatching(before: EditorDraftSnapshot, after: EditorDraftSnapshot,
+                                    mode: ExactCheckpointMode) throws {
         try validate(StoredEditorDraft(snapshot: before, attempt: nil))
         try validate(StoredEditorDraft(snapshot: after, attempt: nil))
         let next = before.generation.addingReportingOverflow(1)
-        guard !next.overflow, after.generation == next.partialValue,
+        let validGeneration = mode == .add ? !next.overflow && after.generation == next.partialValue
+            : before.generation <= 9_007_199_254_740_991 && after.generation <= 9_007_199_254_740_991
+                && after.generation > before.generation
+        guard validGeneration,
               before.sessionID == after.sessionID, before.taskID.utf8.elementsEqual(after.taskID.utf8) else {
             throw HostFailure("Editor draft checkpoint transition is invalid")
         }
         guard let current = try read(), current.attempt == nil else {
             throw HostFailure("Editor draft checkpoint is missing or pending")
         }
-        if matches(current.snapshot, after) { return }
+        if matches(current.snapshot, after) {
+            if mode == .ownedAdvance { try write(after) }
+            return
+        }
         guard matches(current.snapshot, before) else { throw HostFailure("Editor draft checkpoint changed") }
         try write(after)
     }

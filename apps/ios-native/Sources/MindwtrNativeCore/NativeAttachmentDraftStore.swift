@@ -44,26 +44,54 @@ struct NativeAttachmentDraftStore {
         let session: Session
         let operations: [Operation]
         let discard: Discard?
-        init(version: Int = 1, session: Session, operations: [Operation], discard: Discard? = nil) {
+        let checkpointAdvance: CheckpointAdvance?
+        init(version: Int = 1, session: Session, operations: [Operation], discard: Discard? = nil,
+             checkpointAdvance: CheckpointAdvance? = nil) {
             self.version = version
             self.session = session
             self.operations = operations
             self.discard = discard
+            self.checkpointAdvance = checkpointAdvance
         }
-        private enum CodingKeys: String, CodingKey, CaseIterable { case version, session, operations, discard }
+        private enum CodingKeys: String, CodingKey { case version, session, operations, discard, checkpointAdvance }
         init(from decoder: Decoder) throws {
-            let c = try NativeAttachmentDraftStore.container(CodingKeys.self, from: decoder)
+            let c = try decoder.container(keyedBy: CodingKeys.self)
             version = try c.decode(Int.self, forKey: .version)
+            let fields = try decoder.container(keyedBy: Field.self)
+            var expected: Set<String> = ["version", "session", "operations", "discard"]
+            if version == 2 { expected.insert("checkpointAdvance") }
+            try NativeAttachmentDraftStore.require((version == 1 || version == 2)
+                && Set(fields.allKeys.map(\.stringValue)) == expected)
             session = try c.decode(Session.self, forKey: .session)
             operations = try c.decode([Operation].self, forKey: .operations)
             discard = try c.decodeIfPresent(Discard.self, forKey: .discard)
+            checkpointAdvance = version == 2 ? try c.decodeIfPresent(CheckpointAdvance.self, forKey: .checkpointAdvance) : nil
         }
         func encode(to encoder: Encoder) throws {
+            try NativeAttachmentDraftStore.require(version == 2 || (version == 1 && checkpointAdvance == nil))
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(version, forKey: .version)
             try c.encode(session, forKey: .session)
             try c.encode(operations, forKey: .operations)
             try c.encode(discard, forKey: .discard)
+            if version == 2 { try c.encode(checkpointAdvance, forKey: .checkpointAdvance) }
+        }
+    }
+
+    /// Retains the exact old/new editor evidence until the separate editor CAS
+    /// and its durability are acknowledged. Projection continuity is not owned here.
+    struct CheckpointAdvance: Codable, Sendable, Equatable {
+        let before: EditorDraftSnapshot
+        let after: EditorDraftSnapshot
+        init(before: EditorDraftSnapshot, after: EditorDraftSnapshot) {
+            self.before = before
+            self.after = after
+        }
+        private enum CodingKeys: String, CodingKey, CaseIterable { case before, after }
+        init(from decoder: Decoder) throws {
+            let c = try NativeAttachmentDraftStore.container(CodingKeys.self, from: decoder)
+            before = try NativeAttachmentDraftStore.snapshot(c, forKey: .before)
+            after = try NativeAttachmentDraftStore.snapshot(c, forKey: .after)
         }
     }
 
@@ -325,9 +353,10 @@ struct NativeAttachmentDraftStore {
               path.hasPrefix("/"), !path.utf8.contains(0) else { return false }
         return !path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." })
     }
-    private static func valid(_ snapshot: EditorDraftSnapshot) -> Bool {
+    private static func valid(_ snapshot: EditorDraftSnapshot, safeGeneration: Bool = false) -> Bool {
         snapshot.version == 1 && uuid(snapshot.sessionID) && !snapshot.taskID.isEmpty
             && snapshot.taskID.utf8.count <= 500 && snapshot.generation > 0
+            && (!safeGeneration || snapshot.generation <= 9_007_199_254_740_991)
             && object(snapshot.payloadJSON, limit: 1_000_000)
     }
     private static func require(_ condition: Bool) throws {
@@ -336,8 +365,10 @@ struct NativeAttachmentDraftStore {
 
     private static func validate(_ record: Record) throws {
         let session = record.session
-        try require(record.version == 1 && uuid(session.sessionID) && !session.taskID.isEmpty
-                    && session.taskID.utf8.count <= 500 && valid(session.checkpoint)
+        let v2 = record.version == 2
+        try require((record.version == 1 || v2) && (v2 || record.checkpointAdvance == nil)
+                    && uuid(session.sessionID) && !session.taskID.isEmpty
+                    && session.taskID.utf8.count <= 500 && valid(session.checkpoint, safeGeneration: v2)
                     && equal(session.checkpoint.sessionID, session.sessionID)
                     && equal(session.checkpoint.taskID, session.taskID) && record.operations.count <= 128)
         var ids = Set<String>()
@@ -359,13 +390,17 @@ struct NativeAttachmentDraftStore {
             let next = op.before.generation.addingReportingOverflow(1)
             try require(uuid(op.requestId) && ids.insert(op.requestId).inserted
                         && object(op.requestJSON, limit: 64 * 1024) && object(op.preparedJSON, limit: 2 * 1024 * 1024)
-                        && valid(op.before) && valid(op.after) && !next.overflow && op.after.generation == next.partialValue
+                        && valid(op.before, safeGeneration: v2) && valid(op.after, safeGeneration: v2)
+                        && !next.overflow && op.after.generation == next.partialValue
                         && equal(op.before.sessionID, session.sessionID) && equal(op.after.sessionID, session.sessionID)
                         && equal(op.before.taskID, session.taskID) && equal(op.after.taskID, session.taskID)
                         && uri(op.targetURI) && uri(op.source.sourceURI) && digest(op.source.sha256)
                         && size(op.source.size) && identity(op.source.identity)
                         && identity(op.source.cacheRootIdentity) && identity(op.source.parentIdentity))
-            if let prior { try require(same(op.before, prior)) }
+            if let prior {
+                try require(v2 ? op.before.generation >= prior.generation
+                    && (op.before.generation != prior.generation || same(op.before, prior)) : same(op.before, prior))
+            }
             if index < record.operations.count - 1 { try require(op.phase == .checkpointed && op.reason == nil) }
             if op.phase == .checkpointed { try require(op.reason == nil) }
             try require((op.stage != nil) == (op.phase.rank >= Phase.stagePrepared.rank)
@@ -396,12 +431,23 @@ struct NativeAttachmentDraftStore {
             prior = op.after
         }
         if let last = record.operations.last {
-            try require(same(session.checkpoint, last.phase == .checkpointed ? last.after : last.before))
+            if v2 && last.phase == .checkpointed {
+                try require(session.checkpoint.generation >= last.after.generation
+                    && (session.checkpoint.generation != last.after.generation || same(session.checkpoint, last.after)))
+            } else { try require(same(session.checkpoint, last.phase == .checkpointed ? last.after : last.before)) }
+        }
+        if let advance = record.checkpointAdvance {
+            try require(v2 && session.state == .active && record.discard == nil
+                && record.operations.allSatisfy { $0.phase == .checkpointed }
+                && valid(advance.before, safeGeneration: true) && valid(advance.after, safeGeneration: true)
+                && same(session.checkpoint, advance.before) && advance.after.generation > advance.before.generation
+                && equal(advance.after.sessionID, session.sessionID) && equal(advance.after.taskID, session.taskID))
+            try accountSnapshot(advance.before); try accountSnapshot(advance.after)
         }
         try require((session.state == .cleanupPending) == (record.discard != nil))
         if let discard = record.discard {
             try require(uuid(discard.requestId) && ids.insert(discard.requestId).inserted
-                        && object(discard.requestJSON, limit: 64 * 1024) && valid(discard.expected)
+                        && object(discard.requestJSON, limit: 64 * 1024) && valid(discard.expected, safeGeneration: v2)
                         && same(discard.expected, session.checkpoint)
                         && (discard.replyJSON != nil) == (discard.phase == .detached))
             try account([discard.requestId, discard.requestJSON]); try accountSnapshot(discard.expected)
@@ -413,11 +459,52 @@ struct NativeAttachmentDraftStore {
         a == b && equal(a.sourceURI, b.sourceURI)
     }
     private static func sameStage(_ a: Stage, _ b: Stage) -> Bool { a == b && equal(a.uri, b.uri) }
+    private static func sameOptionalString(_ a: String?, _ b: String?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case (let a?, let b?): return equal(a, b)
+        default: return false
+        }
+    }
+    private static func sameOperation(_ a: Operation, _ b: Operation) -> Bool {
+        let stageMatches: Bool
+        switch (a.stage, b.stage) {
+        case (nil, nil): stageMatches = true
+        case (let a?, let b?): stageMatches = sameStage(a, b)
+        default: stageMatches = false
+        }
+        return equal(a.requestId, b.requestId) && equal(a.requestJSON, b.requestJSON)
+            && a.phase == b.phase && a.reason == b.reason && same(a.before, b.before) && same(a.after, b.after)
+            && equal(a.preparedJSON, b.preparedJSON) && equal(a.targetURI, b.targetURI) && sameSource(a.source, b.source)
+            && stageMatches && a.filled == b.filled && a.published == b.published && sameOptionalString(a.replyJSON, b.replyJSON)
+    }
+    private static func retainedAdvance(_ previous: Record, in current: Record) throws {
+        try require(previous.session.state == .active && current.session.state == .active
+            && previous.discard == nil && current.discard == nil
+            && previous.operations.count == current.operations.count
+            && zip(previous.operations, current.operations).allSatisfy { sameOperation($0.0, $0.1) })
+        switch (previous.checkpointAdvance, current.checkpointAdvance) {
+        case (nil, let next?):
+            try require(same(previous.session.checkpoint, current.session.checkpoint)
+                && same(next.before, previous.session.checkpoint))
+        case (let old?, let next?):
+            try require(same(old.before, next.before) && same(old.after, next.after)
+                && same(previous.session.checkpoint, current.session.checkpoint))
+        case (let old?, nil):
+            try require(same(current.session.checkpoint, old.after))
+        case (nil, nil): throw NativeAttachmentDraftStoreError.corrupt
+        }
+    }
     private static func retained(_ previous: Record, in current: Record) throws {
-        try require(equal(previous.session.sessionID, current.session.sessionID)
+        try require(previous.version == current.version
+                    && equal(previous.session.sessionID, current.session.sessionID)
                     && equal(previous.session.taskID, current.session.taskID)
                     && current.operations.count >= previous.operations.count
                     && current.operations.count <= previous.operations.count + 1)
+        if previous.version == 2 && (previous.checkpointAdvance != nil || current.checkpointAdvance != nil) {
+            try retainedAdvance(previous, in: current)
+            return
+        }
         for (old, new) in zip(previous.operations, current.operations) {
             try require(old.requestId == new.requestId && equal(old.requestJSON, new.requestJSON)
                         && same(old.before, new.before) && same(old.after, new.after)
@@ -435,6 +522,14 @@ struct NativeAttachmentDraftStore {
             try require(same(current.operations[previous.operations.count].before, previous.session.checkpoint))
         } else if previous.operations.isEmpty {
             try require(same(previous.session.checkpoint, current.session.checkpoint))
+        }
+        if previous.version == 2 && !same(previous.session.checkpoint, current.session.checkpoint) {
+            guard previous.operations.count == current.operations.count,
+                  let old = previous.operations.last, let new = current.operations.last else {
+                throw NativeAttachmentDraftStoreError.corrupt
+            }
+            try require(old.phase != .checkpointed && new.phase == .checkpointed
+                && same(current.session.checkpoint, new.after))
         }
         if let old = previous.discard {
             guard let new = current.discard else { throw NativeAttachmentDraftStoreError.corrupt }
@@ -477,7 +572,12 @@ struct NativeAttachmentDraftStore {
         } catch { throw NativeAttachmentDraftStoreError.corrupt }
     }
 
-    func write(_ record: Record) throws {
+    /// Same complete encoded/retained-record admission as write, without mutation.
+    /// A future owner must separately prove shared v2 attachment continuity and
+    /// the exact editor file under the library lock before beginning an advance.
+    func preflight(_ record: Record) throws { _ = try encodedForWrite(record) }
+
+    private func encodedForWrite(_ record: Record) throws -> Data {
         let previous = try read() // Corrupt evidence must never be replaced.
         try Self.validate(record)
         if let previous { try Self.retained(previous, in: record) }
@@ -485,6 +585,11 @@ struct NativeAttachmentDraftStore {
         do { data = try JSONEncoder().encode(record) }
         catch { throw NativeAttachmentDraftStoreError.corrupt }
         guard data.count <= Self.maximumBytes else { throw NativeAttachmentDraftStoreError.corrupt }
+        return data
+    }
+
+    func write(_ record: Record) throws {
+        let data = try encodedForWrite(record)
         do { try DurableFile.write(data, to: url, privateDraft: true) }
         catch { throw NativeAttachmentDraftStoreError.io }
     }
