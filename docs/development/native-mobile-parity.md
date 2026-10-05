@@ -1748,3 +1748,9 @@ Validation: 71 Apple package tests passed (32 new, 39 existing), no skips; the s
 Recorded publication and private-stage retirement now run through the native attachment FIFO with bounded proof inputs and isolated typed replies. Cancellation before work preserves bytes; after deletion begins the operation finishes and reports its actual durability outcome. Raw JavaScript file APIs remain unchanged.
 
 Validation: 93 native Mac tests passed with no skips, including 25 new queue cases; signed iPhone development build and independent review passed. These internal jobs remain unbound: the coordinator must still retain a durable cleanup decision and check current shared live references before using them. No new phone UI behavior is claimed.
+
+### iOS attachment history between editor checkpoints (2026-10-05)
+
+A separate shared version2 history path permits ordinary editor changes between frozen file additions while requiring unchanged attachment baselines and ordered attachment lists. Each addition retains its original complete metadata and before/after payloads. Version1 keeps its exact checkpoint chain; neither API admits file removal through this change. Native filesystem ownership and full Save admission remain separate checks.
+
+Validation: 142 shared cases passed (111 existing, 31 new), with typecheck, scoped lint, both bundles and boot gates. The rebuilt bundle passed 65 native attachment/editor-recovery regression tests with no skips. Independent review passed. Native version2 checkpoint routing and the file UI remain unfinished.

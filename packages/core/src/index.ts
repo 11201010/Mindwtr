@@ -340,6 +340,7 @@ export type { NativeReferenceTasksRemoveTagRequest, NativeReferenceTasksRemoveTa
     NativeReferenceTasksRemoveTagResult, NativeReferenceTasksRemoveTagPreparation } from './native-host-contract-reference-bulk-remove-tag';
 
 export { validateNativeAttachmentDraftBegin, validateNativeAttachmentDraftLineage, prepareNativeAttachmentDraftAdd,
-    completeNativeAttachmentDraftAdd } from './native-attachment-draft';
+    completeNativeAttachmentDraftAdd, validateNativeAttachmentDraftBeginV2, validateNativeAttachmentDraftLineageV2,
+    prepareNativeAttachmentDraftAddV2 } from './native-attachment-draft';
 
 export type { OwnedFileAddSaveRequest, PreparedOwnedFileAddSave } from './native-host-contract-owned-file-save';

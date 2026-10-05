@@ -35,6 +35,9 @@ export type NativeAttachmentDraftPrepareInput = NativeAttachmentDraftLineageInpu
     requestId: string;
     picked: NativeAttachmentDraftPicked; measuredSize: number;
 };
+export type NativeAttachmentDraftLineageInputV2 = Omit<NativeAttachmentDraftLineageInput, 'version'> & { version: 2 };
+export type NativeAttachmentDraftPrepareInputV2 = Omit<NativeAttachmentDraftPrepareInput, 'version'> & { version: 2 };
+export type NativeAttachmentDraftLineageV2 = Omit<NativeAttachmentDraftLineage, 'version'> & { version: 2 };
 export type NativeAttachmentDraftRefusal = { kind: 'refused'; message: string };
 export type NativeAttachmentDraftCompleteInput = { prepared: NativeAttachmentDraftPrepared };
 export type NativeAttachmentDraftAdded = Readonly<{
@@ -194,24 +197,29 @@ const validateFrozen = (value: NativeAttachmentDraftPrepared): void => {
         || !same(after.object, { ...before.object, attachments: [...before.attachments, value.attachment] })) invalid();
 };
 
-const captureLineage = (object: Record<string, unknown>, additionalFields: object = {}): NativeAttachmentDraftLineageInput => {
-    if (object.version !== 1 || !Array.isArray(object.priorAdditions) || object.priorAdditions.length > 128) invalid();
-    const captured = { version: 1 as const, taskID: text(object.taskID, 500, true),
+type CapturedLineage = Omit<NativeAttachmentDraftLineageInput, 'version'> & { version: 1 | 2 };
+const captureLineage = (object: Record<string, unknown>, additionalFields: object = {}, version: 1 | 2 = 1): CapturedLineage => {
+    if (object.version !== version || !Array.isArray(object.priorAdditions) || object.priorAdditions.length > 128) invalid();
+    const additions = object.priorAdditions as unknown[];
+    if (Reflect.ownKeys(additions).length !== additions.length + 1) invalid();
+    const captured = { version, taskID: text(object.taskID, 500, true),
         initialPayloadJSON: text(object.initialPayloadJSON, PAYLOAD_BYTES, true),
         beforePayloadJSON: text(object.beforePayloadJSON, PAYLOAD_BYTES, true), priorAdditions: [] as NativeAttachmentDraftPrepared[],
         managedDirectoryURI: fileURI(object.managedDirectoryURI, true) };
     // Bound each record before measuring the aggregate. Prepare supplies its
     // already bounded new-operation fields so the same 8 MiB total applies.
     let encodedBytes = jsonBytes({ ...captured, ...additionalFields }, PREPARE_BYTES);
-    for (const prior of object.priorAdditions as unknown[]) {
-        const copy = frozenShape(prior);
+    for (let index = 0; index < additions.length; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(additions, String(index));
+        if (!descriptor?.enumerable || !own(descriptor, 'value')) invalid();
+        const copy = frozenShape(descriptor!.value);
         encodedBytes += jsonBytes(copy, PREPARED_BYTES) + (captured.priorAdditions.length ? 1 : 0);
         if (encodedBytes > PREPARE_BYTES) invalid();
         captured.priorAdditions.push(copy);
     }
     return captured;
 };
-const validateLineage = (captured: NativeAttachmentDraftLineageInput): Set<string> => {
+const validateLineage = (captured: CapturedLineage): Set<string> => {
     initialPayload(captured.initialPayloadJSON, captured.taskID);
     let previous = captured.initialPayloadJSON;
     const ids = new Set<string>();
@@ -225,12 +233,42 @@ const validateLineage = (captured: NativeAttachmentDraftLineageInput): Set<strin
     return ids;
 };
 
+// Only the v2 entry points select projection continuity. Every operation still
+// retains its complete frozen before/after bytes; ordinary editor changes
+// between operations grant neither Save permission nor filesystem authority.
+const validateLineageV2 = (captured: CapturedLineage): Set<string> => {
+    initialPayload(captured.initialPayloadJSON, captured.taskID);
+    const initial = payload(captured.initialPayloadJSON, captured.taskID);
+    if (!same(initial.object.attachmentsBase, initial.attachments)) invalid();
+    let previous = initial.attachments;
+    const ids = new Set<string>();
+    for (const prior of captured.priorAdditions) {
+        validateFrozen(prior);
+        const before = payload(prior.beforePayloadJSON, captured.taskID);
+        if (prior.taskID !== captured.taskID || prior.managedDirectoryURI !== captured.managedDirectoryURI
+            || ids.has(prior.requestId) || !same(before.object.attachmentsBase, initial.object.attachmentsBase)
+            || !same(before.attachments, previous)) invalid();
+        ids.add(prior.requestId);
+        previous = payload(prior.afterPayloadJSON, captured.taskID).attachments;
+    }
+    const latest = payload(captured.beforePayloadJSON, captured.taskID);
+    if (!same(latest.object.attachmentsBase, initial.object.attachmentsBase) || !same(latest.attachments, previous)) invalid();
+    return ids;
+};
+
 /** Validate retained Add history, including on Discard of a now-readonly task. */
 export function validateNativeAttachmentDraftLineage(input: unknown): NativeAttachmentDraftLineage {
     if (!exact(input, ['version', 'taskID', 'initialPayloadJSON', 'beforePayloadJSON', 'priorAdditions', 'managedDirectoryURI'])) invalid();
     const captured = captureLineage(input as Record<string, unknown>);
     validateLineage(captured);
     return Object.freeze({ version: 1, taskID: captured.taskID, payloadJSON: captured.beforePayloadJSON });
+}
+
+export function validateNativeAttachmentDraftLineageV2(input: unknown): NativeAttachmentDraftLineageV2 {
+    if (!exact(input, ['version', 'taskID', 'initialPayloadJSON', 'beforePayloadJSON', 'priorAdditions', 'managedDirectoryURI'])) invalid();
+    const captured = captureLineage(input as Record<string, unknown>, {}, 2);
+    validateLineageV2(captured);
+    return Object.freeze({ version: 2, taskID: captured.taskID, payloadJSON: captured.beforePayloadJSON });
 }
 
 export function validateNativeAttachmentDraftBegin(input: unknown, deps: NativeAttachmentDraftDependencies): NativeAttachmentDraftBegin {
@@ -242,14 +280,35 @@ export function validateNativeAttachmentDraftBegin(input: unknown, deps: NativeA
     return Object.freeze({ version: 1, taskID, payloadJSON });
 }
 
+export function validateNativeAttachmentDraftBeginV2(input: unknown, deps: NativeAttachmentDraftDependencies): NativeAttachmentDraftLineageV2 {
+    if (!exact(input, ['taskID', 'payloadJSON'])) invalid();
+    const object = input as Record<string, unknown>;
+    const taskID = text(object.taskID, 500, true), payloadJSON = text(object.payloadJSON, PAYLOAD_BYTES, true);
+    initialPayload(payloadJSON, taskID);
+    const initial = payload(payloadJSON, taskID);
+    if (!same(initial.object.attachmentsBase, initial.attachments)) invalid();
+    deps.assertEditable(taskID);
+    return Object.freeze({ version: 2, taskID, payloadJSON });
+}
+
 export async function prepareNativeAttachmentDraftAdd(input: unknown, deps: NativeAttachmentDraftDependencies):
+Promise<NativeAttachmentDraftPrepared | NativeAttachmentDraftRefusal> {
+    return prepareDraftAdd(input, deps, 1);
+}
+
+export async function prepareNativeAttachmentDraftAddV2(input: unknown, deps: NativeAttachmentDraftDependencies):
+Promise<NativeAttachmentDraftPrepared | NativeAttachmentDraftRefusal> {
+    return prepareDraftAdd(input, deps, 2);
+}
+
+async function prepareDraftAdd(input: unknown, deps: NativeAttachmentDraftDependencies, version: 1 | 2):
 Promise<NativeAttachmentDraftPrepared | NativeAttachmentDraftRefusal> {
     if (!exact(input, ['version', 'taskID', 'initialPayloadJSON', 'beforePayloadJSON', 'priorAdditions',
         'requestId', 'picked', 'measuredSize', 'managedDirectoryURI'])) invalid();
     const object = input as Record<string, unknown>;
     const additionalFields = { requestId: requestID(object.requestId), picked: picked(object.picked), measuredSize: size(object.measuredSize) };
-    const captured = { ...captureLineage(object, additionalFields), ...additionalFields };
-    if (validateLineage(captured).has(captured.requestId)) invalid();
+    const captured = { ...captureLineage(object, additionalFields, version), ...additionalFields };
+    if ((version === 1 ? validateLineage(captured) : validateLineageV2(captured)).has(captured.requestId)) invalid();
     const before = payload(captured.beforePayloadJSON, captured.taskID);
     if (before.attachments.length >= 1_000 || before.attachments.some((item) => item.id === captured.requestId)) invalid();
     const { assertEditable, t } = deps;
