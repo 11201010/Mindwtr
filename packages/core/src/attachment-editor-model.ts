@@ -185,7 +185,7 @@ export async function addPickedAttachment(input: {
     const { t } = input;
     const prepared = await preparePickedAttachment(input);
     return prepared.kind === 'refused' ? prepared : persistPreparedPickedAttachment({
-        prepared, persist: input.persist, t,
+        prepared, persist: (attachment) => input.persist(attachment), t,
     });
 }
 

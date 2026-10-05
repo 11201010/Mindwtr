@@ -167,6 +167,19 @@ describe('picked attachment preparation and persistence', () => {
         expect(persist).not.toHaveBeenCalled();
     });
 
+    it('keeps the original Add input as the persistence callback receiver', async () => {
+        const input = {
+            source: 'file' as const, asset: { uri: 'file:///pick/source' }, newId: () => 'id', t,
+            persist: async function (this: unknown, attachment: Attachment) {
+                expect(this).toBe(input);
+                return { ...attachment, uri: 'file:///managed/id' };
+            },
+        };
+        await expect(addPickedAttachment(input)).resolves.toMatchObject({
+            kind: 'added', attachment: { id: 'id', uri: 'file:///managed/id' },
+        });
+    });
+
     it('keeps the translator captured before awaiting picker validation', async () => {
         const newId = vi.fn(() => 'id');
         const original = vi.fn((key: string) => `original:${key}`);
