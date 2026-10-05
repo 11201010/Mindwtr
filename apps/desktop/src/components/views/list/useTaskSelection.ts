@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     buildBulkOrganizeTaskUpdates,
     buildBulkTaskTokenUpdates,
+    buildTaskMovePatch,
     updateRangeSelection,
     type BulkOrganizeTaskUpdateInput,
     type RangeSelectionOptions,
     type Task,
     type TaskEnergyLevel,
+    type TaskMoveDestination,
     type TaskStatus,
 } from '@mindwtr/core';
 import { reportError } from '../../../lib/report-error';
@@ -268,6 +270,14 @@ export function useTaskSelection(
         );
     }, [batchUpdateTasks, runSelectedTaskAction]);
 
+    const moveSelectedTasksToDestination = useCallback((destination: TaskMoveDestination) => {
+        if (!tasksById) return Promise.resolve(false);
+        return updateSelectedTasks((taskIds) => taskIds.flatMap((id) => {
+            const task = tasksById instanceof Map ? tasksById.get(id) : tasksById[id];
+            return task ? [{ id, updates: buildTaskMovePatch(destination, task) }] : [];
+        }));
+    }, [tasksById, updateSelectedTasks]);
+
     const assignAreaToSelectedTasks = useCallback((areaId: string | null) => (
         updateSelectedTasks((taskIds) => taskIds.map((id) => ({
             id,
@@ -331,6 +341,7 @@ export function useTaskSelection(
         isExporting,
         multiSelectedIds,
         moveSelectedTasks,
+        moveSelectedTasksToDestination,
         organizeSelectedTasks,
         runSelectedTaskAction,
         selectedIdsArray,

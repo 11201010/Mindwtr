@@ -787,7 +787,7 @@ export function ProjectWorkspace({
     const {
         activeAction,
         allVisibleTasksSelected,
-        assignAreaToSelectedTasks,
+        moveSelectedTasksToDestination,
         clearTaskSelection,
         deleteSelectedTasks,
         exitSelectionMode: exitTaskSelectionMode,
@@ -812,12 +812,6 @@ export function ProjectWorkspace({
         tasksById,
         undoNotificationsEnabled,
     });
-    const bulkAreaOptions = useMemo(
-        () => sortedAreas
-            .filter((area) => !area.deletedAt)
-            .map((area) => ({ id: area.id, name: area.name })),
-        [sortedAreas],
-    );
     const addTagOptions = useMemo(
         () => allTokens.filter((token) => token.startsWith('#')),
         [allTokens],
@@ -850,10 +844,10 @@ export function ProjectWorkspace({
         return moveSelectedTasks(...args);
     }, [getMutableSelectedProject, moveSelectedTasks]);
 
-    const handleBatchAssignArea = useCallback((...args: Parameters<typeof assignAreaToSelectedTasks>) => {
+    const handleBatchMoveToDestination = useCallback((...args: Parameters<typeof moveSelectedTasksToDestination>) => {
         if (!getMutableSelectedProject()) return;
-        return assignAreaToSelectedTasks(...args);
-    }, [assignAreaToSelectedTasks, getMutableSelectedProject]);
+        return moveSelectedTasksToDestination(...args);
+    }, [moveSelectedTasksToDestination, getMutableSelectedProject]);
 
     const handleApplyTaskBulkOrganize = useCallback(async (input: BulkOrganizeTaskUpdateInput) => {
         if (!getMutableSelectedProject()) return;
@@ -1923,8 +1917,9 @@ export function ProjectWorkspace({
                                                 <ListBulkActions
                                                     selectionCount={selectedIdsArray.length}
                                                     onMoveToStatus={handleBatchMove}
-                                                    onAssignArea={handleBatchAssignArea}
-                                                    areaOptions={bulkAreaOptions}
+                                                    onMoveToDestination={handleBatchMoveToDestination}
+                                                    projects={projects}
+                                                    areas={areas}
                                                     onBulkOrganize={() => setBulkOrganizeOpen(true)}
                                                     onAddTag={() => handleBatchTokenPick('tags', 'add')}
                                                     onRemoveTag={() => handleBatchTokenPick('tags', 'remove')}

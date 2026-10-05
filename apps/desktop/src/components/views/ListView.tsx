@@ -5,7 +5,6 @@ import { buildProjectOrderMap,
     buildProjectViewSectionUpdate,
     buildQuickAddParseOptions,
     buildQuickAddPreviewEntries,
-    compareAreasByOrder,
     compareTasksByProjectThenOrder,
     createReferenceSearchPredicate,
     createTaskFilterPredicate,
@@ -845,7 +844,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
         contextPromptOpen,
         handleBatchAddContext,
         handleBatchAddTag,
-        handleBatchAssignArea,
+        handleBatchMoveToDestination,
         handleBatchDelete,
         handleBatchMove,
         handleBatchRemoveContext,
@@ -988,9 +987,6 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
             ? undefined
             : formatI18nTemplate(tFallback(t, 'viewSections.addTask', 'Add task to {section}'), { section: group.title })
     ), [t]);
-    const bulkAreaOptions = [...areas]
-        .sort(compareAreasByOrder)
-        .map((area) => ({ id: area.id, name: area.name }));
     const handleApplyTaskBulkOrganize = useCallback(async (input: BulkOrganizeTaskUpdateInput) => {
         const selectedCount = selectedIdsArray.length;
         await organizeSelectedTasks(input, {
@@ -1319,8 +1315,9 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                     onMoveToSomedaySection={statusFilter === 'someday'
                                         ? () => setSomedayMoveTargetIds([...selectedIdsArray])
                                         : undefined}
-                                    onAssignArea={handleBatchAssignArea}
-                                    areaOptions={bulkAreaOptions}
+                                    onMoveToDestination={handleBatchMoveToDestination}
+                                    projects={projects}
+                                    areas={areas}
                                     onBulkOrganize={() => setBulkOrganizeOpen(true)}
                                     onAddTag={handleBatchAddTag}
                                     onRemoveTag={handleBatchRemoveTag}

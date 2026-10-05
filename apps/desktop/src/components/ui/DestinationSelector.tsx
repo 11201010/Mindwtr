@@ -16,7 +16,8 @@ import { useDropdownPosition } from './use-dropdown-position';
 type DestinationSelectorProps = {
     projects: Project[];
     areas: Area[];
-    value: TaskMoveDestination;
+    /** Null presents an action picker without implying a current assignment. */
+    value: TaskMoveDestination | null;
     onChange: (value: TaskMoveDestination) => void;
     onCreateProject?: (title: string) => Promise<string | null>;
     onCreateArea?: (name: string) => Promise<string | null>;
@@ -100,13 +101,13 @@ export function DestinationSelector({
                 : sortedAreas,
         [normalizedQuery, showAreas, sortedAreas],
     );
-    const selectedProject = value.kind === 'project'
+    const selectedProject = value?.kind === 'project'
         ? projects.find((project) => project.id === value.id)
         : undefined;
-    const selectedArea = value.kind === 'area'
+    const selectedArea = value?.kind === 'area'
         ? areas.find((area) => area.id === value.id)
         : undefined;
-    const selectedLabel = selectedProject?.title ?? selectedArea?.name ?? noneLabel;
+    const selectedLabel = value === null ? destinationLabel : selectedProject?.title ?? selectedArea?.name ?? noneLabel;
 
     useEffect(() => {
         mountedRef.current = true;
@@ -227,7 +228,7 @@ export function DestinationSelector({
         selection: TaskMoveDestination,
         icon: typeof Folder,
     ) => {
-        const selected = selection.kind === value.kind
+        const selected = value !== null && selection.kind === value.kind
             && (selection.kind === 'none' || selection.id === (value.kind === 'none' ? undefined : value.id));
         const Icon = icon;
         return (
