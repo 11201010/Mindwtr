@@ -341,3 +341,5 @@ export type { NativeReferenceTasksRemoveTagRequest, NativeReferenceTasksRemoveTa
 
 export { validateNativeAttachmentDraftBegin, validateNativeAttachmentDraftLineage, prepareNativeAttachmentDraftAdd,
     completeNativeAttachmentDraftAdd } from './native-attachment-draft';
+
+export type { OwnedFileAddSaveRequest, PreparedOwnedFileAddSave } from './native-host-contract-owned-file-save';

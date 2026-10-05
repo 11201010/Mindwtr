@@ -306,10 +306,11 @@ const scopeRows = (scope: NativePreparedTaskDraftSaveV2['scope']) => ({
 });
 
 const draftSaveEffect = (before: Task, request: NativeTaskDraftSaveRequest,
-    scope: NativePreparedTaskDraftSaveV2['scope'], preparedAt: string, deviceId: string): Task | null => {
+    scope: NativePreparedTaskDraftSaveV2['scope'], preparedAt: string, deviceId: string,
+    mergeAttachments = mergeNativeTaskLinkHalf): Task | null => {
     if (!validNativeTaskDraftBases(before, request, true)) return null;
     const attachments = request.attachments
-        ? mergeNativeTaskLinkHalf(before.attachments ?? [], request.attachments) : before.attachments;
+        ? mergeAttachments(before.attachments ?? [], request.attachments) : before.attachments;
     if (attachments === null) return null;
     const rows = scopeRows(scope);
     const draft = applyTaskDraftPatch(createTaskDraft(before), nativeTaskDraftPatchValues(request));
@@ -360,13 +361,24 @@ const draftSaveEffect = (before: Task, request: NativeTaskDraftSaveRequest,
     return { ...unstamped, updatedAt: preparedAt, rev: nextRevision(before.rev), revBy: deviceId };
 };
 
-export function createTaskDraftSaveMethods(deps: {
+export type NativeTaskDraftSaveDependencies = {
     readiness: () => NativeHostResult<null>;
     save: () => Promise<NativeHostResult<null>>;
     validateField: (field: TaskDraftField, value: unknown) => boolean;
-}) {
+};
+type TaskDraftAttachmentStrategy = {
+    readRequest: (input: unknown) => NativeTaskDraftSaveRequest | null;
+    mergeAttachments: typeof mergeNativeTaskLinkHalf;
+    detachPrepared: (input: unknown) => unknown;
+};
+
+// Only factory code selects this strategy. Legacy contract entry points never
+// accept a strategy, a caller permission flag, or a file-aware journal version.
+function createTaskDraftSaveFactory(deps: NativeTaskDraftSaveDependencies, strategy?: TaskDraftAttachmentStrategy) {
+    const mergeAttachments = strategy?.mergeAttachments ?? mergeNativeTaskLinkHalf;
     const patchValues = nativeTaskDraftPatchValues;
     const readRequest = (input: unknown, allowPlain = false, allowAttachments = false) => {
+        if (strategy) return strategy.readRequest(input);
         const request = readNativeTaskDraftSaveRequest(input, deps.validateField, false, allowPlain, allowAttachments);
         // V1 was sealed before Location and Assigned To were offered. Checklist
         // has its own parser, but old prepared journal grammar must not widen.
@@ -391,7 +403,7 @@ export function createTaskDraftSaveMethods(deps: {
         if (!direct) return false;
         if (allowAttachments) {
             const attachments = request.attachments
-                ? mergeNativeTaskLinkHalf(before.attachments ?? [], request.attachments) : before.attachments;
+                ? mergeAttachments(before.attachments ?? [], request.attachments) : before.attachments;
             if (attachments === null || !taskEditValuesEqual(after.attachments ?? [], attachments ?? [])) return false;
         }
         for (const field of FIELDS) {
@@ -470,7 +482,7 @@ export function createTaskDraftSaveMethods(deps: {
     };
 
     const readPreparedV2 = (input: unknown): NativePreparedTaskDraftSaveV2 | null => {
-        const value = detach(input, 2_000_000);
+        const value = strategy ? strategy.detachPrepared(input) : detach(input, 2_000_000);
         if (!record(value) || !keys(value, ['version', 'request', 'preparedAt', 'deviceIdBefore',
             'deviceIdToInitialize', 'scope', 'effect']) || value.version !== 2
             || !record(value.scope) || !record(value.effect) || !keys(value.effect, ['task'])
@@ -528,7 +540,7 @@ export function createTaskDraftSaveMethods(deps: {
             if (!changedKeys.every((field) => allowed.has(field))) return null;
             if (!scheduleEdited && !recurrenceEdited) {
                 const exact = draftSaveEffect(before, request, scope as NativePreparedTaskDraftSaveV2['scope'],
-                    value.preparedAt, value.deviceIdBefore ?? value.deviceIdToInitialize!);
+                    value.preparedAt, value.deviceIdBefore ?? value.deviceIdToInitialize!, mergeAttachments);
                 if (!exact || !rawTaskEqual(exact, after)) return null;
             }
             return (before.status !== 'reference' || referenceEditable(request))
@@ -537,6 +549,44 @@ export function createTaskDraftSaveMethods(deps: {
     };
     const readAnyPrepared = (input: unknown): NativePreparedTaskDraftSaveAny | null =>
         record(input) && input.version === 2 ? readPreparedV2(input) : readPrepared(input);
+
+    const commitV2 = async (prepared: NativePreparedTaskDraftSaveV2, identity: unknown = prepared):
+        Promise<NativeHostResult<{ id: string; draft: TaskDraft }>> => {
+        const ready = deps.readiness();
+        if (!ready.ok) return ready;
+        const request = prepared.request;
+        const read = await readAreaDurableData(true, true);
+        if (!read.ok) return read;
+        if (!saves.mayApply(identity, read.value.adapter))
+            return fail('SAVE_FAILED', 'Task edit has an unresolved persistence failure');
+        const data = read.value.authority.snapshot;
+        const currentRows = data.tasks.filter((row) => row.id === request.id);
+        const current = currentRows.length === 1 ? currentRows[0] : null;
+        if (!current) return fail('TASK_NOT_FOUND', 'Task not found or duplicated');
+        const replayed = rawTaskEqual(current, prepared.effect.task.after)
+            && (prepared.deviceIdToInitialize === null
+                || (data.settings.deviceId ?? null) === prepared.deviceIdToInitialize);
+        if (!replayed) {
+            if (!rawTaskEqual(current, prepared.effect.task.before)
+                || current.status === 'reference' && !referenceEditable(request)
+                || isStatusListTaskReadOnly(current, data.projects)
+                || !taskEditValuesEqual(draftSaveScope(current, request, data), prepared.scope))
+                return fail('STALE_REVISION', 'Task or destination changed while editing');
+            const selectedProject = prepared.scope.targetProject;
+            if (selectedProject && !data.projects.some((project) => project.id === selectedProject.id
+                && isSelectableProjectForTaskAssignment(project)))
+                return fail('STALE_REVISION', 'Project is no longer available');
+            if (prepared.scope.targetSection && !data.sections.some((section) => section.id === prepared.scope.targetSection?.id
+                && section.projectId === prepared.scope.targetSection?.projectId && !section.deletedAt)
+                || prepared.scope.targetArea && !data.areas.some((area) => area.id === prepared.scope.targetArea?.id
+                    && !area.deletedAt)) return fail('STALE_REVISION', 'Destination is no longer available');
+        }
+        const applied = await useTaskStore.getState().commitPreparedTaskDraftV2(prepared, read.value.authority);
+        if (!applied.success) return fail(applied.reason === 'missing' ? 'TASK_NOT_FOUND'
+            : applied.reason === 'invalid' ? 'INVALID_INPUT' : 'STALE_REVISION', applied.error ?? 'Task changed while editing');
+        const saved = await saves.finish(identity, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
+        return saved.ok ? { ok: true, value: taskResult(prepared.effect.task.after) } : saved;
+    };
 
     const methods = {
         /** Legacy v1 date/recurrence preparation remains strict for old callers and journals. */
@@ -609,7 +659,7 @@ export function createTaskDraftSaveMethods(deps: {
             const preparedAt = new Date().toISOString();
             const scope = draftSaveScope(task, request, data);
             const device = ensureDeviceId(data.settings);
-            const after = draftSaveEffect(task, request, scope, preparedAt, device.deviceId);
+            const after = draftSaveEffect(task, request, scope, preparedAt, device.deviceId, mergeAttachments);
             if (!after) return fail('INVALID_INPUT', 'Task edit cannot produce a valid prepared journal');
             if (rawTaskEqual(task, after)) return { ok: true, value: { kind: 'noop', result: taskResult(task) } };
             const before = JSON.parse(JSON.stringify(task)) as Task;
@@ -643,37 +693,7 @@ export function createTaskDraftSaveMethods(deps: {
             const request = readRequest(input.request, prepared?.version === 2, prepared?.version === 2);
             if (!request || !prepared || !taskEditValuesEqual(request, prepared.request)) return fail('INVALID_INPUT', 'Prepared task edit request or journal does not match');
             if (prepared.version === 2) {
-                const read = await readAreaDurableData(true, true);
-                if (!read.ok) return read;
-                if (!saves.mayApply(prepared, read.value.adapter))
-                    return fail('SAVE_FAILED', 'Task edit has an unresolved persistence failure');
-                const data = read.value.authority.snapshot;
-                const currentRows = data.tasks.filter((row) => row.id === request.id);
-                const current = currentRows.length === 1 ? currentRows[0] : null;
-                if (!current) return fail('TASK_NOT_FOUND', 'Task not found or duplicated');
-                const replayed = rawTaskEqual(current, prepared.effect.task.after)
-                    && (prepared.deviceIdToInitialize === null
-                        || (data.settings.deviceId ?? null) === prepared.deviceIdToInitialize);
-                if (!replayed) {
-                    if (!rawTaskEqual(current, prepared.effect.task.before)
-                        || current.status === 'reference' && !referenceEditable(request)
-                        || isStatusListTaskReadOnly(current, data.projects)
-                        || !taskEditValuesEqual(draftSaveScope(current, request, data), prepared.scope))
-                        return fail('STALE_REVISION', 'Task or destination changed while editing');
-                    const selectedProject = prepared.scope.targetProject;
-                    if (selectedProject && !data.projects.some((project) => project.id === selectedProject.id
-                        && isSelectableProjectForTaskAssignment(project)))
-                        return fail('STALE_REVISION', 'Project is no longer available');
-                    if (prepared.scope.targetSection && !data.sections.some((section) => section.id === prepared.scope.targetSection?.id
-                        && section.projectId === prepared.scope.targetSection?.projectId && !section.deletedAt)
-                        || prepared.scope.targetArea && !data.areas.some((area) => area.id === prepared.scope.targetArea?.id
-                            && !area.deletedAt)) return fail('STALE_REVISION', 'Destination is no longer available');
-                }
-                const applied = await useTaskStore.getState().commitPreparedTaskDraftV2(prepared, read.value.authority);
-                if (!applied.success) return fail(applied.reason === 'missing' ? 'TASK_NOT_FOUND'
-                    : applied.reason === 'invalid' ? 'INVALID_INPUT' : 'STALE_REVISION', applied.error ?? 'Task changed while editing');
-                const saved = await saves.finish(prepared, read.value.adapter, applied.outcome === 'replayed', read.value.authority.saveBoundary);
-                return saved.ok ? { ok: true, value: taskResult(prepared.effect.task.after) } : saved;
+                return commitV2(prepared);
             }
             const result = await useTaskStore.getState().commitPreparedTaskEdit(prepared);
             if (!result.success) return fail(result.reason === 'missing' ? 'TASK_NOT_FOUND' : result.reason === 'conflict' ? 'STALE_REVISION' : 'INVALID_INPUT', result.error ?? 'Prepared task edit refused');
@@ -697,7 +717,7 @@ export function createTaskDraftSaveMethods(deps: {
             return { ok: true, value: { id: request.id, draft: createTaskDraft(task) } };
         },
     };
-    return {
+    const publicMethods = {
         ...methods,
         /** Reuse the exact Task Draft V2 journal for one Review row's saved Task action. */
         async prepareReviewTaskWrite(input: NativeReviewTaskWriteInput): Promise<NativeHostResult<
@@ -736,4 +756,14 @@ export function createTaskDraftSaveMethods(deps: {
             return prepared;
         },
     };
+    return { publicMethods, authority: { prepare: methods.prepareTaskDraftSaveV2, readPrepared: readPreparedV2, commit: commitV2 } };
+}
+
+export function createTaskDraftSaveMethods(deps: NativeTaskDraftSaveDependencies) {
+    return createTaskDraftSaveFactory(deps).publicMethods;
+}
+
+/** Internal factory seam: no legacy contract method can select file authority. */
+export function createOwnedFileTaskDraftSaveAuthority(deps: NativeTaskDraftSaveDependencies, strategy: TaskDraftAttachmentStrategy) {
+    return createTaskDraftSaveFactory(deps, strategy).authority;
 }

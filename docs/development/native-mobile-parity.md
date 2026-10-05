@@ -1730,3 +1730,9 @@ The signed iPhone 12 development build passed; it was not installed for this int
 A native-only helper can now remove one published file after checking its recorded inode, managed-directory identity, content and size through retained descriptors. A missing leaf counts as durable absence only after checking the original directory and syncing it; missing or replaced directories refuse. Cancellation before unlink preserves the file, while cancellation afterward cannot hide a completed removal. Failed durability remains uncertain and can be retried without adopting a replacement file.
 
 Thirty focused cases and 60 existing file cases passed on the Mac, and the signed iPhone development build passed. No installation is claimed. This helper is not bound to JavaScript or the editor lifecycle: the eventual caller still needs a durable cleanup decision and a current shared reference check. Save/Discard cleanup and ownership release remain open.
+
+### iOS owned-file Save authority (2026-10-05)
+
+A separate shared prepare/validate/commit path now accepts frozen file additions and an exact attachment-only checkpoint. It reuses RN attachment merging and the existing full-task comparison and durable-save machinery. Existing URL-only Save contracts remain unchanged. An uncertain commit can replay only against its exact before/after task state; an intervening edit is retained and refused rather than overwritten.
+
+Validation: 269 distinct shared cases passed, with core typecheck, scoped lint, both native bundles and boot gates. The rebuilt bundle passed 65 native host attachment/editor-recovery tests on the Mac, with no skips. Independent review passed. This is shared infrastructure: full editor checkpoint correspondence, native Save lifecycle, file Remove and UI remain unfinished.
