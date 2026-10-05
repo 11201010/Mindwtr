@@ -53,7 +53,7 @@ jobs:
             platform: item.attributes.platform, state: item.attributes.appStoreState,
             selectedBuild: selected.get(item.relationships.build?.data?.id) ?? null,
           })) }));
-          const builds = await get(`apps/${id}/builds?sort=-uploadedDate&limit=50&include=preReleaseVersion`);
+          const builds = await get(`builds?filter[app]=${id}&sort=-uploadedDate&limit=50&include=preReleaseVersion`);
           const marketing = new Map((builds.included ?? []).map((item) => [item.id, item.attributes]));
           console.log(JSON.stringify({ version, builds: builds.data.filter((item) => marketing.get(item.relationships.preReleaseVersion?.data?.id)?.version === version).map((item) => ({
             build: item.attributes.version, state: item.attributes.processingState, uploaded: item.attributes.uploadedDate,
