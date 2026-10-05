@@ -35,8 +35,10 @@ const invalid = (): NativeHostResult<never> => ({ ok: false, error: { code: 'INV
 // Strict data capture: reject getters, non-JSON values, prototypes and cycles
 // before asynchronous durable reads. No host TextEncoder capability is needed.
 const capture = (input: unknown, bytes: number): unknown => {
+    let remainingNodes = 100_000;
     const check = (value: unknown, depth: number): boolean => {
-        if (depth > 40) return false;
+        // Aliased object graphs can expand exponentially before JSON sizing.
+        if (--remainingNodes < 0 || depth > 40) return false;
         if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
         if (typeof value === 'number') return Number.isFinite(value);
         if (Array.isArray(value)) {

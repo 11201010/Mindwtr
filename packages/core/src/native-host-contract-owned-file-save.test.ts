@@ -288,6 +288,16 @@ describe('unbound shared owned-file Add Save authority', () => {
         reject(await env.host.commitPreparedOwnedFileAddTaskDraftSave(envelope)); expect(env.writes).not.toHaveBeenCalled();
     });
 
+    it('bounds aliased object traversal before serialization or durable IO', async () => {
+        const input = await request();
+        let repeated: unknown = { leaf: true };
+        for (let depth = 0; depth < 30; depth++) repeated = { left: repeated, right: repeated };
+        const reads = vi.spyOn(env.adapter, 'getData');
+        reject(await env.host.prepareOwnedFileAddTaskDraftSave({ ...input, extra: repeated } as never));
+        expect(reads).not.toHaveBeenCalled();
+        expect(env.writes).not.toHaveBeenCalled();
+    });
+
     it('repairs exact failed SQLite Save only with the full original ownership envelope', async () => {
         const envelope = await plan(), before = rows(); env.fault.commits = 10;
         expect(await env.host.commitPreparedOwnedFileAddTaskDraftSave(envelope)).toMatchObject({ ok: false, error: { code: 'SAVE_FAILED' } });
