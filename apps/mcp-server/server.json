@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.dongdongbh/mindwtr",
   "title": "Mindwtr",
-  "description": "Task and project automation for local and self-hosted Mindwtr Cloud data; read-only by default.",
+  "description": "Task automation via SQLite, desktop Local API, or Mindwtr Cloud; read-only by default.",
   "version": "1.1.10",
   "websiteUrl": "https://docs.mindwtr.app/power-users/mcp",
   "repository": {
@@ -35,6 +35,17 @@
           "name": "MINDWTR_MCP_CLOUD_TOKEN",
           "description": "Bearer token for self-hosted Mindwtr Cloud mode.",
           "isRequired": false
+        },
+        {
+          "name": "MINDWTR_MCP_API_URL",
+          "description": "Desktop Local API origin, e.g. http://127.0.0.1:3456. Selects API mode.",
+          "isRequired": false
+        },
+        {
+          "name": "MINDWTR_MCP_API_TOKEN",
+          "description": "Bearer token from the desktop Local API settings; required in API mode.",
+          "isRequired": false,
+          "isSecret": true
         }
       ]
     }

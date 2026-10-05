@@ -1,6 +1,6 @@
 {
   "name": "mindwtr-mcp",
-  "description": "Stdio MCP server for Mindwtr local and self-hosted Cloud task access.",
+  "description": "MCP server for Mindwtr SQLite, desktop Local API, and self-hosted Cloud task access.",
   "version": "1.1.10",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -45,11 +45,11 @@
     "test": "bun test",
     "test:coverage": "bun test --coverage --coverage-reporter=lcov"
   },
-  "dependencies": {
-    "better-sqlite3": "^12.0.0"
-  },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.0.0"
   }
 }
