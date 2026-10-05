@@ -1754,3 +1754,9 @@ Validation: 93 native Mac tests passed with no skips, including 25 new queue cas
 A separate shared version2 history path permits ordinary editor changes between frozen file additions while requiring unchanged attachment baselines and ordered attachment lists. Each addition retains its original complete metadata and before/after payloads. Version1 keeps its exact checkpoint chain; neither API admits file removal through this change. Native filesystem ownership and full Save admission remain separate checks.
 
 Validation: 142 shared cases passed (111 existing, 31 new), with typecheck, scoped lint, both bundles and boot gates. The rebuilt bundle passed 65 native attachment/editor-recovery regression tests with no skips. Independent review passed. Native version2 checkpoint routing and the file UI remain unfinished.
+
+### iOS ordinary editor Save correspondence (2026-10-05)
+
+A shared validator now checks the full ordinary editor checkpoint against its explicit Save request and frozen opening task, including touched no-op fields, raw text/token buffers, schedule queues, field groups and attachment lists. It reuses existing opening-field and recurrence-display helpers. Pending, unknown, checklist and lifecycle inputs are refused intact; this ordinary route does not cover their separate Save semantics.
+
+The final focused suite passed122 cases; the earlier eight-suite run passed323 cases before the token-only review correction. Core typecheck, scoped lint and independent review passed. Review corrected a long-token exemption to match native/RN policy: only assignee text has the literal bypass, while marked tags and contexts retain shared canonicality. The helper is unbound and does not itself grant Save or filesystem authority.

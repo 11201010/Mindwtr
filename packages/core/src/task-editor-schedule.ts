@@ -571,6 +571,25 @@ export type TaskEditorRecurrenceDetails = {
     untilLabel: string;
 };
 
+/** Time-independent recurrence input values shared by display and Save validation. */
+export function getTaskEditorRecurrenceInputValues(
+    draft: Pick<TaskDraft, 'recurrence' | 'recurrenceRRule'>,
+    dailyInterval: number,
+): Pick<TaskEditorRecurrenceDetails, 'interval' | 'count' | 'ends'> {
+    const parsed = parseRRuleString(draft.recurrenceRRule);
+    const intervalByRule: Record<RecurrenceRule, number> = {
+        daily: dailyInterval,
+        weekly: parsed.interval ?? 1,
+        monthly: parsed.interval && parsed.interval > 0 ? parsed.interval : 1,
+        yearly: parsed.interval ?? 1,
+    };
+    return {
+        interval: normalizeRecurrenceInterval(draft.recurrence ? intervalByRule[draft.recurrence] : 1),
+        ends: parsed.count ? 'count' : parsed.until ? 'until' : 'never',
+        count: Math.max(parsed.count ?? 1, 1),
+    };
+}
+
 export function getTaskEditorRecurrenceDetails(input: {
     draft: Pick<TaskDraft, 'recurrence' | 'recurrenceRRule' | 'dueDate' | 'startTime'>;
     task: Pick<Task, 'dueDate' | 'startTime'> | null;
@@ -580,18 +599,10 @@ export function getTaskEditorRecurrenceDetails(input: {
     now: Date;
 }): TaskEditorRecurrenceDetails {
     const { draft, formatDate } = input;
-    const parsed = parseRRuleString(draft.recurrenceRRule);
+    const values = getTaskEditorRecurrenceInputValues(draft, input.dailyInterval);
     const until = getTaskEditorRecurrenceDefaultUntil(draft, input.task, formatDate, input.now);
-    const intervalByRule: Record<RecurrenceRule, number> = {
-        daily: input.dailyInterval,
-        weekly: parsed.interval ?? 1,
-        monthly: parsed.interval && parsed.interval > 0 ? parsed.interval : 1,
-        yearly: parsed.interval ?? 1,
-    };
     return {
-        interval: normalizeRecurrenceInterval(draft.recurrence ? intervalByRule[draft.recurrence] : 1),
-        ends: parsed.count ? 'count' : parsed.until ? 'until' : 'never',
-        count: Math.max(parsed.count ?? 1, 1),
+        ...values,
         until,
         untilLabel: formatTaskEditorDate(until, formatDate, input.t('common.notSet')),
     };
