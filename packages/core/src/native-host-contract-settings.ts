@@ -44,6 +44,14 @@
  *   and show `capture.captureIntent.messages.loadFailed`). The switch sets the
  *   stored config itself, a target-state write: on keeps a token already there,
  *   off deletes it. Then read the view again.
+ * - Notifications › Quick capture in notification bar (Android): RN's AsyncStorage key
+ *   `mindwtr:persistentCaptureNotification` is 'true' while on and removed when off; the host's
+ *   persistentCapture port reads and writes it. setNotificationsSetting's reply says what the
+ *   notification shows (`persistentCapture`), and the host posts or removes it (RN's
+ *   PersistentCaptureNotifier.kt); getPersistentCaptureNotification says what to post again at
+ *   start and on every resume while it is on (RN's keepPersistentCaptureNotificationArmed).
+ * - Notifications' exact-alarm row: as GTD › Pomodoro's notice, shown only while Android 12+
+ *   denies exact alarms; its action opens the system's Alarms & reminders page.
  * - GTD screen state, reset on every visit: the text fields' drafts, the open
  *   task editor groups (see `taskEditor.expandedResetKey`), the field sheet, the
  *   default-area picker, and whether the auto-start notice showed.
@@ -70,6 +78,16 @@ import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
 import { buildDataSettingsModel, buildDataSettingsUpdate, isDataSettingStored, type DataSettingsEdit, type DataSettingsModel } from './data-settings-model';
+import {
+    buildNotificationsSettingsModel,
+    buildNotificationsSettingsUpdate,
+    isNotificationsSettingStored,
+    NOTIFICATIONS_BOOLEAN_SETTINGS,
+    NOTIFICATIONS_TIME_PATTERN,
+    NOTIFICATIONS_TIME_SETTINGS,
+    type NotificationsSettingsEdit,
+    type NotificationsSettingsModel,
+} from './notifications-settings-model';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
@@ -169,10 +187,15 @@ export type SettingsDeps = {
     requestIdPattern: RegExp;
     /** Settings › About's host (native-host-contract-about.ts): the Data screen's analytics switch is there while it sends. */
     about?: () => NativeAboutHost | null;
+    /** Android's persistent capture switch, as RN stores it (PERSISTENT_CAPTURE_STORAGE_KEY); null on a host without one. */
+    persistentCapture?: () => NativePersistentCaptureHost | null;
 };
 
+/** The host's store of the persistent capture switch: on disk when write returns; each throws on a failure. */
+export type NativePersistentCaptureHost = { read(): boolean; write(enabled: boolean): void };
+
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'sync', 'data', 'advanced', 'ai', 'about'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'notifications', 'sync', 'data', 'advanced', 'ai', 'about'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 
@@ -193,6 +216,13 @@ export type NativeGeneralSettings = GeneralSettingsModel & { version: typeof NAT
 export type NativeGtdSettings = GtdSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
 
 export type NativeDataSettings = DataSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+export type NativeNotificationsSettings = NotificationsSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+/** What the persistent capture notification shows while it is on; null while it is off. */
+export type NativePersistentCaptureNotification = { post: NotificationsSettingsModel['persistentCaptureNotification'] | null };
+
+export type NativeNotificationsWriteResult = NativeSettingsWriteResult & { persistentCapture?: NativePersistentCaptureNotification };
 
 /** A write's answer: whether the store changed, and what the host stores on the device. */
 export type NativeSettingsWriteResult = { changed: boolean; deviceWrites: SettingsDeviceWrite[] };
@@ -349,6 +379,28 @@ function readGtdEdit(value: unknown, liveAreaIds: Set<string>): GtdSettingsEdit 
 
 const isName = (value: unknown): value is string => isText(value, 500) && value.trim().length > 0;
 
+const NOTIFICATIONS_BOOLEANS = new Set<string>([...NOTIFICATIONS_BOOLEAN_SETTINGS, 'persistentCapture']);
+const NOTIFICATIONS_TIMES = new Set<string>(NOTIFICATIONS_TIME_SETTINGS);
+
+/** A Notifications edit as a host sends it back; null when it is not one the screen offers (a time is RN's 'HH:MM'). */
+const readNotificationsEdit = (value: unknown): NotificationsSettingsEdit | null => {
+    if (!isObjectRecord(value) || Object.keys(value).length !== 2 || typeof value.type !== 'string') return null;
+    const v = value.value;
+    const ok = NOTIFICATIONS_BOOLEANS.has(value.type) ? typeof v === 'boolean'
+        : NOTIFICATIONS_TIMES.has(value.type) ? typeof v === 'string' && NOTIFICATIONS_TIME_PATTERN.test(v)
+            : value.type === 'weeklyReviewDay' && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 6;
+    return ok ? { type: value.type, value: v } as NotificationsSettingsEdit : null;
+};
+
+/** RN's readPersistentCaptureEnabled: a store that cannot be read reads as off. */
+const persistentCaptureOn = (capture: NativePersistentCaptureHost): boolean => {
+    try {
+        return capture.read();
+    } catch {
+        return false;
+    }
+};
+
 /** A Data edit as a host sends it back; the analytics switch only in a build with the heartbeat. */
 const readDataEdit = (value: unknown, analyticsAvailable: boolean): DataSettingsEdit | null => (
     isObjectRecord(value) && Object.keys(value).length === 2 && typeof value.value === 'boolean'
@@ -377,6 +429,11 @@ export function createSettingsMethods(deps: SettingsDeps) {
     const manageRevision = () => `${deps.dataRevision()}:${deps.language()}`;
 
     const systemLocale = () => deps.systemLocale() ?? '';
+
+    const notificationsModel = (persistentCapture: { enabled: boolean } | null) => buildNotificationsSettingsModel({
+        settings: useTaskStore.getState().settings, t: deps.t(), language: deps.language(), systemLocale: systemLocale(),
+        ...(persistentCapture ? { persistentCapture } : {}),
+    });
 
     const generalModel = (input: { deviceTheme?: string | null; appSearch?: { supported: boolean; enabled: boolean } }) => {
         const state = useTaskStore.getState();
@@ -970,6 +1027,63 @@ export function createSettingsMethods(deps: SettingsDeps) {
                 });
                 return settleWrite(written, { changed: true });
             });
+        },
+
+        /**
+         * Settings › Notifications (notifications-settings-model.ts). The host shows `exactAlarmNotice` only while Android
+         * denies exact alarms (read again on each resume). A switch whose `askPermission` is true asks for the notification
+         * permission first, and sends its `edit` to setNotificationsSetting only once it is granted; a time row opens the
+         * time picker and sends `{ type, value: 'HH:MM' }`.
+         */
+        getNotificationsSettings(): NativeHostResult<NativeNotificationsSettings> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const capture = deps.persistentCapture?.() ?? null;
+            const model = notificationsModel(capture ? { enabled: persistentCaptureOn(capture) } : null);
+            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
+        },
+
+        /**
+         * One Notifications control's edit: a synced setting written only when it does not already hold the value, or the
+         * persistent capture switch stored on the device (a target state). Its reply's `persistentCapture` is what the
+         * notification shows now (null: remove it), for the host to post: a replay after a restart posts it again.
+         */
+        async setNotificationsSetting(input: { requestId: string; edit: NotificationsSettingsEdit }): Promise<NativeHostResult<NativeNotificationsWriteResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const edit = isObjectRecord(input) ? readNotificationsEdit(input.edit) : null;
+            const capture = deps.persistentCapture?.() ?? null;
+            if (!edit || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || (edit.type === 'persistentCapture' && !capture)) {
+                return fail('INVALID_INPUT', 'A request UUID and an edit the Notifications screen offers are required');
+            }
+            return receipts.run<NativeNotificationsWriteResult>(input.requestId, JSON.stringify(['notifications', edit]), async () => {
+                if (edit.type === 'persistentCapture') {
+                    const enabled = edit.value as boolean;
+                    let changed = false;
+                    try {
+                        if (capture!.read() !== enabled) {
+                            capture!.write(enabled);
+                            changed = true;
+                        }
+                    } catch (error) {
+                        return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+                    }
+                    return { ok: true, value: { changed, deviceWrites: [], persistentCapture: { post: enabled ? notificationsModel(null).persistentCaptureNotification : null } } };
+                }
+                const settings = useTaskStore.getState().settings;
+                if (isNotificationsSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites: [] } };
+                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(buildNotificationsSettingsUpdate(edit)!));
+                return settleWrite(written, { changed: true, deviceWrites: [] });
+            });
+        },
+
+        /** The persistent capture notification to post again (at start and on every resume, with the permission), or null. */
+        getPersistentCaptureNotification(): NativeHostResult<NativePersistentCaptureNotification> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const capture = deps.persistentCapture?.() ?? null;
+            return { ok: true, value: { post: capture && persistentCaptureOn(capture) ? notificationsModel(null).persistentCaptureNotification : null } };
         },
 
         /**

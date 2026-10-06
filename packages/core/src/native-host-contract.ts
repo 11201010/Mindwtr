@@ -331,7 +331,7 @@ import {
     type NativeFocusControls,
     type NativeFocusControlsInput,
 } from './native-host-contract-focus-controls';
-import { createSettingsMethods } from './native-host-contract-settings';
+import { createSettingsMethods, type NativePersistentCaptureHost } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createAIMethods, type NativeAIHost } from './native-host-contract-ai';
 import { createAboutMethods, type NativeAboutHost } from './native-host-contract-about';
@@ -965,6 +965,8 @@ export function createNativeHostContract(options: {
     /** Trusted host platform selects core's existing reminder window; omitted hosts retain Android's cap. */
     reminderPlatform?: 'android' | 'ios';
     replayTokens?: NativeReplayTokens;
+    /** Android's persistent capture switch in RN's device store (Settings › Notifications). */
+    persistentCapture?: NativePersistentCaptureHost;
 } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
     startNativeRequestSession();
@@ -1777,6 +1779,7 @@ export function createNativeHostContract(options: {
             dateFormatting,
             dataRevision: () => `${revision()}:${settingsRevision()}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
+            persistentCapture: () => options.persistentCapture ?? null,
         }),
         // Settings › Sync: native-host-contract-settings-sync.ts.
         ...createSyncSettingsMethods({
