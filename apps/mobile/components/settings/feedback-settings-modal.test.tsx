@@ -98,6 +98,20 @@ const renderedText = (children: React.ReactNode): string => React.Children.toArr
 )).join('');
 
 describe('FeedbackSettingsModal', () => {
+  it('lets the iOS form scroll a growing message without losing its text', () => {
+    setPlatform('ios');
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<FeedbackSettingsModal visible isConfigured tr={tr}
+      onClose={vi.fn()} onSubmit={vi.fn()} />); });
+    const text = 'A long feedback line\n'.repeat(100);
+    act(() => { tree.root.findAllByType(TextInput)[0].props.onChangeText(text); });
+    const input = tree.root.findAllByType(TextInput)[0];
+    expect(input.props.value).toBe(text);
+    expect(input.props.scrollEnabled).toBe(false);
+    expect(tree.root.findByType(ScrollView).props.scrollEnabled).not.toBe(false);
+    act(() => { tree.unmount(); });
+  });
+
   afterEach(() => {
     Object.defineProperty(Platform, 'OS', {
       configurable: true,

@@ -788,13 +788,14 @@ export function TaskEditContentField({
                                                     checklistItemKey,
                                                     event.nativeEvent.selection,
                                                 )}
-                                                selection={getControlledTextInputSelection(
+                                                // Native caret movement must not be overwritten by a stale ref on iOS.
+                                                selection={checklistSelectionRestorePending[checklistItemKey] ? getControlledTextInputSelection(
                                                     checklistSelectionRefs.current[checklistItemKey] ?? {
                                                         start: item.title.length,
                                                         end: item.title.length,
                                                     },
                                                     { force: Boolean(checklistSelectionRestorePending[checklistItemKey]) },
-                                                )}
+                                                ) : undefined}
                                                 placeholder={field.labels.placeholder}
                                                 placeholderTextColor={tc.secondaryText}
                                                 accessibilityLabel={item.inputLabel}

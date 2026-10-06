@@ -565,6 +565,32 @@ describe('TaskEditContentField', () => {
     });
   });
 
+  it('leaves iOS checklist caret native except while restoring a Markdown selection', () => {
+    withPlatform('ios', () => {
+      const { getState, applyChecklistUpdate } = createChecklistState();
+      let tree!: ReturnType<typeof create>;
+      const render = () => <TaskEditContentField {...baseProps} fieldId="checklist"
+        checklist={getState().checklist} applyChecklistUpdate={applyChecklistUpdate} />;
+      act(() => { tree = create(render()); });
+      const input = () => tree.root.findByProps({ accessibilityLabel: 'taskEdit.checklist 1' });
+      expect(input().props.selection).toBeUndefined();
+      act(() => { input().props.onSelectionChange({ nativeEvent: { selection: { start: 2, end: 2 } } }); });
+      act(() => { tree.update(render()); });
+      expect(input().props.selection).toBeUndefined();
+      act(() => { input().props.onChangeText('ItXem 1'); });
+      act(() => { tree.update(render()); });
+      expect(getState().checklist[0].title).toBe('ItXem 1');
+      expect(input().props.selection).toBeUndefined();
+      act(() => { input().props.onSelectionChange({ nativeEvent: { selection: { start: 0, end: 7 } } }); });
+      act(() => { input().props.onChangeText('['); });
+      expect(input().props.selection).toBeDefined();
+      const restored = input().props.selection;
+      act(() => { input().props.onSelectionChange({ nativeEvent: { selection: restored } }); });
+      expect(input().props.selection).toBeUndefined();
+      act(() => { tree.unmount(); });
+    });
+  });
+
   it('wraps selected checklist item text when the native change replaces the range', () => {
     const { getState, applyChecklistUpdate } = createChecklistState();
     let tree!: ReturnType<typeof create>;

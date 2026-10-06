@@ -300,6 +300,8 @@ export function FeedbackSettingsModal({
                                     placeholder={messagePlaceholders[category]}
                                     placeholderTextColor={tc.secondaryText}
                                     multiline
+                                    // Let the form scroll long messages instead of nesting an iOS text scroller.
+                                    scrollEnabled={Platform.OS !== 'ios'}
                                     maxLength={4000}
                                     style={[
                                         styles.feedbackTextArea,
