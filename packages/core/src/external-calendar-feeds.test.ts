@@ -30,6 +30,7 @@ function device(options: {
     events?: DeviceCalendarEvent[];
     permission?: string;
     pushed?: { calendarId: string; calendarEventId: string }[];
+    synced?: ReturnType<typeof feed>[];
 } = {}) {
     const storage = new Map(Object.entries(options.storage ?? {}));
     const calls: unknown[][] = [];
@@ -75,6 +76,7 @@ function device(options: {
         },
         getAllCalendarSyncEntries: async () => options.pushed ?? [],
         logInfo: (message, context) => { logs.push([message, context]); },
+        syncedSubscriptions: () => options.synced,
     };
     return { host, storage, calls, logs, feeds: createExternalCalendarFeeds(host) };
 }
@@ -108,6 +110,18 @@ describe('external calendar feeds behind the host ports', () => {
         ]);
         // The list still names every stored subscription, the failed one included.
         expect(result.calendars.map((calendar) => calendar.id)).toEqual(['team', 'local', 'broken', 'off']);
+    });
+
+    it('reads the synced subscriptions, not a stale device copy: one added or removed on another device counts at once', async () => {
+        const { feeds, calls } = device({
+            storage: { [EXTERNAL_CALENDARS_KEY]: JSON.stringify([feed('removed', 'https://example.com/removed.ics')]) },
+            synced: [feed('added', 'https://example.com/added.ics')],
+            feeds: { 'https://example.com/added.ics': ics([['a1', '20260910T090000Z', 'Added']]), 'https://example.com/removed.ics': ics([['r1', '20260910T090000Z', 'Removed']]) },
+        });
+        const result = await feeds.fetchExternalCalendarEvents(...SEPT);
+        expect(result.events.map((event) => event.title)).toEqual(['Added']);
+        expect(calls.filter(([name]) => name === 'fetch')).toEqual([['fetch', 'https://example.com/added.ics']]);
+        expect(result.calendars.map((calendar) => calendar.id)).toEqual(['added']);
     });
 
     it('names each enabled feed that failed to load, for the Test button', async () => {

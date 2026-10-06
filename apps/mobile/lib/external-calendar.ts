@@ -10,6 +10,7 @@ import {
     type ExternalCalendarSubscription,
     type SystemCalendarInfo,
     type SystemCalendarSettings,
+    useTaskStore,
 } from '@mindwtr/core';
 import * as FileSystem from './file-system';
 import { logInfo } from './app-log';
@@ -44,6 +45,7 @@ const getFeeds = (): ExternalCalendarFeeds => {
         },
         getAllCalendarSyncEntries: (platform) => getAllCalendarSyncEntries(platform),
         logInfo: (message, context) => logInfo(message, context),
+        syncedSubscriptions: () => useTaskStore.getState().settings.externalCalendars,
     });
     return feeds;
 };

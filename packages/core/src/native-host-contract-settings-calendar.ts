@@ -495,6 +495,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 calendars,
                 getAllCalendarSyncEntries: (platform) => syncEntries.getAll(platform),
                 logInfo: (message, context) => host.log.info(message, context),
+                syncedSubscriptions: () => useTaskStore.getState().settings.externalCalendars,
             }),
             push: createCalendarPushService({
                 platform: host.platform.os,

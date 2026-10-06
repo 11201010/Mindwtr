@@ -126,6 +126,12 @@ export type ExternalCalendarFeedsHost = {
     /** This device's pushed-event map (the calendar_sync table) for `platform`. */
     getAllCalendarSyncEntries(platform: string): Promise<Array<{ calendarId?: unknown; calendarEventId?: unknown }>>;
     logInfo(message: string, context: CalendarLogContext): unknown;
+    /**
+     * The synced `settings.externalCalendars`, which the reads follow when it is a list (the Settings screen's rule,
+     * resolveCalendarFeedsOnLoad): a subscription added or removed on another device counts before this device's copy
+     * catches up. Absent or not a list: the device copy.
+     */
+    syncedSubscriptions?(): ExternalCalendarSubscription[] | undefined;
 };
 
 function calendarReadDiagnosticCounts(
@@ -481,7 +487,8 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
         sources?: ExternalCalendarFetchOptions['sources'],
     ): Promise<ExternalCalendarSourceResult> => {
         throwIfAborted(signal);
-        const calendars = sources ? sources.subscriptions : await getExternalCalendars();
+        const synced = sources ? undefined : host.syncedSubscriptions?.();
+        const calendars = sources ? sources.subscriptions : Array.isArray(synced) ? sanitizeExternalCalendars(synced) : await getExternalCalendars();
         const enabled = calendars.filter((c) => c.enabled);
 
         const results = await Promise.allSettled(
