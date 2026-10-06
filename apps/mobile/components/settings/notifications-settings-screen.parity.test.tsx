@@ -85,13 +85,13 @@ describe('Settings › Notifications parity with core\'s model', () => {
       ? [reminders.exactAlarmNotice.label, reminders.exactAlarmNotice.description, reminders.exactAlarmNotice.actionLabel]
       : [];
     expect(rn.texts).toEqual([
-      ...row(reminders.enable), ...row(reminders.startDate), ...row(reminders.dueDate), ...notice, ...row(reminders.persistentCapture!),
+      ...row(reminders.enable), ...row(reminders.startReminders), ...row(reminders.dueReminders), ...notice, ...row(reminders.persistentCapture!),
       ...row(weeklyReview.enable), ...row(weeklyReview.day), ...row(weeklyReview.time),
       // The day picker (RN's modal; the test renderer draws it closed too).
       weeklyReview.day.pickerTitle, ...weeklyReview.day.options.map((option) => option.label),
       ...row(dailyDigest), ...row(dailyDigest.morning), ...row(dailyDigest.morningTime), ...row(dailyDigest.evening), ...row(dailyDigest.eveningTime),
     ]);
-    expect(rn.switches).toEqual([reminders.enable, reminders.startDate, reminders.dueDate, reminders.persistentCapture!, weeklyReview.enable,
+    expect(rn.switches).toEqual([reminders.enable, reminders.startReminders, reminders.dueReminders, reminders.persistentCapture!, weeklyReview.enable,
       dailyDigest.morning, dailyDigest.evening].map((toggle) => toggle.value));
   });
 });

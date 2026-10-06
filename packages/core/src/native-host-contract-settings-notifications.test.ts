@@ -55,8 +55,8 @@ describe('native host contract: Settings › Notifications', () => {
         expect(view.title).toBe(t('settings.notifications'));
         expect(view.reminders.enable).toEqual({ label: t('settings.notificationsEnable'), description: t('settings.notificationsDesc'), value: false,
             disabled: false, edit: { type: 'notificationsEnabled', value: true }, askPermission: true });
-        expect(view.reminders.startDate).toMatchObject({ value: false, disabled: true });
-        expect(view.reminders.dueDate).toMatchObject({ value: false, disabled: true });
+        expect(view.reminders.startReminders).toMatchObject({ value: false, disabled: true });
+        expect(view.reminders.dueReminders).toMatchObject({ value: false, disabled: true });
         // No notification feature on: RN shows no exact-alarm row; a host without the switch draws none.
         expect(view.reminders.exactAlarmNotice).toBeNull();
         expect(view.reminders.persistentCapture).toBeNull();

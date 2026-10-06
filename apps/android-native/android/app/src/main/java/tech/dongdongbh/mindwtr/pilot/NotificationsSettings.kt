@@ -86,8 +86,8 @@ internal fun NotificationsSettings(model: InboxViewModel, view: JSONObject) = wi
 
     Card {
         Toggle(reminders.getJSONObject("enable"), false)
-        Toggle(reminders.getJSONObject("startDate"), true)
-        Toggle(reminders.getJSONObject("dueDate"), true)
+        Toggle(reminders.getJSONObject("startReminders"), true)
+        Toggle(reminders.getJSONObject("dueReminders"), true)
         // RN's exact-alarm row while a notification feature is on: shown only while Android 12+ denies exact alarms, read again on
         // each resume; Allow opens Android's Alarms & reminders page.
         reminders.optJSONObject("exactAlarmNotice")?.let { notice ->

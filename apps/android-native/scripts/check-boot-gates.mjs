@@ -819,7 +819,7 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
+assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog, Pomodoro \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('internal fun readSucceeded(')));
     for (const part of ['Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -1695,7 +1695,7 @@ assert.match(rowUi, /val label = blocked \?: t\(if \(task\.isFocusedToday\) "age
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth, state\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
-assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*delay\(60_000\)/);
+assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*model\.pomodoro\.read\(\)\s*delay\(60_000\)/);
 assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 3, 'the lifecycle loop, and the boot\'s deferred read (first content, or the tab chosen while the boot ran)');
 assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
@@ -2668,7 +2668,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(settingsModel), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, 'SettingsModel writes only through MenuModel.command or create');
     // Core's device writes are stored under RN's keys before the command counts as done; a new language reloads core's words, a theme its colors.
     assert.match(menuModel, /if \(action\.kind in SETTINGS_KINDS\) settings\.applied\(runtime, reply\)\s+shell\.acknowledged\(action\)/);
-    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
+    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+(?:\/\/[^\n]*\s+)*reply\.optJSONObject\("persistentCapture"\)\?\.let \{ PersistentCapture\.apply\(shell\.getApplication<Application>\(\), it\) \}\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
     // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
     // write's journal entry settles; the Settings screen only reloads the language and theme after.
     assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
@@ -3011,7 +3011,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller, rnPersistentCapture\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -3336,7 +3336,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const rnStyles = readFileSync(resolve(app, '../../apps/mobile/components/settings/settings.styles.ts'), 'utf8');
     assert.match(rnStyles, /settingRow: \{[^}]*alignItems: 'flex-start',/);
     const settingsKt = source('SettingsScreen.kt');
-    const row = code(settingsKt.slice(settingsKt.indexOf('private fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('private fun SettingRow('))));
+    const row = code(settingsKt.slice(settingsKt.indexOf('internal fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('internal fun SettingRow('))));
     assert.match(row, /\.padding\(16\.dp\),\s+verticalAlignment = Alignment\.Top\)/, 'SettingRow aligns its trailing control to the top, as RN');
 }
 

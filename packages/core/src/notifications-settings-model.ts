@@ -61,8 +61,8 @@ export type NotificationsSettingsModel = {
     title: string;
     reminders: {
         enable: Toggle;
-        startDate: Toggle;
-        dueDate: Toggle;
+        startReminders: Toggle;
+        dueReminders: Toggle;
         /** RN's exact-alarm row while a notification feature is on; the host shows it only while Android 12+ denies exact alarms. */
         exactAlarmNotice: { label: string; description: string; actionLabel: string } | null;
         /** Android only: the persistent capture notification's switch. */
@@ -138,9 +138,9 @@ export function buildNotificationsSettingsModel(input: NotificationsSettingsInpu
         title: t('settings.notifications'),
         reminders: {
             enable: toggle('notificationsEnabled', t('settings.notificationsEnable'), t('settings.notificationsDesc'), notificationsEnabled),
-            startDate: toggle('startDateNotificationsEnabled', t('settings.startDateNotifications'), t('settings.startDateNotificationsDesc'),
+            startReminders: toggle('startDateNotificationsEnabled', t('settings.startDateNotifications'), t('settings.startDateNotificationsDesc'),
                 startDateNotificationsEnabled, !notificationsEnabled),
-            dueDate: toggle('dueDateNotificationsEnabled', t('settings.dueDateNotifications'), t('settings.dueDateNotificationsDesc'),
+            dueReminders: toggle('dueDateNotificationsEnabled', t('settings.dueDateNotifications'), t('settings.dueDateNotificationsDesc'),
                 dueDateNotificationsEnabled, !notificationsEnabled),
             exactAlarmNotice: hasActiveMobileNotificationFeature(settings)
                 ? { label: t('settings.exactAlarmsLabel'), description: t('settings.exactAlarmsDesc'), actionLabel: t('settings.exactAlarmsAllow') }
