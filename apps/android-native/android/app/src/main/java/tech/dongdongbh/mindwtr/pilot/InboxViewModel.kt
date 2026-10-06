@@ -79,6 +79,8 @@ private fun withRequestId(action: FailedAction, owed: FailedAction?) =
     owed?.takeIf { it.copy(requestId = "") == action } ?: action.copy(requestId = UUID.randomUUID().toString())
 
 /** Core refused the update or the editor save before writing anything, so there is no retry to hold. */
+/** The Menu list that shows each external calendar slot (host-calendar.ts, core's NATIVE_CALENDAR_FEED_SLOTS). */
+private val FEED_LISTS = mapOf("calendar" to "calendar", "weeklyReview" to "weekly", "dailyReview" to "daily")
 internal val UPDATE_REFUSALS = listOf("STALE_REVISION", "INVALID_INPUT", "TASK_NOT_FOUND")
 /**
  * The commands whose STALE_REVISION keeps core's line on screen: the editor save's conflict (with Reload), the status menu's update, and
@@ -286,6 +288,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     menu.whenIdle { if (writable) refreshAll() }
                 } else if (menu.list == "settings") menu.settings.refresh()
             }
+            // A screen's external calendars finished loading (host-calendar.ts): the screen showing them reads again.
+            "calendarFeed" -> if (menu.list == FEED_LISTS[event.optString("slot")]) menu.whenIdle { if (writable) menu.refresh() }
             "toast" -> showToast(event.optString("title").ifEmpty { null }, event.getString("message"), event.optString("tone", "warning"),
                 event.optString("action").ifEmpty { null }) { if (event.optString("open") == "sync") menu.openSyncSettings() }
         }
@@ -298,6 +302,13 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     fun appState(state: String) {
         if (state == "active") resumes += 1
         ProcessCoreHost.appState(state)
+        // RN's Calendar reloads its external calendars on a return to the app (shouldRefreshExternalCalendarOnAppStateChange).
+        if (state == "active" && resumes > 1 && menu.list == "calendar") menu.calendarFeed("calendar")
+    }
+
+    /** Where the editor returns: a tab; the quick-access Calendar regains focus (RN's focus reload). */
+    private fun focused(target: Screen) {
+        if (target == Screen.Projects && menu.screen == null && menu.quickView == "calendar") menu.calendarFeed("calendar")
     }
 
     /**
@@ -428,8 +439,10 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** The editor opens over this list, so Save and Cancel return to it. */
     fun show(target: Screen) {
+        val switched = target != screen
         screen = target
         saved["screen"] = target.name
+        if (switched) focused(target)
     }
 
     private fun keepKey(key: String?) {

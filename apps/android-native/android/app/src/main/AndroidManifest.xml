@@ -148,4 +148,7 @@
          the user allows it (Android 12+ asks; RN's exact-alarm notice opens that page). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- RN's calendar pair (app.json's permissions, expo-calendar asks both): device calendars read (HostCalendars.kt), push in C4. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 </manifest>

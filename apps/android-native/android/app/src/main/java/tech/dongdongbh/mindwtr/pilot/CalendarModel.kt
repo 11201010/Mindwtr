@@ -10,14 +10,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
+import tech.dongdongbh.mindwtr.pilot.core.HostCalendars
 import java.util.UUID
 
 /*
  * RN's Calendar (components/views/calendar-view.tsx, calendar/useCalendarViewController.ts) on core's calendar contract
  * (native-host-contract-calendar.ts). Kotlin keeps only RN's screen state: the place core's view names (its `state`), the
  * search under the selected day, the open item sheet, and the open composer. Every heading, item, minute, day key and label
- * is core's; every write is core's runCalendarAction through MenuModel (perform, with its exact request). This host fetches
- * no external calendar, so it sends no `calendar` feed and core shows no events.
+ * is core's; every write is core's runCalendarAction through MenuModel (perform, with its exact request). The external
+ * calendars are the host's (host-entry.ts adds the Calendar's feed to every read and action; Kotlin sends none), and an event's
+ * Open in calendar is the calendar app's (HostCalendars.openEvent).
  */
 
 /** Core windows every collection by NATIVE_HOST_MAX_WINDOW. */
@@ -178,9 +180,19 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     // ---- The item sheet ----
 
-    /** Pressing an item: core's sheet for its task (Edit, Remove from calendar, Done, Delete, Cancel), in RN's dialog. */
+    /**
+     * Pressing an item: core's sheet for its task (Edit, Remove from calendar, Done, Delete, Cancel), or for an event (Create task,
+     * Open in calendar where the calendar app can open it, Cancel; the event rides along), in RN's dialog.
+     */
     fun openItem(item: JSONObject) {
-        val taskId = item.menuText("taskId") ?: return // an event: this host sends none
+        item.menuText("eventId")?.takeIf { item.menuText("taskId") == null }?.let { eventId ->
+            shell.perform { runtime ->
+                val reply = runtime.menuRead("calendarEvent", JSONObject().put("eventId", eventId).toString())
+                shell.ui { keepSheet(reply) }
+            }
+            return
+        }
+        val taskId = item.menuText("taskId") ?: return
         val sent = state
         shell.perform { runtime ->
             val reply = runtime.menuRead("calendarSheet", JSONObject().put("taskId", taskId).apply { sent?.let { put("state", it) } }.toString())
@@ -190,11 +202,26 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
 
     fun closeSheet() = keepSheet(null)
 
-    /** A sheet button by core's id: Edit opens the editor; the rest are core's actions, at the sheet's taskRevision; Cancel and OK only close. */
+    /**
+     * A sheet button by core's id: Edit opens the editor; the rest are core's actions, at the sheet's taskRevision; Cancel and OK
+     * only close. An event's Create task is a create (its request UUID becomes the task's id); Open in calendar hands the event
+     * to the calendar app, and RN's toast shows when it cannot.
+     */
     fun press(id: String) {
         val taskId = sheet?.menuText("taskId")
         val revision = sheet?.optString("taskRevision").orEmpty()
+        val event = sheet?.takeIf { it.optString("kind") == "event" }?.optJSONObject("event")
         keepSheet(null)
+        if (event != null) {
+            when (id) {
+                "createTask" -> menu.create(FailedAction("calendarCreate", UUID.randomUUID().toString(), JSONObject()
+                    .put("action", JSONObject().put("type", "createTaskFromEvent").put("event", event)).apply { state?.let { put("state", it) } }.toString()))
+                "openInCalendar" -> if (!HostCalendars.openEvent(shell.getApplication(), event.getString("nativeEventId"))) {
+                    view?.getJSONObject("text")?.getJSONObject("toasts")?.optJSONObject("openEventFailed")?.let(::toast)
+                }
+            }
+            return
+        }
         if (taskId == null) return
         when (id) {
             "edit" -> shell.openEditor(taskId)

@@ -34,7 +34,7 @@ import java.util.UUID
 
 /** Settings' commands (host-entry.ts MENU_COMMANDS). */
 val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting", "syncPreference",
-    "setAISetting", "notificationsSetting")
+    "setAISetting", "notificationsSetting", "calendarSetting")
 
 /** RN's device keys (core's LANGUAGE_STORAGE_KEY, MOBILE_THEME_STORAGE_KEY, MANAGE_OPEN_SECTIONS_STORAGE_KEY, MOBILE_TASK_OPEN_MODE_STORAGE_KEY). */
 const val LANGUAGE_KEY = "mindwtr-language"
@@ -101,6 +101,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     val about = AboutSettingsModel(menu)
     /** Settings › Data's Backup fold and Sync › Recovery snapshots (DataTransfer.kt). */
     val transfer = DataTransferModel(menu, saved)
+    /** Settings › Calendar's screen state and commands (CalendarSettings.kt). */
+    val calendar = CalendarSettingsModel(menu)
 
     /** RN's settings stack: "main", then "general", "manage", "data", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
     var stack by mutableStateOf(saved.get<String>("settingsStack")?.split(',') ?: listOf("main")); private set
@@ -126,7 +128,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         return when (screen) {
             "main" -> view.getString("title")
             "advanced" -> view.getJSONObject("advanced").getString("title")
-            "general", "manage", "data", "notifications", "sync", "ai", "about" -> view.getString("title")
+            "general", "manage", "data", "notifications", "sync", "ai", "about", "calendar" -> view.getString("title")
             "gtd" -> view.getJSONObject("hub").getString("title")
             else -> gtdScreen(view)?.getString("title") ?: t("settings.title")
         }
@@ -137,6 +139,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         sync.leave()
         ai.leave()
         about.leave()
+        calendar.leave()
         keepStack(listOf("main"))
         logToShare = null
         query = ""
@@ -161,6 +164,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         if (screen == "sync") sync.leave()
         if (screen == "ai") ai.leave()
         if (screen == "about") about.leave()
+        if (screen == "calendar") calendar.leave()
         keepStack(stack.dropLast(1))
         logToShare = null
         keepLocal(JSONObject())
@@ -217,6 +221,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         if (screen == "sync") return SettingsPage(screen, sync.read(runtime), emptyMap(), null)
         if (screen == "ai") return SettingsPage(screen, ai.read(runtime), emptyMap(), null)
         if (screen == "about") return SettingsPage(screen, about.read(runtime), emptyMap(), null)
+        if (screen == "calendar") return SettingsPage(screen, calendar.read(runtime), emptyMap(), null)
         val (name, input) = request(screen)
         // GTD › Capture's automation capture card: core gets whether the stored config is on (null: it cannot be read).
         val capture = if (name == "gtdSettings") runCatching { CaptureIntentConfigStore.read(shell.getApplication<Application>()) } else null
@@ -484,6 +489,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         when (action.kind) {
             "manageEditor" -> menu.closeDialog("manageEditor")
             "setAISetting" -> ai.done(action, reply)
+            "calendarSetting" -> calendar.done(reply)
             "somedayRename" -> editLocal { remove("renaming") }
             "generalSetting" -> when (input.getJSONObject("edit").getString("type")) {
                 "quickAccessView" -> menu.readMore()
@@ -515,6 +521,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
                 val invalid = page?.view?.optJSONObject("hub")?.optJSONObject("defaultScheduleTime")?.optString("invalidMessage")
                 shell.showToast(null, if (edit.getString("type") == "defaultScheduleTime" && invalid != null) invalid else message.substringAfter(": "), "warning")
             }
+            "calendarSetting" -> calendar.refused(failure)
             "manageEditor" -> menu.dialog?.takeIf { it.optString("kind") == "manageEditor" && it.optString("requestId") == action.id }
                 ?.let { menu.keepDialog(JSONObject(it.toString()).put("requestId", UUID.randomUUID().toString())) }
         }

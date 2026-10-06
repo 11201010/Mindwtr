@@ -11,6 +11,7 @@ import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
 import tech.dongdongbh.mindwtr.pilot.core.CoreBundle
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.DiagnosticsLogFile
+import tech.dongdongbh.mindwtr.pilot.core.HostCalendars
 import tech.dongdongbh.mindwtr.pilot.core.HostFiles
 import tech.dongdongbh.mindwtr.pilot.core.HostInstaller
 import tech.dongdongbh.mindwtr.pilot.core.HostIo
@@ -123,7 +124,8 @@ internal object ProcessCoreHost {
             ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }),
             HostWidgets(app) { appState },
             scheduleBackgroundSync = { on -> CoreWork.scheduleSyncStored(app, on) }, appInfo = aboutAppInfo(),
-            backups = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), File(app.filesDir, "snapshots"), maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES))
+            backups = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), File(app.filesDir, "snapshots"), maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES),
+            calendars = HostCalendars(app))
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "", legacy?.preflight == true)
             // After the boot, so the line reaches RN's diagnostics log with the settings loaded.

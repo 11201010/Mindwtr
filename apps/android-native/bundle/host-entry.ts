@@ -125,6 +125,7 @@ import { createNativeAbout } from './host-about';
 import { createNativeAI } from './host-ai';
 import { createIOSCalendarHost, type CalendarCall } from '../../ios-native/bundle/host-calendar';
 import type { NativeCalendarPushLifecycle } from '../../../packages/core/src/native-host-contract-settings-calendar';
+import { createCalendarFeeds, createNativeCalendar } from './host-calendar';
 import { createNativeLocalAttachmentsForHost, nativeFileChannels, prepareNativeTaskAttachmentAvailabilityPreflight,
     prepareNativeTaskAttachmentAvailability, prepareNativeProjectFileAvailability, nativeProjectFileAvailabilityInitialURL,
     createNativeReadOnlySelfHostedAttachments, assertNativeSelfHostedAttachmentEncryptionAdmission } from './host-attachments';
@@ -526,8 +527,16 @@ const persistentCapture = nativeSync ? {
     },
 } : null;
 
+/**
+ * The external calendars and Settings › Calendar (host-calendar.ts), on a host with the device calendar bridge (Android): RN's
+ * AsyncStorage keys, the polyfill's fetch and file reads, CalendarContract through HostCalendars. The iOS host and the gates'
+ * stand-in bridge have none: no calendar, as before.
+ */
+const nativeCalendar = nativeSync && typeof globalThis.__mindwtrCalendarCall === 'function'
+    ? createNativeCalendar(keyValue, () => globalThis.__mindwtrCalendarCall as never, () => globalThis.__mindwtrFileCall as never)
+    : null;
 const contract = createNativeHostContract({ reminderPlatform: globalThis.__mindwtrHostPlatform === 'ios' ? 'ios' : 'android', get syncSettings() { return nativeSync?.settingsHost ?? iosManualSync?.settingsHost; }, ...(nativeAI ? { ai: nativeAI } : {}),
-    calendar: iosCalendar,
+    calendar: iosCalendar ?? nativeCalendar ?? undefined,
     get attachments() {
         const selected = iosProjectAttachmentDownload ? iosSelfHostedProjectAttachments?.contractHost ?? iosManualSync?.attachmentsHost : attachmentsHost;
         if (!iosRelocatedProjectAvailability || !selected) return selected ?? undefined;
@@ -539,6 +548,21 @@ const contract = createNativeHostContract({ reminderPlatform: globalThis.__mindw
     },
     ...(nativeAbout ? { about: nativeAbout } : {}),
     ...(persistentCapture ? { persistentCapture } : {}) });
+/** Each screen's external calendars (host-calendar.ts): a load that ends tells Kotlin to read the screen again. */
+const calendarFeeds = nativeCalendar ? createCalendarFeeds({
+    load: (input) => contract.loadExternalCalendarFeed(input) as never,
+    changed: (slot, feed) => {
+        try {
+            // Counts only: never a URL, a calendar name or an event title.
+            logInfo('Native Android external calendars loaded', { scope: 'calendar', context: { releaseCheck: 'v1.3.5/native-android-calendar-feeds', slot,
+                outcome: feed.status, calendarCount: String(feed.calendars?.length ?? 0), eventCount: String(feed.status === 'ready' ? feed.events.length : 0) } });
+            checked(native().hostEvent(JSON.stringify({ type: 'calendarFeed', slot })));
+        } catch { /* the screen reads again on its next refresh */ }
+    },
+}) : null;
+/** A Calendar call's input with the feed the Calendar shows; a host without calendars sends none (core then shows no events). */
+const withCalendar = <T,>(input: T): T => (calendarFeeds ? calendarFeeds.calendar(input) : input);
+const withReview = <T extends Record<string, unknown>>(slot: 'weeklyReview' | 'dailyReview', input: T): T => (calendarFeeds ? calendarFeeds.review(slot, input) : input);
 
 const projectAvailabilityDeps = (projectId: string): Parameters<typeof createPreparedProjectAvailabilityMethods>[0] => ({
     readiness: () => {
@@ -629,7 +653,7 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
     | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
-    | 'syncPreference' | 'setAISetting' | 'notificationsSetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand | ProjectDetailCommand;
+    | 'syncPreference' | 'setAISetting' | 'notificationsSetting' | 'calendarSetting' | SyncScreenCommand | AIScreenCommand | CalendarScreenCommand | AttachmentCommand | ProjectDetailCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
 type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncBackend' | 'saveSyncBackend' | 'syncNow' | 'testSyncConnection'
     | 'pickSyncFolder' | 'connectDropbox' | 'disconnectDropbox' | 'runSyncEncryptionAction';
@@ -638,6 +662,8 @@ type SyncScreenCommand = 'openSyncSettings' | 'closeSyncSettings' | 'selectSyncB
  * journaled: core's NATIVE_UNJOURNALED_COMMANDS, a key or a URL that may hold a password).
  */
 type AIScreenCommand = 'openAISettings' | 'setAIKey' | 'setAIEndpoint';
+/** Settings › Calendar's new subscription, sent by CalendarSettings.kt itself: never journaled (its URL may hold a password). */
+type CalendarScreenCommand = 'calendarFeedAdd';
 /** Attachments' writes, sent by Attachments.kt (the editor's draft list, a project's list written at once). */
 type AttachmentCommand = 'attachmentAddFile' | 'attachmentLinks' | 'attachmentRemove';
 /** Project details' edit, sent by ProjectDetails.kt (journaled ahead): core's runProjectEdit. */
@@ -1016,17 +1042,26 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     trash: (input) => contract.getTrashView(input),
     review: (input) => contract.getReviewOverview(input),
     reviewOverview: (input) => contract.getReviewOverview(input),
-    weekly: (input) => contract.getWeeklyReview(input),
-    weeklyReview: (input) => contract.getWeeklyReview(input),
-    weeklyList: (input) => contract.getWeeklyReviewList(input),
-    weeklyReviewList: (input) => contract.getWeeklyReviewList(input),
-    daily: (input) => contract.getDailyReview(input),
-    dailyReview: (input) => contract.getDailyReview(input),
-    calendar: (input) => contract.getCalendarView(input),
-    calendarSheet: (input) => contract.getCalendarItemSheet(input),
-    calendarItem: (input) => contract.getCalendarItemSheet(input),
-    calendarComposer: (input) => contract.openCalendarComposer(input),
-    calendarEdit: (input) => contract.editCalendarComposer(input),
+    // The reviews and the Calendar with each screen's external calendars (host-calendar.ts): Kotlin sends none of its own.
+    weekly: (input) => contract.getWeeklyReview(withReview('weeklyReview', input)),
+    weeklyReview: (input) => contract.getWeeklyReview(withReview('weeklyReview', input)),
+    weeklyList: (input) => contract.getWeeklyReviewList(withReview('weeklyReview', input)),
+    weeklyReviewList: (input) => contract.getWeeklyReviewList(withReview('weeklyReview', input)),
+    daily: (input) => contract.getDailyReview(withReview('dailyReview', input)),
+    dailyReview: (input) => contract.getDailyReview(withReview('dailyReview', input)),
+    calendar: (input) => (calendarFeeds ? calendarFeeds.calendarView(input, (read) => contract.getCalendarView(read)) : contract.getCalendarView(input)),
+    calendarSheet: (input) => contract.getCalendarItemSheet(withCalendar(input)),
+    calendarItem: (input) => contract.getCalendarItemSheet(withCalendar(input)),
+    // An event's sheet (Create task, Open in calendar where the calendar app can open it): the event as the Calendar shows it.
+    calendarEvent: (input) => {
+        const id = (input as { eventId?: unknown } | null)?.eventId;
+        const found = calendarFeeds && typeof id === 'string' ? calendarFeeds.event(id) : null;
+        if (!found) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: 'The event is no longer shown' } };
+        const sheet = contract.getCalendarItemSheet(found);
+        return sheet.ok ? { ok: true, value: { ...sheet.value, event: found.event } } : sheet;
+    },
+    calendarComposer: (input) => contract.openCalendarComposer(withCalendar(input)),
+    calendarEdit: (input) => contract.editCalendarComposer(withCalendar(input)),
     calendarPreferences: () => contract.getCalendarPreferences(),
     board: (input) => contract.getBoardView(input),
     boardList: (input) => contract.getBoardList(input),
@@ -1070,6 +1105,9 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     dataTaskNotesExport: (input) => boundedExport(contract.getDataBackup('tasknotes'), input),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
+    // Settings › Calendar's view for this visit with the name and URL fields as typed, and its close (none writes).
+    calendarSettings: (input) => contract.getCalendarSettings(input),
+    calendarSettingsClose: () => contract.closeCalendarSettings(),
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
@@ -1153,6 +1191,24 @@ const ABOUT_REQUESTS: Record<string, (input: never) => Promise<Reply>> = {
     recordAboutPromptActivity: () => contract.recordAboutPromptActivity(),
     attemptAboutStoreReview: (input) => contract.attemptAboutStoreReview(input),
 };
+/**
+ * Settings › Calendar's device calls and the screens' calendar reloads (native-host-contract-settings-calendar.ts): each waits on
+ * the device (a permission prompt, a provider read, every subscription's fetch), so CoreHost.calendarRequest waits for it without
+ * holding the engine. None is a store write: the screen's open and Grant access store only RN's device copies, as RN's mount does.
+ */
+const CALENDAR_REQUESTS: Record<string, (input: never) => Promise<Reply> | Reply> = {
+    openCalendarSettings: () => contract.openCalendarSettings(),
+    grantDeviceCalendarAccess: () => contract.grantDeviceCalendarAccess(),
+    testCalendarFeeds: () => contract.testCalendarFeeds(),
+    refreshCalendarPushTargets: () => contract.refreshCalendarPushTargets(),
+    refreshCalendarFeed: (input) => {
+        const slot = (input as { slot?: unknown } | null)?.slot;
+        if (!calendarFeeds || (slot !== 'calendar' && slot !== 'weeklyReview' && slot !== 'dailyReview')) {
+            return { ok: false, error: { code: 'INVALID_INPUT', message: 'A screen slot is required' } };
+        }
+        return { ok: true, value: calendarFeeds.refresh(slot) };
+    },
+};
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
 const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply>> = {
     activateProject: (input) => contract.activateProject(input),
@@ -1168,8 +1224,8 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply
     // The Weekly Review's project Add task: runReviewAction too, logged apart because its request is kept on disk.
     reviewTask: (input) => contract.runReviewAction(input),
     // The Calendar's and the Board's actions; a create (a composer save, a Duplicate) is logged apart because its request is kept on disk.
-    calendarAction: (input) => contract.runCalendarAction(input),
-    calendarCreate: (input) => contract.runCalendarAction(input),
+    calendarAction: (input) => contract.runCalendarAction(withCalendar(input)),
+    calendarCreate: (input) => contract.runCalendarAction(withCalendar(input)),
     boardAction: (input) => contract.runBoardAction(input),
     boardCreate: (input) => contract.runBoardAction(input),
     // A list's bulk bar (its delete's Undo too), and Focus's View options grouping, saved filters and Today's Focus order.
@@ -1212,6 +1268,9 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply
     openAISettings: (input) => contract.openAISettings(input),
     setAIKey: (input) => contract.setAIKey(input),
     setAIEndpoint: (input) => contract.setAIEndpoint(input),
+    // Settings › Calendar: an edit the view gave (journaled), and a new subscription (never journaled: its URL may hold a password).
+    calendarSetting: (input) => contract.setCalendarSetting(input),
+    calendarFeedAdd: (input) => contract.addCalendarFeed(input),
     // Attachments (native-host-contract-attachments.ts): Add file and Add photo, the link sheet's Save, and Remove. A project's
     // are written at once through receipts; a task's answer the editor's next draft list and write nothing.
     attachmentAddFile: (input) => contract.addAttachmentFile(input),
@@ -4304,6 +4363,15 @@ globalThis.MindwtrHost = {
         return submit(async () => {
             const request = ABOUT_REQUESTS[name];
             if (!request) throw new Error(`INVALID_INPUT: no About request ${name}`);
+            return unwrap(await request(JSON.parse(json) as never));
+        });
+    },
+    /** `name` is one of CALENDAR_REQUESTS; `json` is that request's input. It writes no task data. */
+    calendarRequest(name: string, json: string): string {
+        return submit(async () => {
+            requireSaved();
+            const request = CALENDAR_REQUESTS[name];
+            if (!request) throw new Error(`INVALID_INPUT: no calendar request ${name}`);
             return unwrap(await request(JSON.parse(json) as never));
         });
     },

@@ -58,6 +58,8 @@ class CoreHost(
     private val appInfo: String? = null,
     /** Settings › Data's restore, merge and import files between prepare and commit (BackupOperations); null: this host has none. */
     private val backups: BackupOperations? = null,
+    /** The device calendars core's external calendars read (bundle/host-calendar.ts); null: this host reads none. */
+    private val calendars: HostCalendars? = null,
 ) {
     /**
      * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
@@ -467,6 +469,9 @@ class CoreHost(
         bridge.setProperty("fileDirectories", guarded { _ ->
             JSONObject().put("document", files.documentDirectory).put("cache", files.cacheDirectory).toString()
         })
+        // The device calendars (host-calendar.ts): each call only starts here; HostIo runs it on its calendar thread and the pump
+        // settles it, as a fetch. A permission prompt answers when the user does, holding no thread meanwhile.
+        calendars?.let { device -> bridge.setProperty("calendarCall", guarded { args -> io.calendar(args[0] as String, device::call) }) }
         // Reminder alarms (host-reminders.ts): core's plan applied, the notification permission, RN's old alarms cancelled once.
         reminders?.let { alarms ->
             bridge.setProperty("alarmApply", guarded { args -> alarms.apply(args[0] as String); null })
@@ -780,6 +785,13 @@ class CoreHost(
      * write: a project download's availability fields are identity-guarded and run again by the next Download or sync.
      */
     fun attachmentRequest(name: String, json: String): JSONObject = callLong("attachmentRequest", name, json)
+
+    /**
+     * Settings › Calendar's device calls and a screen's calendar reload (host-entry.ts CALENDAR_REQUESTS) with [json] unchanged: a
+     * permission prompt waits on the user and Test on every subscription's fetch, so it never holds the engine ([callLong]). None
+     * is a journaled write: the screen's open and Grant access store only RN's device copies, as RN's mount does.
+     */
+    fun calendarRequest(name: String, json: String): JSONObject = callLong("calendarRequest", name, json)
 
     /**
      * A long call's handle: [cancel] frees the thread that waits on it at once and aborts its operation's signal

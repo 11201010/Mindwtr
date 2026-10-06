@@ -195,7 +195,7 @@ export type SettingsDeps = {
 export type NativePersistentCaptureHost = { read(): boolean; write(enabled: boolean): void };
 
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'notifications', 'sync', 'data', 'advanced', 'ai', 'about'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'notifications', 'sync', 'data', 'advanced', 'ai', 'about', 'calendar'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 

@@ -402,7 +402,7 @@ private fun BackendChip(sync: SyncSettingsModel, option: JSONObject) {
 
 /** RN's SettingsGuideLink: the title in the tint with lucide's external-link; it opens the guide in the browser. */
 @Composable
-private fun GuideLink(guide: JSONObject, tag: String) {
+internal fun GuideLink(guide: JSONObject, tag: String) {
     val c = LocalTheme.current.colors
     val context = LocalContext.current
     val title = guide.getString("title")

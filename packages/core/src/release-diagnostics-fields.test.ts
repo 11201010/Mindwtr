@@ -48,6 +48,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'retryCount',
     // deferred-attachment-pass: which pass owes the deferred pre-sync phase's work.
     'owed',
+    // native-android-calendar-feeds: which screen's external calendars loaded (calendar, weeklyReview, dailyReview); outcome and the counts are below.
+    'slot',
     // candidate-ciphertext-probe: what the activation candidate's folder held (plaintext, encrypted or mixed).
     'found',
     // native-splash-cap reuses releaseCheck, stage, and durationMs below.

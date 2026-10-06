@@ -57,6 +57,8 @@ class WriteJournal(
             "disconnectDropbox" to "{requestId}", "runSyncEncryptionAction" to "{}",
             // Settings › AI's key and base URL: never on disk either (UNJOURNALED).
             "setAIKey" to "{requestId}", "setAIEndpoint" to "{requestId}",
+            // Settings › Calendar's new subscription: never on disk (UNJOURNALED), its URL may carry a password.
+            "calendarFeedAdd" to "{requestId}",
             // Attachments: Add file and Add photo, the link sheet's Save, Remove (a project's written at once through receipts).
             "attachmentAddFile" to "{requestId}", "attachmentLinks" to "{requestId}", "attachmentRemove" to "{requestId,attachmentId}",
             // Project details (ProjectDetails.kt): the user's edit, journaled ahead of its send (core's runProjectEdit).
@@ -64,14 +66,14 @@ class WriteJournal(
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
             "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "notificationsSetting", "manageEditor", "manageDelete", "syncPreference",
-            "setAISetting", "openAISettings").associateWith { "{requestId}" }
+            "setAISetting", "openAISettings", "calendarSetting").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's
          * NATIVE_UNJOURNALED_COMMANDS, a payload that can carry a secret. check-boot-gates.mjs keeps it equal to core's set.
          */
         val UNJOURNALED = setOf("openSyncSettings", "closeSyncSettings", "selectSyncBackend", "saveSyncBackend", "syncNow", "testSyncConnection",
-            "pickSyncFolder", "connectDropbox", "disconnectDropbox", "runSyncEncryptionAction", "setAIKey", "setAIEndpoint")
+            "pickSyncFolder", "connectDropbox", "disconnectDropbox", "runSyncEncryptionAction", "setAIKey", "setAIEndpoint", "calendarFeedAdd")
 
         /** Whether [method] with [args] is an [UNJOURNALED] write: CoreHost's long calls (callLong) take only these. */
         fun unjournaled(method: String, args: List<Any?>): Boolean = method in WRITES && key(method, args) in UNJOURNALED

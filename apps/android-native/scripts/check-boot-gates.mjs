@@ -893,7 +893,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\),\s*backups = BackupOperations\(File\(app\.noBackupFilesDir, \"backup-operations\"\), File\(app\.filesDir, \"snapshots\"\), maxPlanBytes = DataTransferLimits\.MAX_PLAN_BYTES\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: "", legacy\?\.preflight == true\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\),\s*backups = BackupOperations\(File\(app\.noBackupFilesDir, \"backup-operations\"\), File\(app\.filesDir, \"snapshots\"\), maxPlanBytes = DataTransferLimits\.MAX_PLAN_BYTES\),\s*calendars = HostCalendars\(app\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: "", legacy\?\.preflight == true\)/);
 // Once the guard passes, it copies RN's RKStorage before it returns, so before RnKeyValue (or anything) opens it: an open can
 // checkpoint RN's WAL away when it closes.
 assert.match(guard, /check\(blocked == null\)[^\n]*\n(?:(?!return Opened\()[\s\S])*?\n\s*checkpointRnState\(dataDir\)\n(?:(?!fun )[\s\S])*?return Opened\(/);
@@ -1035,7 +1035,9 @@ assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
 const bridgeCallbacks = coreHost.match(/bridge\.setProperty\([^\n]*/g);
-assert.equal(bridgeCallbacks.length, 41, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, and the background sync\'s schedule: each guarded');
+assert.equal(bridgeCallbacks.length, 42, 'the SQL calls, trace, nowMs, randomBytes, rnStateCommit, collationKey, dateTimeFormat, log, the fetch, secret and sync crypto calls, logFile, the key-value calls, hostEvent, the queue\'s file calls the attachment file, delete, abort and installer calls and the reminder alarms\' calls: and the widgets\' three calls, the background sync\'s schedule, and the device calendar call: each guarded');
+// C3: the device calendar call only starts on the engine thread; HostIo's calendar thread runs it (a prompt answers later).
+assert(bridgeCallbacks.includes('bridge.setProperty("calendarCall", guarded { args -> io.calendar(args[0] as String, device::call) }) }'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileAbort", guarded { args -> io.fileAbort(args[0] as String); null })'));
 assert(bridgeCallbacks.includes('bridge.setProperty("fileDeleteNow", guarded { args -> files.deleteNow(args[0] as String); null })'));
 // The attachment file port and the installer only start their call on the engine thread; HostIo's files thread runs it.
@@ -1098,7 +1100,10 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const fileJobs = readFileSync(resolve(app, 'android/app/src/main/java/tech/dongdongbh/mindwtr/pilot/core/FileJobs.kt'), 'utf8');
     assert.match(fileJobs, /if \(aborted\.remove\(id\)\) throw IOException\("Request cancelled"\)/);
     assert.match(fileJobs, /if \(readsDocument\) Thread\(job, "mindwtr-document-\$id"\)\.apply \{ isDaemon = true \}\.start\(\) else queue\.execute\(job\)/);
-    assert.equal(hostIo.match(/answers\.add\(/g).length, 5, 'the answer queue is the only way back');
+    // C3: a device calendar call (HostCalendars) runs on the calendar thread and answers once, when it replies.
+    assert.match(hostIo, /calendarThread\.execute \{ runCatching \{ run\(json, reply\) \}\.onFailure \{ reply\(Result\.failure\(it\)\) \} \}/, 'a calendar call runs off the engine');
+    assert.match(hostIo, /if \(replied\.compareAndSet\(false, true\)\) \{\s*answers\.add\(/, 'a calendar call answers once');
+    assert.equal(hostIo.match(/answers\.add\(/g).length, 6, 'the answer queue is the only way back');
     // A body leaves apart from its answer's JSON (ioBody), and only for the answer just taken.
     const hostAnswers = core('HostAnswers.kt');
     assert.match(hostAnswers, /held = null\s+taken = answer\.body\s+answer\s+\}/);
@@ -1226,10 +1231,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
-    const iosOnlyWrites = ['commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment', 'setCalendarSetting'];
-    // Core writes no host method calls yet (generic Calendar subscription Add):
-    // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['addCalendarFeed'];
+    const iosOnlyWrites = ['commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
+    // Core writes no host method calls yet: wiring one into host-entry fails the write-list checks above until the journal
+    // takes it. (Settings › Calendar's edits were wired in pass C3.)
+    const unwiredWrites = [];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     // The one named exception (pass D1a): Settings › Data's backup commit. Its journal entry holds the operation's reference and
     // snapshot name; CoreHost sends the checked plan (BackupOperations) as host-entry's middle argument, so the journal never
@@ -1272,7 +1277,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
         'runProjectEdit',
         // Settings › Notifications' controls (pass R2): each the state it asks for, under its receipt.
-        'setNotificationsSetting'];
+        'setNotificationsSetting',
+        // Settings › Calendar (pass C3): an edit the view gave (a receipt of its own), and a new subscription (never journaled).
+        'setCalendarSetting', 'addCalendarFeed'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1333,6 +1340,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /\.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
     // The persistent capture switch on RN's AsyncStorage key, on the host with RN's AsyncStorage (pass R2).
     assert.match(hostEntry, /const persistentCapture = nativeSync \? \{\s+read: \(\) => \(JSON\.parse\(checked\(native\(\)\.kvGet\(PERSISTENT_CAPTURE_STORAGE_KEY\)\)\) as \[string \| null\]\)\[0\] === 'true',/);
+    assert.match(hostEntry, /\}, \.\.\.\(nativeCalendar \? \{ calendar: nativeCalendar \} : \{\}\) \}\);/, 'the contract binds the calendar device');
+    // C3: core's calendar device binds RN's AsyncStorage, the polyfill's fetch and file reads, and HostCalendars, only on a host with the calendar bridge.
+    assert.match(hostEntry, /const nativeCalendar = nativeSync && typeof globalThis\.__mindwtrCalendarCall === 'function'\s*\? createNativeCalendar\(keyValue, \(\) => globalThis\.__mindwtrCalendarCall as never, \(\) => globalThis\.__mindwtrFileCall as never\)\s*: null;/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -1412,7 +1422,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert(sites >= 26, 'core\'s receipt payloads parsed');
         // A name is a receipt payload's, or a core write that keeps no payload at all (Settings › Sync's screen commands).
         for (const name of unjournaledCore) assert([...receiptNames.values()].flat().includes(name) || receiptNames.get(name)?.length === 0, `core's unjournaled ${name} is a core write's receipt payload, or a payload-less core write`);
-        const menuKeys = [...table('MENU_COMMANDS').matchAll(/\n    (\w+): \((input)?\) => contract\.(\w+)\(\2\),/g)].map(([, key, , write]) => ({ key, writes: [write] }));
+        const menuKeys = [...table('MENU_COMMANDS').matchAll(/\n    (\w+): \((input)?\) => contract\.(\w+)\((?:withCalendar\(\2\)|\2)\),/g)].map(([, key, , write]) => ({ key, writes: [write] }));
         assert.equal(menuKeys.length, table('MENU_COMMANDS').match(/\n    \w+: /g).length, 'every Menu command parsed');
         const keys = [...methods.filter((m) => writes.includes(m.name) && m.name !== 'menuCommand').map((m) => ({ key: m.name, writes: called(m.body) })), ...menuKeys];
         const expected = keys.filter((key) => key.writes.some((write) => unjournaledCore.includes(write) || receiptNames.get(write).some((name) => unjournaledCore.includes(name))))
@@ -1426,10 +1436,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // only an unjournaled write or a read, so no journaled write can skip the journal through it.
         assert.match(journalKt, /fun unjournaled\(method: String, args: List<Any\?>\): Boolean = method in WRITES && key\(method, args\) in UNJOURNALED/);
         assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?, handle: LongCall = LongCall\(\)\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
-        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['backgroundSync', 'menuCommand', 'aiRequest', 'aboutRequest', 'attachmentRequest'],
+        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['backgroundSync', 'menuCommand', 'aiRequest', 'aboutRequest', 'attachmentRequest', 'calendarRequest'],
             'only CoreWork\'s background sync run, Settings › Sync\'s commands, the AI\'s and About\'s requests and the attachments\' downloads take the long path');
         // O1: About's requests (an update check, a feedback send, the heartbeat, the prompts) are reads of core: never journaled.
         assert(!writes.includes('aboutRequest'), 'an About request is no journaled write');
+        assert.match(coreHost, /fun calendarRequest\(name: String, json: String\): JSONObject = callLong\("calendarRequest", name, json\)/);
+        assert(!writes.includes('calendarRequest'), 'a calendar request is no journaled write');
+        assert.deepEqual(called(table('CALENDAR_REQUESTS')).filter((name) => coreWrites.includes(name)), [], 'no calendar request calls a core write');
         // S4a: CoreWork's background run (core's runner) is a read-and-sync like Sync now: no journaled write.
         assert.match(coreHost, /fun backgroundSync\(trigger: String, stored: Int\): JSONObject =\s+callLong\("backgroundSync", trigger, stored, debugFault\("bgsync_deadline_ms"\)\.toIntOrNull\(\) \?: 0\)/);
         assert(!writes.includes('backgroundSync'), 'a background sync run is no journaled write');
@@ -1444,8 +1457,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // The Kotlin screens' unjournaled commands are the unjournaled set: Settings › Sync's, and Settings › AI's key and base URL.
         const syncCommands = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
         const aiCommands = [.../val AI_COMMANDS = setOf\(([^)]*)\)/.exec(source('AISettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
-        assert.deepEqual([...syncCommands, ...aiCommands.filter((name) => name !== 'openAISettings')].sort(), [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(),
-            'SYNC_COMMANDS and AI_COMMANDS (but its journaled open) are WriteJournal.UNJOURNALED');
+        const calendarCommands = [.../val CALENDAR_COMMANDS = setOf\(([^)]*)\)/.exec(source('CalendarSettings.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+        assert.deepEqual([...syncCommands, ...aiCommands.filter((name) => name !== 'openAISettings'), ...calendarCommands].sort(), [...(kotlin[1] ?? '').matchAll(/"(\w+)"/g)].map((m) => m[1]).sort(),
+            'SYNC_COMMANDS, AI_COMMANDS (but its journaled open) and CALENDAR_COMMANDS are WriteJournal.UNJOURNALED');
         // Review S3 4: each backend choice goes, in tap order; only the same choice still pending is dropped.
         assert.match(source('SyncSettings.kt'), /run\("selectSyncBackend", [^\n]*key = "selectSyncBackend:\$option", ordered = choices\)/);
         assert.match(source('SyncSettings.kt'), /if \(!light && !inFlight\.add\(key\)\) return/);
@@ -1790,6 +1804,9 @@ assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueu
     assert.match(hostEntry, /scheduleBackgroundSync: \(on\) => \{ const bridge = native\(\); if \(bridge\.bgSyncSchedule\) checked\(bridge\.bgSyncSchedule\(on\)\); \},/);
     const tested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-sync.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(tested.status, 0, `bundle/host-sync.test.ts: ${tested.stderr.slice(-1500)}`);
+    // C3: the external calendars' device binding and each screen's feed (bundle/host-calendar.test.ts, bun).
+    const calendarTested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-calendar.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
+    assert.equal(calendarTested.status, 0, `bundle/host-calendar.test.ts: ${calendarTested.stderr.slice(-1500)}`);
     // D8: the channel is the build's flavor, read by core as RN's isFossBuild; no host passes a fixed false any more.
     assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /create\("play"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "false"\)[^}]*\}\s+create\("foss"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "true"\)/);
     assert.match(coreHost, /engine\.globalObject\.setProperty\("__mindwtrFossBuild", BuildConfig\.FOSS\)/);
@@ -2159,7 +2176,7 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.match(menuModel, /"savedSearchDelete"\) \+ SETTINGS_KINDS/);
     const kinds = [...[...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind),
         ...[...new RegExp('val SETTINGS_KINDS = setOf\\(([^)]*)\\)').exec(source('SettingsModel.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind)];
-    const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \((input)?\) => contract\.\w+\(\2\),$/gm)].map(([, kind]) => kind);
+    const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \((input)?\) => contract\.\w+\((?:withCalendar\(\2\)|\2)\),$/gm)].map(([, kind]) => kind);
     // Settings › Sync's screen commands are Menu commands too, sent by SyncSettings.kt through CoreHost.syncCommand, never by send().
     const syncKinds = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Settings › AI's screen writes too (its open, a key, a base URL), sent by AISettings.kt; its controls' setAISetting is a Settings kind.
@@ -2168,8 +2185,10 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     const attachmentKinds = [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Project details' writes, sent by ProjectDetails.kt: core's prepared commits.
     const projectDetailKinds = [.../val PROJECT_DETAIL_KINDS = setOf\(([^)]*)\)/.exec(source('ProjectDetails.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
-    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...attachmentKinds, ...projectDetailKinds].sort(), 'every menu command kind is one host command, logged as its operation');
-    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
+    // Settings › Calendar's new subscription (pass C3), sent by CalendarSettings.kt; its other writes are the Settings kind calendarSetting.
+    const calendarKinds = [.../val CALENDAR_COMMANDS = setOf\(([^)]*)\)/.exec(source('CalendarSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
+    assert.deepEqual(hostKinds.sort(), [...kinds, ...syncKinds, ...aiKinds, ...calendarKinds, ...attachmentKinds, ...projectDetailKinds].sort(), 'every menu command kind is one host command, logged as its operation');
+    assert.match(hostEntry, new RegExp(`type MenuCommand = ${kinds.map((kind) => `'${kind}'`).join('\\s*\\| ')}\\s*\\| SyncScreenCommand \\| AIScreenCommand \\| CalendarScreenCommand \\| AttachmentCommand \\| ProjectDetailCommand;`));
     assert.match(hostEntry, new RegExp(`type ProjectDetailCommand = ${projectDetailKinds.map((kind) => `'${kind}'`).join('\\s*\\| ')};`));
     assert.doesNotMatch(menuModel, new RegExp(`"(${projectDetailKinds.join('|')})"`), 'the Menu tab never sends a Project details command itself');
     // A Project details edit is the user's intent, journaled at once before anything else (CoreHost.journalAhead), then sent
@@ -2311,9 +2330,12 @@ assert.match(viewStateKt, /private fun key\(list: String\) = "mindwtr:view:group
 
 // Pass 7: Contexts, Trash, Review, and the Weekly and Daily Review, on core's list views and review views.
 // Reads pass Kotlin's input to core unchanged; every write is core's action through MenuModel.act -> send -> perform(action).
-for (const [name, method] of [['contexts', 'getContextsView'], ['trash', 'getTrashView'], ['review', 'getReviewOverview'], ['weekly', 'getWeeklyReview'],
-    ['weeklyList', 'getWeeklyReviewList'], ['daily', 'getDailyReview']]) {
+for (const [name, method] of [['contexts', 'getContextsView'], ['trash', 'getTrashView'], ['review', 'getReviewOverview']]) {
     assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+}
+// C3: the reviews' reads carry their external calendars (host-calendar.ts), Kotlin's input otherwise unchanged.
+for (const [name, method, slot] of [['weekly', 'getWeeklyReview', 'weeklyReview'], ['weeklyList', 'getWeeklyReviewList', 'weeklyReview'], ['daily', 'getDailyReview', 'dailyReview']]) {
+    assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(withReview\\('${slot}', input\\)\\),$`, 'm'), `menuRead ${name} is core's ${method} with its calendar`);
 }
 for (const [name, method] of [['contextsAction', 'runContextsAction'], ['trashAction', 'runTrashAction'], ['reviewAction', 'runReviewAction'], ['reviewTask', 'runReviewAction']]) {
     assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
@@ -2401,11 +2423,18 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const boardUi = source('BoardScreen.kt');
     const pass8 = { calendarModel, calendarUi, boardModel, boardUi };
     // Reads pass Kotlin's input to core unchanged (the composer's open and edit write nothing); writes are core's actions.
-    for (const [name, method] of [['calendar', 'getCalendarView'], ['calendarSheet', 'getCalendarItemSheet'], ['calendarComposer', 'openCalendarComposer'],
-        ['calendarEdit', 'editCalendarComposer'], ['board', 'getBoardView'], ['boardList', 'getBoardList']]) {
+    // C3: the Calendar's reads and actions carry the feed the Calendar shows (host-calendar.ts); Kotlin sends none of its own.
+    for (const [name, method] of [['calendarSheet', 'getCalendarItemSheet'], ['calendarComposer', 'openCalendarComposer'], ['calendarEdit', 'editCalendarComposer']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(withCalendar\\(input\\)\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
+    }
+    assert.match(hostEntry, /^\s+calendar: \(input\) => \(calendarFeeds \? calendarFeeds\.calendarView\(input, \(read\) => contract\.getCalendarView\(read\)\) : contract\.getCalendarView\(input\)\),$/m, 'menuRead calendar is core\'s getCalendarView');
+    for (const [name, method] of [['board', 'getBoardView'], ['boardList', 'getBoardList']]) {
         assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuRead ${name} is core's ${method}`);
     }
-    for (const [name, method] of [['calendarAction', 'runCalendarAction'], ['calendarCreate', 'runCalendarAction'], ['boardAction', 'runBoardAction'], ['boardCreate', 'runBoardAction']]) {
+    for (const [name, method] of [['calendarAction', 'runCalendarAction'], ['calendarCreate', 'runCalendarAction']]) {
+        assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(withCalendar\\(input\\)\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
+    }
+    for (const [name, method] of [['boardAction', 'runBoardAction'], ['boardCreate', 'runBoardAction']]) {
         assert.match(hostEntry, new RegExp(`^\\s+${name}: \\(input\\) => contract\\.${method}\\(input\\),$`, 'm'), `menuCommand ${name} is core's ${method}`);
     }
     // Every write is MenuModel's send -> perform(action) with its exact FailedAction: an action through command (a new request UUID,
@@ -2693,7 +2722,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(settingsModel, /fun gtd\(edit: JSONObject\) = menu\.command\("gtdSetting", JSONObject\(\)\.put\("edit", edit\)\)/);
     assert.match(settingsModel, /fun saveEditor\(action: FailedAction\) = menu\.create\(action\)/);
     assert.match(settingsModel, /return FailedAction\("manageEditor", open\.getString\("requestId"\), input\.toString\(\)\)/, 'the editor\'s request UUID stays with its dialog');
-    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
+    assert.match(menuModel, /"generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting", "calendarSetting" -> JSONObject\(action\.title\)\.put\("requestId", action\.id\)/);
     assert.match(menuModel, /"somedayRename", "somedayReorder", "somedayDelete" -> JSONObject\(action\.title\)/);
     for (const call of ['"manageDelete")', '"somedayDelete")']) {
         const at = settingsUi.indexOf(call);
@@ -2947,7 +2976,9 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     }
     // A write core refused, or whose write did not land (ACTION_FAILED, as core's contracts say for these two), owes nothing: Mind Sweep's
     // failure line or the picker's line shows instead of the failure message.
-    assert.match(menuModel, /private val LANDLESS = setOf\("mindSweepAdd", "bulkCreate"\)/);
+    // C3: Settings › Calendar's writes too (core's ACTION_FAILED: the device refused, or no calendar push yet): its toast shows core's words.
+    assert.match(menuModel, /private val LANDLESS = setOf\("mindSweepAdd", "bulkCreate", "calendarSetting"\)/);
+    assert.match(menuModel, /if \(action\.kind == "calendarSetting"\) \{ shell\.acknowledged\(action\); return@perform \}/);
     assert.match(menuModel, /\|\| \(action\.kind in LANDLESS && failure\.message\?\.startsWith\("ACTION_FAILED"\) == true\)/);
     assert.match(menuModel, /if \(refused && action\.kind in LANDLESS\) \{\s+shell\.acknowledged\(action\)\s+shell\.ui \{ landless\(action\) \}\s+return@perform/);
     // Navigation: the Inbox's Mind Sweep (its pill and its empty-Inbox button) and the Weekly Review's open it; the More sheet's saved
@@ -4206,9 +4237,11 @@ export function setSha256HexProvider() {
 // host-sync.ts's and host-reminders.ts's core imports: bound only on a host with the key-value or the alarm bridges, which the
 // stand-in bridge below lacks, so they are bundled and never run here. Each one the fake does not define throws if anything calls it.
 // host-attachments.ts's too: host-sync.ts binds them on the same host only. host-widgets.ts's are bound only on a host with RN's
-// widget module (Android), which the stand-in bridge lacks too.
+// widget module (Android), which the stand-in bridge lacks too. host-calendar.ts's are bound only on a host with the device
+// calendar bridge (C3), which it lacks as well.
 const hostSyncTs = readFileSync(resolve(app, 'bundle/host-sync.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-attachments.ts'), 'utf8')
-    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-widgets.ts'), 'utf8');
+    + readFileSync(resolve(app, 'bundle/host-reminders.ts'), 'utf8') + readFileSync(resolve(app, 'bundle/host-widgets.ts'), 'utf8')
+    + readFileSync(resolve(app, 'bundle/host-calendar.ts'), 'utf8');
 const syncOnly = [...new Set([...hostSyncTs.matchAll(/^import \{([\s\S]*?)\} from '@mindwtr\/core';/gm)].flatMap((m) => [...m[1].matchAll(/^\s+(\w+),$/gm)].map((n) => n[1])))]
     .filter((name) => !new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b|export \\{[^}]*\\b${name}\\b`).test(fakeCore));
 assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('createMobileSyncTriggers'), 'host-sync.ts\'s core imports parsed');

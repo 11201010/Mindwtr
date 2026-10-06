@@ -103,6 +103,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "sync" -> SyncSettings(model, shown.view)
             "ai" -> AISettings(model, shown.view)
             "about" -> AboutSettings(model, shown.view)
+            "calendar" -> CalendarSettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -1079,6 +1080,7 @@ private fun SettingsDialogs(model: InboxViewModel, page: SettingsPage) = with(mo
             dismissButton = { androidx.compose.material3.TextButton(close, Modifier.testTag("analytics-keep")) { Text(confirm.getString("keepLabel").uppercase()) } },
         )
     }
+    if (settings.screen == "calendar") CalendarSettingsDialogs(model)
     if (settings.screen == "gtd-task-editor") settings.local.optString("sheetField").ifEmpty { null }?.let { id ->
         val field = page.view.getJSONObject("taskEditor").menuObjects("groups").flatMap { it.menuObjects("fields") }.firstOrNull { it.getString("id") == id }
         if (field != null) FieldSheet(model, field)

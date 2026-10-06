@@ -458,8 +458,8 @@ describe('native host contract: Settings › GTD', () => {
         expect(value(host.getGtdSettings({ taskOpenMode: 'sideways' })).taskEditor.openMode.options.find((option) => option.selected)?.value).toBe('automatic');
         const menu = value(host.getSettingsMenu());
         expect(menu.groups.flat().filter((row) => row.enabled).map((row) => row.id)).toEqual(['general', 'gtd', 'manage', 'notifications', 'sync', 'data', 'advanced', 'about']);
-        // Settings › Advanced opens for its AI screen (pass C1); Calendar comes with its own pass.
-        expect(menu.advanced.rows.filter((row) => row.enabled).map((row) => row.id)).toEqual(['ai']);
+        // Settings › Advanced opens its AI screen (pass C1) and its Calendar screen (pass C3).
+        expect(menu.advanced.rows.filter((row) => row.enabled).map((row) => row.id)).toEqual(['ai', 'calendar']);
     });
 
     it('changes the revision with the settings and the language', async () => {

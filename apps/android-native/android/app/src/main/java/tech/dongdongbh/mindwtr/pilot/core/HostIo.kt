@@ -75,6 +75,8 @@ class HostIo(context: Context) {
     private val secretThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-secrets") }
     /** Core's attachment file port (HostFiles.call), one call at a time, in the order JS made them. */
     private val fileThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-files") }
+    /** The device calendar reads (HostCalendars): a provider query, or a permission prompt that answers when the user does. */
+    private val calendarThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-calendar") }
     /** Sync encryption's Argon2id and AES-GCM (HostCrypto): an Argon2id holds its thread for about a second, never the engine. */
     private val cryptoThread = Executors.newSingleThreadExecutor { task -> Thread(task, "mindwtr-crypto") }
     private val calls = ConcurrentHashMap<String, Call>()
@@ -196,6 +198,25 @@ class HostIo(context: Context) {
     }
 
     /**
+     * Starts a device calendar call (HostCalendars.call) on the calendar thread. Its answer is `{ id, value }` or `{ id, error }`,
+     * queued when [run] replies (a permission prompt replies once the user answers it; the thread is free meanwhile).
+     */
+    fun calendar(json: String, run: (String, (Result<Any?>) -> Unit) -> Unit): String {
+        val id = (++nextId).toString()
+        val replied = java.util.concurrent.atomic.AtomicBoolean(false)
+        val reply = { result: Result<Any?> ->
+            if (replied.compareAndSet(false, true)) {
+                answers.add(Answer(result.fold({ JSONObject().put("id", id).put("value", it ?: JSONObject.NULL) },
+                    { JSONObject().put("id", id).put("error", it.message ?: it.javaClass.simpleName) }).toString()))
+                wake()
+            }
+        }
+        calendarThread.execute { runCatching { run(json, reply) }.onFailure { reply(Result.failure(it)) } }
+        open += 1
+        return id
+    }
+
+    /**
      * Starts a sync crypto call (HostCrypto) on the crypto thread: [json] is `{ op: "argon2id", pass, salt, m, t, p, dkLen }` or
      * `{ op: "aesGcmSeal" | "aesGcmOpen", key, nonce, data, aad }`, every byte field as base64; even the request is read there.
      * Its answer is `{ id, body: true }` with the bytes from [body], or `{ id, error }` with `auth: true` for core's
@@ -284,6 +305,7 @@ class HostIo(context: Context) {
         calls.values.forEach { it.cancel() }
         secretThread.shutdown()
         fileThread.shutdown()
+        calendarThread.shutdown()
         // A crypto call still queued never runs; one running is dropped when it ends (HostCrypto.answer). Every answer already
         // queued goes too, and none is queued after: a secret's value, a derived key or plaintext must not outlive the host in a
         // queue nobody drains. A secret write still queued runs (its value reaches the keystore), its answer dropped.

@@ -48,7 +48,7 @@ private val CREATES = setOf("somedayTask", "somedaySection", "reviewTask", "cale
  * The commands whose ACTION_FAILED means core's write did not land (core's contracts say so): Mind Sweep's Add (RN's "add failed"
  * line) and Bulk organize's create (RN's "failed to create" line). Like a refusal, nothing is owed.
  */
-private val LANDLESS = setOf("mindSweepAdd", "bulkCreate")
+private val LANDLESS = setOf("mindSweepAdd", "bulkCreate", "calendarSetting")
 
 /** The lists with RN's selection mode on core's bulk contract (getBulkActions, runBulkAction). */
 val BULK_LISTS = setOf("inbox", "waiting", "someday", "reference", "done")
@@ -376,6 +376,25 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         keepDialog(null)
         if (target == MenuScreen.History) readHistory()
         reload()
+        // RN mounts the Calendar and the review modals anew: each loads its external calendars again.
+        when (target) {
+            MenuScreen.Calendar -> calendarFeed("calendar")
+            MenuScreen.Weekly -> calendarFeed("weeklyReview")
+            MenuScreen.Daily -> calendarFeed("dailyReview")
+            else -> {}
+        }
+    }
+
+    /**
+     * A screen's external calendars load again (host-calendar.ts refresh: RN's reload on mount, focus and a return to the app);
+     * its end reads the screen again (the host's calendarFeed event). One never loaded loads at the screen's first read.
+     */
+    internal fun calendarFeed(slot: String) {
+        val runtime = shell.coreHost() ?: return
+        Thread({
+            runCatching { runtime.calendarRequest("refreshCalendarFeed", JSONObject().put("slot", slot).toString()) }
+                .onFailure { Log.w(CoreHost.TAG, "Calendar reload failed slot=$slot ${failureForLog(it)}") }
+        }, "mindwtr-calendar-feed").start()
     }
 
     /**
@@ -391,6 +410,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (screen == MenuScreen.MindSweep) sweep.forget()
         leave(if (flow || over) MenuScreen.entries.firstOrNull { it.name == saved.get<String>(if (over) "screenFrom" else "reviewFrom") } else null)
         if (list != null) refresh()
+        // Back on the Calendar (the screen, or the quick-access tab): RN's focus reload.
+        if (list == "calendar") calendarFeed("calendar")
     }
 
     /** A system entry's tab or capture (EntryPoints.kt): the sheet closes and an open screen is left, as RN's router replaces it. */
@@ -1315,7 +1336,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         // Bulk organize's create, Mind Sweep's Add and a saved search's Delete: core's whole input and the request UUID.
         "bulkCreate", "mindSweepAdd", "savedSearchDelete" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
-        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting" -> JSONObject(action.title).put("requestId", action.id)
+        "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting", "calendarSetting" -> JSONObject(action.title).put("requestId", action.id)
         // Settings › Notifications' edit, as core gave it.
         "notificationsSetting" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
@@ -1338,7 +1359,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             // A refused saved filter wrote nothing either: the next Save gets a fresh one.
             if (refused && action.kind == "focusSave") shell.ui { focusControls.refused(action) }
             // A refused Settings write wrote nothing: a GTD time core cannot read is RN's warning toast, not an error.
-            if (refused && action.kind in SETTINGS_KINDS) { shell.ui { settings.refused(action, failure) }; if (action.kind == "gtdSetting") return@perform }
+            // Settings › Calendar's: a stale view reads again, and ACTION_FAILED (the device refused, or no calendar push yet) wrote nothing.
+            if (refused && action.kind in SETTINGS_KINDS) { shell.ui { settings.refused(action, failure) }; if (action.kind == "gtdSetting") return@perform
+                if (action.kind == "calendarSetting") { shell.acknowledged(action); return@perform } }
             // Review's compare-and-set writes refused as stale wrote nothing: core's view is read again (never resent), with its new revisions.
             if (refused && action.kind == "reviewAction" && failure.message?.startsWith("STALE_REVISION") == true) shell.ui { bulkBusy = null; whenIdle { reload() } }
             // An Undo core can no longer run wrote nothing: RN's undo-failed toast (core's text), not an error.
