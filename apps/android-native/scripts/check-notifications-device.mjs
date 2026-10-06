@@ -170,6 +170,8 @@ const openNotifications = async () => {
     const label = `${en['settings.notifications']}. ${en['settings.menuDesc.notifications']}`;
     return tapExpecting(withDescription(nodes, label) ?? fail('no Notifications row'), (current) => Boolean(tagged(current, 'settings-notifications')), 'Settings › Notifications');
 };
+/** On screen: listed with a non-empty box (a row past the fold is listed with an empty one). */
+const visible = (node) => { if (!node) return false; const [x1, y1, x2, y2] = node.bounds.match(/\d+/g).map(Number); return x2 > x1 && y2 > y1 && y2 < 2150; };
 /** Scrolls Notifications until [found] shows. */
 const reveal = async (found) => {
     let nodes = await screen();
@@ -180,7 +182,7 @@ const reveal = async (found) => {
 };
 /** The switch labelled [label] flipped through the app, then [stored] (the settings) awaited. */
 const flip = async (label, stored, description) => {
-    const nodes = await reveal((current) => Boolean(withDescription(current, label)));
+    const nodes = await reveal((current) => visible(withDescription(current, label)));
     const was = switchOn(nodes, label);
     await tapExpecting(withDescription(nodes, label), (current) => switchOn(current, label) !== was, `${label} to switch`);
     await waitUntil(description, async () => stored(settings()), 20_000);
@@ -235,14 +237,14 @@ try {
         '(1) Settings › Notifications shows core\'s Task reminders switch, off');
     await flip(en['settings.notificationsEnable'], (stored) => stored.notificationsEnabled === true, '(1) Task reminders on is stored');
     await flip(en['settings.weeklyReview'], (stored) => stored.weeklyReviewEnabled === true, '(1) Weekly review on is stored');
-    nodes = await reveal((current) => Boolean(row(current, en['settings.weeklyReviewDay'])));
+    nodes = await reveal((current) => visible(row(current, en['settings.weeklyReviewDay'])));
     check(value(nodes, en['settings.weeklyReviewDay']) === 'Sunday', '(1) the review day row shows Sunday (RN\'s default)');
     nodes = await tapExpecting(row(nodes, en['settings.weeklyReviewDay']), (current) => Boolean(tagged(current, 'settings-picker')), 'the day picker');
     await tapExpecting(withDescription(nodes, 'Wednesday') ?? fail('no Wednesday'), (current) => !tagged(current, 'settings-picker'), 'the picker to close');
     await waitUntil('the review day stored', async () => settings().weeklyReviewDay === 3, 20_000);
     check(true, '(1) the review day Wednesday is stored (3)');
     await flip(en['settings.dailyDigestMorning'], (stored) => stored.dailyDigestMorningEnabled === true, '(1) the morning digest on is stored');
-    nodes = await reveal((current) => Boolean(row(current, en['settings.dailyDigestMorningTime'])));
+    nodes = await reveal((current) => visible(row(current, en['settings.dailyDigestMorningTime'])));
     await tap(row(nodes, en['settings.dailyDigestMorningTime']));
     // Android's time dialog: its keyboard mode, then the hour and minute typed, then OK.
     let dialog = await waitFor('the time dialog', (current) => current.some((node) => /toggle_mode|button1/.test(node['resource-id'] ?? '')), 15_000);
@@ -267,10 +269,10 @@ try {
     await launch();
     nodes = await openNotifications();
     check(switchOn(nodes, en['settings.notificationsEnable']), '(1) after a restart Task reminders shows on');
-    nodes = await reveal((current) => Boolean(row(current, en['settings.dailyDigestMorningTime'])));
+    nodes = await reveal((current) => visible(row(current, en['settings.dailyDigestMorningTime'])));
     check(value(nodes, en['settings.dailyDigestMorningTime']) === '07:45' && switchOn(nodes, en['settings.dailyDigestMorning']),
         '(1) after a restart the morning digest shows on, at 07:45');
-    nodes = await reveal((current) => Boolean(row(current, en['settings.weeklyReviewDay'])));
+    nodes = await reveal((current) => visible(row(current, en['settings.weeklyReviewDay'])));
     check(value(nodes, en['settings.weeklyReviewDay']) === 'Wednesday' && switchOn(nodes, en['settings.weeklyReview']),
         '(1) after a restart the weekly review shows on, on Wednesday');
     // Off again through the app, so no reminder of the development data fires while the check runs.

@@ -585,8 +585,10 @@ const shootR2 = async (prefix, suffix, rn) => {
     for (let step = 0; step < 3; step += 1) nodes = await device.swipe(nodes, 'down');
     await shoot(`${prefix}-settings-notifications-end-${suffix}`, (current) => hasText(current, en['settings.dailyDigestEveningTime']));
     for (let step = 0; step < 3; step += 1) nodes = await device.swipe(nodes, 'up');
-    const day = await waitFor('the Review day row', (current) => current.some((node) => node.text === en['settings.weeklyReviewDay']
+    let day = await waitFor('the Review day row', (current) => current.some((node) => node.text === en['settings.weeklyReviewDay']
         || (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)), 15_000);
+    // The row can sit at the screen's bottom edge: one drag brings it up.
+    day = await device.swipe(day, 'down');
     await tap(day.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)) ?? day.find((node) => node.text === en['settings.weeklyReviewDay']));
     await shoot(`${prefix}-notifications-day-picker-${suffix}`, (current) => hasText(current, 'Wednesday'));
     // Back until the tabs show (the picker, Notifications, Settings), never past them.

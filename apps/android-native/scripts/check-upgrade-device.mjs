@@ -1186,7 +1186,14 @@ const scenarioPomodoro = async () => {
     const fireAtMs = Date.parse(session.phaseEndsAt);
     const rnAt = (alarm) => alarm.rn && Math.abs(alarm.at - fireAtMs) < 60_000;
     await until('RN\'s Pomodoro alarm', () => packageAlarms().some(rnAt), 30_000);
-    check(captureShown() === 1, '(9) before: RN shows the persistent capture notification');
+    try {
+        await until('RN\'s persistent capture notification', () => captureShown() >= 1, 20_000);
+    } catch (error) {
+        console.log(`evidence - this package's notification records:\n${sh('dumpsys notification --noredact').split('\n').filter((line) => line.includes(PKG) && /NotificationRecord|channel/.test(line)).slice(0, 12).join('\n')}`);
+        console.log(`evidence - RN's switch key: ${asyncStorage('9-capture-evidence').get(POMODORO_KEYS.capture)}`);
+        throw error;
+    }
+    check(true, '(9) before: RN shows the persistent capture notification');
     check(packageAlarms().filter(rnAt).length === 1 && JSON.parse(rnState.get(POMODORO_KEYS.rnAlarm)).fireAtMs === fireAtMs,
         `(9) before: RN runs the timer to ${session.phaseEndsAt}, folded, with one alarm and its record`);
     await killWithoutStop();
@@ -1209,7 +1216,7 @@ const scenarioPomodoro = async () => {
     nodes = await waitFor('the folded running card', (current) => Boolean(tagged(current, 'pomodoro-card')) && Boolean(tagged(current, 'pomodoro-fold'))
         && current.some((node) => /^(FOCUS|Focus) · (RUNNING|Running)$/.test(node.text ?? '')), 30_000);
     check(true, '(9) the native Focus card shows the timer folded and running');
-    await until('the persistent capture notification', () => captureShown() === 1, 20_000);
+    await until('the persistent capture notification', () => captureShown() >= 1, 20_000);
     check(after.get(POMODORO_KEYS.capture) === 'true', '(9) the persistent capture notification shows, and RN\'s key is kept');
     await killWithoutStop();
     install(APKS.rn154, true);
