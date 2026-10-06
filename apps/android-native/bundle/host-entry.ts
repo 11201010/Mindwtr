@@ -1107,7 +1107,10 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     syncSettings: (input) => contract.getSyncSettings(input),
     // Settings › Calendar's view for this visit with the name and URL fields as typed, and its close (none writes).
     calendarSettings: (input) => contract.getCalendarSettings(input),
-    calendarSettingsClose: () => contract.closeCalendarSettings(),
+    calendarSettingsClose: () => {
+        const closed = contract.closeCalendarSettings();
+        return closed.ok ? { ok: true, value: {} } : closed;
+    },
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),

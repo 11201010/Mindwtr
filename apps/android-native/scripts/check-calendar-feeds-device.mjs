@@ -29,7 +29,7 @@ import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { box, button, check, chipOn, connect, evidenced, fail, hasText, inEditor, mainList, Stopped, tab, tagged, withDescription } from './device.mjs';
 import { cleanupOnExit } from './check-net-device.mjs';
-import { icsCalendar, serveCalendar } from './calendar-feed-server.mjs';
+import { eventHour, icsCalendar, serveCalendar } from './calendar-feed-server.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -154,17 +154,20 @@ const tapTag = async (tag, expected, description, timeoutMs = 30_000) => {
 const feedRow = (nodes, name) => nodes.find((node) => /calendar-feed-\d+$/.test(node['resource-id'] ?? '')
     && nodes.some((inner) => inner.text === name && box(inner)[1] >= box(node)[1] && box(inner)[3] <= box(node)[3]));
 const removeFeed = async (name) => {
-    const nodes = await openCalendarSettings();
-    const row = feedRow(await reveal((current) => feedRow(current, name), `${name}'s row`), name) ?? feedRow(nodes, name);
+    await openCalendarSettings();
+    await reveal((current) => feedRow(current, name), `${name}'s row`);
+    const row = feedRow(await screen(), name) ?? fail(`no ${name} row`);
     const index = /calendar-feed-(\d+)$/.exec(row['resource-id'])[1];
     await tapTag(`calendar-feed-${index}-remove`, (current) => !current.some((node) => node.text === name), `${name} removed`);
 };
-/** Test, and the toast it shows: RN's [expected] message. */
+/** Test, and the toast it shows (CalendarSettings.kt logs each toast: it is gone before a slow screen dump): RN's [expected] message. */
 const testFeeds = async (expected) => {
-    const before = logs().split('\n').filter((line) => line.includes('command=testCalendarFeeds')).length;
+    const lines = () => logs().split('\n').filter((line) => line.includes('command=testCalendarFeeds'));
+    const before = lines().length;
     await openCalendarSettings();
-    await tapTag('calendar-test', (current) => hasText(current, expected), `the Test toast "${expected}"`, 60_000);
-    await waitFor('the Test toast in the log', () => logs().split('\n').filter((line) => line.includes('command=testCalendarFeeds')).length > before, 10_000);
+    await tapTag('calendar-test', () => lines().length > before, 'the Test answer', 60_000);
+    const toast = lines().at(-1).replace(/^.*toasts=/, '');
+    if (!toast.endsWith(`:${expected}`)) fail(`the Test toast is "${toast}", not "${expected}"`);
 };
 const calendarMode = async (label) => {
     const nodes = await waitFor(`the ${label} mode`, (current) => Boolean(withDescription(current, label)), 15_000);
@@ -172,7 +175,7 @@ const calendarMode = async (label) => {
     return waitFor(`the ${label} view`, (current) => chipOn(current, label), 15_000);
 };
 const eventBlock = (nodes, title) => nodes.find((node) => (node['content-desc'] ?? '').includes(title));
-const feedLines = (slot) => logs().split('\n').filter((line) => line.includes('Native Android external calendars loaded') && line.includes(`"slot":"${slot}"`));
+const feedLines = (slot) => logs().replace(/\\/g, '').split('\n').filter((line) => line.includes('Native Android external calendars loaded') && line.includes(`"slot":"${slot}"`));
 const restart = async () => {
     await device.stopApp();
     await waitFor('home screen', () => front().includes(`${home}/`), 10_000);
@@ -201,6 +204,10 @@ try {
     execFileSync(adbBin, ['-s', serial, 'install', '-r', apk], { stdio: 'inherit' });
     await restart();
 
+    // A subscription an earlier run of this check left (it stopped before its Remove) goes first: Test counts every feed.
+    for (const feed of deviceCopy() ?? []) {
+        if (/^(Team|Auth)\d{12}$/.test(feed.name)) { await removeFeed(feed.name); console.log(`note - removed an earlier run's ${feed.name}`); }
+    }
     // (1) The screen, RN's cards; the device calendars are never turned on here.
     let nodes = await openCalendarSettings();
     check(Boolean(tagged(nodes, 'calendar-push')), '(1) Settings › Calendar opens with the push card');
@@ -219,7 +226,8 @@ try {
     await typeInto('calendar-url', AUTH_URL);
     nodes = await tapTag('calendar-add', (current) => Boolean(feedRow(current, authName)), `${authName} in the list`);
     added.add(authName);
-    nodes = await reveal((current) => feedRow(current, authName), `${authName}'s row`);
+    await reveal((current) => feedRow(current, authName), `${authName}'s row`);
+    nodes = await screen();
     check(!nodes.some((node) => (node.text ?? '').includes(SECRET) || (node['content-desc'] ?? '').includes(SECRET)), '(2) a URL\'s password never shows (masked)');
     check(grepApp(SECRET, 'files/journal files/logs').length === 0 && grepApp(FEED, 'files/journal files/logs').length === 0,
         '(2) no subscription URL reaches the write journal or the diagnostics log');
@@ -242,7 +250,8 @@ try {
     const line = feedLines('calendar').at(-1);
     check(line.includes('"outcome":"ready"') && line.includes('"releaseCheck":"v1.3.5/native-android-calendar-feeds"') && !line.includes('127.0.0.1'),
         '(4) the load\'s line: slot calendar, outcome ready, no URL');
-    nodes = await tapExpecting(eventBlock(nodes, EVENTS.timed), (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
+    // The all-day event (always in view; the timed block may sit above the timeline's scroll).
+    nodes = await tapExpecting(eventBlock(nodes, EVENTS.allDay), (current) => Boolean(tagged(current, 'calendar-sheet')), 'the event\'s sheet');
     check(Boolean(button(nodes, en['calendar.createTaskFromEvent'])) && !button(nodes, en['calendar.openInCalendar']),
         '(4) the event\'s sheet offers RN\'s Create task, and no Open in calendar for a subscription\'s event');
     await tapExpecting(button(nodes, en['common.cancel']) ?? fail('no Cancel'), (current) => !tagged(current, 'calendar-sheet'), 'the sheet closed');
@@ -250,7 +259,11 @@ try {
     // (5) The reviews load their own.
     for (const [label, slot, tag] of [[en['review.openGuide'], 'weeklyReview', 'weekly-review'], [en['dailyReview.title'], 'dailyReview', 'daily-review']]) {
         const before = feedLines(slot).length;
-        await openTile(en['nav.review'], (current) => Boolean(tagged(current, 'review-list')), 'Review');
+        // Review is the quick-access tab, or the More sheet's tile.
+        const onReview = (current) => Boolean(tagged(current, 'review-list'));
+        const tabs = await toTabs();
+        if (tab(tabs, en['tab.review'])) await tapExpecting(tab(tabs, en['tab.review']), onReview, 'the Review tab');
+        else await openTile(en['nav.review'], onReview, 'Review');
         const choices = await tapExpecting(button(await screen(), en['review.startReview']) ?? fail('no Start Review'), (current) => Boolean(button(current, label)), 'the review choices');
         await tapExpecting(button(choices, label), (current) => Boolean(tagged(current, tag)), label);
         await waitFor(`the ${slot} load`, () => feedLines(slot).length > before, 30_000);
@@ -284,7 +297,7 @@ try {
         const CAL = `Check${run}`;
         const DEVICE_EVENT = `Dentist ${run}`;
         const today = new Date();
-        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 14, 0, 0).getTime();
+        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), eventHour(), 30, 0).getTime();
         const calendarUri = 'content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=check&account_type=LOCAL';
         sh(`content insert --uri '${calendarUri}' --bind account_name:s:check --bind account_type:s:LOCAL --bind name:s:${CAL} --bind calendar_displayName:s:${CAL} --bind calendar_color:i:-16744448 --bind calendar_access_level:i:700 --bind ownerAccount:s:check --bind visible:i:1 --bind sync_events:i:1`);
         const calendarId = /_id=(\d+)/.exec(sh(`content query --uri content://com.android.calendar/calendars --projection _id --where "name='${CAL}'"`))?.[1] ?? fail('the seeded calendar has no id');
@@ -297,14 +310,26 @@ try {
         await restart();
         const prompt = (current) => current.find((node) => /permission_(allow|deny)_button$/.test(node['resource-id'] ?? '')) !== undefined;
         const promptButton = (current, which) => current.find((node) => (node['resource-id'] ?? '').endsWith(`permission_${which}_button`));
+        /** The system prompt is the permission controller's window, not the app's: its button is tapped by position. */
+        const answerPrompt = (current, which) => {
+            const [left, top, right, bottom] = box(promptButton(current, which) ?? fail(`no ${which} button on the prompt`));
+            sh(`input tap ${Math.round((left + right) / 2)} ${Math.round((top + bottom) / 2)}`);
+        };
         nodes = await openCalendarSettings();
+        // An earlier run stopped with the device calendars on: off first (no prompt), so turning them on asks.
+        const deviceOn = () => JSON.parse(Object.fromEntries(sqlite(pullFile('databases/RKStorage', 'rk'), 'SELECT key, value FROM catalystLocalStorage')
+            .map((row) => [row.key, row.value]))['mindwtr-system-calendar-settings'] ?? '{}').enabled === true;
+        if (deviceOn()) {
+            await tapTag('calendar-device-switch', () => !deviceOn(), 'the device calendars off first');
+            console.log('note - (8) an earlier run left the device calendars on: turned off first');
+        }
         nodes = await tapTag('calendar-device-switch', prompt, 'the system prompt for the calendar');
         check(true, '(8) turning the device calendars on asks with the system prompt');
-        await tap(promptButton(nodes, 'deny'));
+        answerPrompt(nodes, 'deny');
         nodes = await waitFor('RN\'s denied text', (current) => hasText(current, en['settings.calendarAccessDenied']), 20_000);
         check(Boolean(tagged(nodes, 'calendar-grant')), `(8) Don't allow: RN's "${en['settings.calendarAccessDenied']}" with Grant access`);
         nodes = await tapTag('calendar-grant', prompt, 'the system prompt again');
-        await tap(promptButton(nodes, 'allow'));
+        answerPrompt(nodes, 'allow');
         nodes = await waitFor(`${CAL} listed`, (current) => hasText(current, CAL), 30_000);
         check(hasText(nodes, en['settings.deviceCalendar']), `(8) Allow: the device calendar ${CAL} is listed as RN lists it`);
         nodes = await openTile(en['nav.calendar'], onCalendar, 'the Calendar');
@@ -313,10 +338,11 @@ try {
         check(true, `(8) the Calendar's week shows the device event "${DEVICE_EVENT}"`);
         nodes = await tapExpecting(eventBlock(nodes, DEVICE_EVENT), (current) => Boolean(tagged(current, 'calendar-sheet')), 'the device event\'s sheet');
         check(Boolean(button(nodes, en['calendar.openInCalendar'])) && Boolean(button(nodes, en['calendar.createTaskFromEvent'])), '(8) its sheet offers Create task and Open in calendar');
+        sh('logcat -c');
         await tap(button(nodes, en['calendar.openInCalendar']));
         await sleep(3000);
-        const opened = front();
-        console.log(`note - Open in calendar: ${opened.includes(`${PKG}/`) ? 'the app stayed in front (no calendar app answered)' : `handed to ${opened.trim().split(/\s+/).pop()}`}`);
+        const shown = /Displayed (\S+)\/\S*[Ee]vent\S* for user/.exec(sh('logcat -d -s ActivityTaskManager:I'))?.[1];
+        check(Boolean(shown) && shown !== PKG, `(8) Open in calendar hands the event to the calendar app (${shown ?? 'none'} showed its event screen)`);
         sh('input keyevent KEYCODE_BACK');
         await sleep(1500);
         if (!front().includes(`${PKG}/`)) device.launch(ACTIVITY);

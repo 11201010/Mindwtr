@@ -43,10 +43,14 @@ const day = (offset) => {
     return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 };
 
-/** A calendar with a timed event today ([timed], 09:00 to 10:00) and an all-day event tomorrow ([allDay]). */
+/** The hour the timed event starts: this one, so the Calendar's timeline (scrolled to now) shows it (22 at the latest). */
+export const eventHour = () => Math.min(new Date().getHours(), 22);
+const hh = (hour) => String(hour).padStart(2, '0');
+
+/** A calendar with a timed event today ([timed], this hour, one hour long) and an all-day event tomorrow ([allDay]). */
 export const icsCalendar = ({ timed, allDay, name = 'Team calendar' }) => [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Mindwtr check//EN', `X-WR-CALNAME:${name}`,
-    'BEGIN:VEVENT', 'UID:check-timed@mindwtr', `DTSTART:${day(0)}T090000`, `DTEND:${day(0)}T100000`, `SUMMARY:${timed}`, 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:check-timed@mindwtr', `DTSTART:${day(0)}T${hh(eventHour())}0000`, `DTEND:${day(0)}T${hh(eventHour() + 1)}0000`, `SUMMARY:${timed}`, 'END:VEVENT',
     'BEGIN:VEVENT', 'UID:check-all-day@mindwtr', `DTSTART;VALUE=DATE:${day(1)}`, `DTEND;VALUE=DATE:${day(2)}`, `SUMMARY:${allDay}`, 'END:VEVENT',
     'END:VCALENDAR', '',
 ].join('\r\n');

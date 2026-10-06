@@ -211,10 +211,13 @@ class CalendarSettingsModel(private val menu: MenuModel) {
         shell.showToast(null, error.message.orEmpty().substringAfter(": "), "error")
     }
 
-    /** Core's toasts, RN's in order: the newest stays on screen. The log names each toast's tone and title (core's fixed words). */
+    /**
+     * Core's toasts, RN's in order: the newest stays on screen. The log names each toast's tone, title and message for the device
+     * check: Settings › Calendar's toasts are core's fixed words and counts, never a URL or a calendar's name.
+     */
     private fun toasts(name: String, reply: JSONObject) {
         val all = reply.menuObjects("toasts")
-        if (all.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android calendar screen command=$name toasts=${all.joinToString("|") { "${it.optString("tone")}:${it.optString("title")}" }}")
+        if (all.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android calendar screen command=$name toasts=${all.joinToString("|") { "${it.optString("tone")}:${it.optString("title")}:${it.optString("message")}" }}")
         val toast = all.lastOrNull() ?: return
         shell.showToast(toast.menuText("title")?.ifEmpty { null }, toast.getString("message"), toast.getString("tone"))
     }
