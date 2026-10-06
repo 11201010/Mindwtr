@@ -1242,7 +1242,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
         'completeReminderTask', 'snoozeReminder',
         // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
-        'runProjectEdit'];
+        'runProjectEdit',
+        // Settings › Notifications' controls and the Pomodoro card's actions (pass R2): each the state it asks for, under its receipt.
+        'setNotificationsSetting', 'runPomodoroAction'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1300,6 +1302,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
     assert.match(hostEntry, /createNativeHostContract\(\{ reminderPlatform: globalThis\.__mindwtrHostPlatform === 'ios' \? 'ios' : 'android', get syncSettings\(\) \{ return nativeSync\?\.settingsHost \?\? iosManualSync\?\.settingsHost; \}, \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*calendar: iosCalendar,\s*get attachments\(\) \{\s*const selected = iosProjectAttachmentDownload \? iosSelfHostedProjectAttachments\?\.contractHost \?\? iosManualSync\?\.attachmentsHost : attachmentsHost;\s*if \(!iosRelocatedProjectAvailability \|\| !selected\) return selected \?\? undefined;/);
     assert.match(hostEntry, /const result = await \(iosSelfHostedProjectAttachments \?\? iosManualSync\)\?\.prepareAttachmentAvailableDetailed\?\.\(attachment\);/);
+    assert.match(hostEntry, /\.\.\.\(pomodoroHost \? \{ pomodoro: pomodoroHost \} : \{\}\), \.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
+    // The Pomodoro session and the persistent capture switch on RN's AsyncStorage keys, on the host with RN's AsyncStorage (pass R2).
+    assert.match(hostEntry, /const pomodoroHost = nativeSync \? \(\(\) => \{/);
+    assert.match(hostEntry, /const persistentCapture = nativeSync \? \{\s+read: \(\) => \(JSON\.parse\(checked\(native\(\)\.kvGet\(PERSISTENT_CAPTURE_STORAGE_KEY\)\)\) as \[string \| null\]\)\[0\] === 'true',/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -2114,7 +2120,8 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
 {
     // Settings' commands (pass 10) join the Menu tab's: MENU_KINDS is its own set plus SettingsModel.kt's SETTINGS_KINDS.
     // Pass 11's commands (Bulk organize's create, Mind Sweep's Add, a saved search's Delete) close the set.
-    assert.match(menuModel, /"savedSearchDelete"\) \+ SETTINGS_KINDS/);
+    // Pass R2's Pomodoro card actions close it now.
+    assert.match(menuModel, /"savedSearchDelete", "pomodoroAction"\) \+ SETTINGS_KINDS/);
     const kinds = [...[...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind),
         ...[...new RegExp('val SETTINGS_KINDS = setOf\\(([^)]*)\\)').exec(source('SettingsModel.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind)];
     const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \((input)?\) => contract\.\w+\(\2\),$/gm)].map(([, kind]) => kind);
@@ -3833,6 +3840,11 @@ export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-capture
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
 export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
 export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
+// The Pomodoro timer's and the persistent capture switch's keys (pass R2); the stand-in bridge has no AsyncStorage, so no timer.
+export const NATIVE_POMODORO_ALARM_STORAGE_KEY = 'mindwtr:native:pomodoro-alarm:v1';
+export const POMODORO_ALARM_STORAGE_KEY = 'mindwtr:local:pomodoro-alarm:v1';
+export const PERSISTENT_CAPTURE_STORAGE_KEY = 'mindwtr:persistentCaptureNotification';
+export function createMobilePomodoroController() { throw new Error('no Pomodoro timer on the stand-in bridge'); }
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }

@@ -34,7 +34,7 @@ import java.util.UUID
 
 /** Settings' commands (host-entry.ts MENU_COMMANDS). */
 val SETTINGS_KINDS = setOf("generalSetting", "gtdSetting", "manageEditor", "manageDelete", "somedayRename", "somedayReorder", "somedayDelete", "dataSetting", "syncPreference",
-    "setAISetting")
+    "setAISetting", "notificationsSetting")
 
 /** RN's device keys (core's LANGUAGE_STORAGE_KEY, MOBILE_THEME_STORAGE_KEY, MANAGE_OPEN_SECTIONS_STORAGE_KEY, MOBILE_TASK_OPEN_MODE_STORAGE_KEY). */
 const val LANGUAGE_KEY = "mindwtr-language"
