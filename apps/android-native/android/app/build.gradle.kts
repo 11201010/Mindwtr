@@ -130,6 +130,7 @@ android {
     // class and the Quick Settings tile; their manifest entries are added to each variant below.
     sourceSets {
         getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/main/java"))
+        getByName("main").java.srcDir(layout.buildDirectory.dir("generated/rnPersistentCapture"))
         getByName("test").java.srcDir(layout.buildDirectory.dir("generated/rnInstaller/test/java"))
         urlSchemes.keys.forEach { type ->
             val widgets = layout.buildDirectory.dir("generated/widgets/$type").get().asFile
@@ -269,7 +270,14 @@ val rnAttachmentInstaller by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("generated/rnInstaller"))
 }
-tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller) }
+// RN's persistent capture notification (modules/notification-open-intents), byte for byte: its notifier and its dismiss receiver.
+val rnPersistentCapture by tasks.registering(Sync::class) {
+    from(rootProject.projectDir.resolve("../../mobile/modules/notification-open-intents/android/src/main/java")) {
+        include("tech/dongdongbh/mindwtr/notificationopenintents/PersistentCaptureNotifier.kt")
+    }
+    into(layout.buildDirectory.dir("generated/rnPersistentCapture"))
+}
+tasks.named("preBuild") { dependsOn(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller, rnPersistentCapture) }
 tasks.matching { it.name.startsWith("pre") && it.name.endsWith("BenchmarkTraceBuild") }.configureEach { dependsOn(buildTracedCoreBundle) }
 // Both channels' JVM tests under the one name the gates and CI run (flavors leave no testDebugUnitTest), with the widget module's
 // RN tests (Robolectric).

@@ -96,6 +96,7 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "general" -> GeneralSettings(model, shown.view)
             "manage" -> ManageSettings(model, shown)
             "data" -> DataSettings(model, shown.view)
+            "notifications" -> NotificationsSettings(model, shown.view)
             "sync" -> SyncSettings(model, shown.view)
             "ai" -> AISettings(model, shown.view)
             "about" -> AboutSettings(model, shown.view)
@@ -185,12 +186,13 @@ internal fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
  * lock's line in RN's danger color under the description (TalkBack hears it when it shows).
  */
 @Composable
-private fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
-                       trailing: @Composable RowScope.() -> Unit = {}) {
+internal fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
+                        dimmed: Boolean = false, trailing: @Composable RowScope.() -> Unit = {}) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
         verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+        // RN's dimmed row fades its label and description only (opacity 0.5), never its control.
+        Column(Modifier.weight(1f).padding(end = 16.dp).fade(if (dimmed) 0.5f else 1f)) {
             Text(label, style = rnText(16, 500, 21), color = c.text)
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
             failure?.let { Text(it, style = rnText(13, 400, 18), color = c.danger, modifier = Modifier.padding(top = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
@@ -1004,11 +1006,12 @@ private fun Picker(model: InboxViewModel, view: JSONObject, picker: String) = wi
         "quickAccess" -> view.getJSONObject("appearance").getJSONObject("quickAccess")
         "language" -> view.getJSONObject("language")
         "defaultArea" -> view.getJSONObject("capture").getJSONObject("defaultArea")
+        "weeklyReviewDay" -> view.getJSONObject("weeklyReview").getJSONObject("day")
         else -> view.getJSONObject("regional").optJSONObject(picker)
     } ?: return@with
     val groups = if (picker == "theme") source.getJSONArray("groups").let { all -> List(all.length()) { all.getJSONArray(it).let { g -> List(g.length()) { g.getJSONObject(it) } } } }
         else listOf(source.menuObjects("options"))
-    val write = { edit: JSONObject -> keepDialog(null); if (picker == "defaultArea") settings.gtd(edit) else settings.general(edit) }
+    val write = { edit: JSONObject -> keepDialog(null); when (picker) { "defaultArea" -> settings.gtd(edit); "weeklyReviewDay" -> settings.notifications(edit); else -> settings.general(edit) } }
     BackHandler { keepDialog(null) }
     Box(Modifier.fillMaxSize().background(theme.settingsScrim).pointerInput(Unit) { detectTapGestures { keepDialog(null) } }.padding(20.dp),
         contentAlignment = Alignment.Center) {
@@ -1032,7 +1035,8 @@ private fun Picker(model: InboxViewModel, view: JSONObject, picker: String) = wi
                                     contentAlignment = Alignment.Center) { Icon(icon, null, tint = if (on) c.tint else c.secondaryText, modifier = Modifier.size(17.dp)) }
                             }
                             Text(label, style = rnText(13, 600), color = if (on) c.tint else c.text, maxLines = 2, modifier = Modifier.weight(1f))
-                            if (on) Icon(SettingsIonicons.Checkmark, null, tint = c.tint, modifier = Modifier.size(18.dp))
+                            // Notifications' day picker draws RN's lucide Check (stroke 2.5); the others Ionicons' checkmark.
+                            if (on) Icon(if (picker == "weeklyReviewDay") Lucide.CheckPicked else SettingsIonicons.Checkmark, null, tint = c.tint, modifier = Modifier.size(18.dp))
                         }
                     }
                 }

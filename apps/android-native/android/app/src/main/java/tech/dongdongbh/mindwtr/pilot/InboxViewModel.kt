@@ -235,6 +235,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var processingMode by mutableStateOf(readProcessingMode(prefs)); private set
     /** RN's Menu tab: the More sheet and the list screens it opens (MenuModel.kt), on this screen's command path. */
     val menu = MenuModel(this, saved, prefs, File(app.noBackupFilesDir, "menu"))
+    /** The Focus screen's Pomodoro card (Pomodoro.kt). */
+    val pomodoro = PomodoroModel(this)
     /** RN's app lock (AppLock.kt): core's stored value and the gate's state. */
     val lock = AppLock(this)
     /** RN's capture confirmation screen that links, shares and assistant notes open (CaptureModalModel.kt). */
@@ -1804,7 +1806,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private val shownAt = HashMap<Part, Long>()
 
     /** One list a read can show: Menu is the open Menu list (the Inbox tab's too), More the More sheet, MenuDialog a dialog's choices, ProjectDetails the open project's Details values. */
-    internal enum class Part { Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog }
+    internal enum class Part { Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog, Pomodoro }
 
     /** A new read's number, for a read the Menu tab starts through perform (as the lists' More takes one). */
     internal fun issue(): Long = ++issued

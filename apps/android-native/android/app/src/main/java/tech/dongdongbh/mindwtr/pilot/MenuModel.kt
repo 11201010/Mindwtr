@@ -1361,6 +1361,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** Core's answer on screen: a refusal's words, the dialog closing, and RN's toasts with core's Undo. */
     private fun finish(action: FailedAction, reply: JSONObject) {
         when (action.kind) {
+            "pomodoroAction" -> shell.pomodoro.applied(reply)
             "somedayMove" -> {
                 val refused = reply.optJSONObject("refused")
                 if (refused != null) { shell.showToast(refused.text("title"), refused.getString("message"), "error"); return }

@@ -106,6 +106,7 @@ internal object ProcessCoreHost {
     }
 
     private fun start(app: Application, language: String?): CoreHost {
+        application = app
         // Nothing opens the RN database or RN's RKStorage until the guard passes (and has copied RKStorage); it returns
         // files/SQLite/mindwtr.db and what RN left in AsyncStorage, which the JS host imports as RN's next launch would.
         val legacy = if (BuildConfig.RN_STORAGE) {
@@ -320,6 +321,8 @@ internal object ProcessCoreHost {
     /** The reminder alarms' start, and what a resume does (ReminderStart): plan again, or start again after a failed start. */
     private val reminders = ReminderStart<CoreHost>(start = { it.remindersStart() }, cycle = { it.remindersCycle("cycle") })
     @Volatile private var askedNotifications = false
+    /** The process's application, for what a start or a resume posts (the persistent capture notification). */
+    @Volatile private var application: Application? = null
     /** Done once the reminder alarms started (with sync, after the first screen's content): the permission question waits for it. */
     val remindersStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
 
@@ -334,6 +337,8 @@ internal object ProcessCoreHost {
                 remindersStarted.complete(Unit)
             }
             .onFailure { Log.w(CoreHost.TAG, "Native Android reminders start failed", it) }
+        // RN's keepPersistentCaptureNotificationArmed: the persistent capture notification posted again at start (and each resume).
+        application?.let { PersistentCapture.restore(it, runtime) }
     }
 
     private fun logRemindersStarted() {
@@ -377,6 +382,10 @@ internal object ProcessCoreHost {
             runCatching { reminders.resume() }
                 .onSuccess { if (reminders.reply != null) remindersStarted.complete(Unit) }
                 .onFailure { Log.w(CoreHost.TAG, "Native Android reminders cycle failed", it) }
+            // OEMs remove the app's notifications when they kill it (#819): RN posts the persistent capture one again on every resume.
+            val app = application
+            val runtime = boot?.takeIf { it.isDone }?.let { task -> runCatching { task.get() }.getOrNull() }
+            if (app != null && runtime != null && reminders.reply != null) PersistentCapture.restore(app, runtime)
         }
         if (state == appState) return
         appState = state

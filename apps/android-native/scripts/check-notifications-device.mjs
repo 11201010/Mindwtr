@@ -1,0 +1,340 @@
+// Settings › Notifications, the persistent capture notification and the Pomodoro card's completion alarm (pass R2) on the
+// isolated native Android development app.
+//
+//   node apps/android-native/scripts/check-notifications-device.mjs <adb-serial> [apk]
+//
+// Installs the debug APK with `install -r` (existing development data stays). With the app stopped it sets a known start in the
+// development database (task reminders, the weekly review and the morning digest off, the Pomodoro feature on with a 1/1 custom
+// preset, its completion alert on and no auto-start), then checks through the app's own screens:
+// (1) Settings › Notifications shows core's rows; Task reminders, Weekly review, its day (Wednesday, from RN's day picker), the
+//     morning digest and its time (07:45, from Android's time picker) are each stored in the database through the app (no
+//     journal entry left), and after a process death and a new start the screen shows each stored value again;
+// (2) Quick capture in notification bar: on posts RN's notification (id 41120, channel `mindwtr-persistent-capture`) and stores
+//     RN's AsyncStorage key; after a process death the start posts it again; a tap on it opens RN's quick capture dialog; off
+//     removes it and the key;
+// (3) the Pomodoro card on Focus: the 1/1 preset sets 01:00; Start makes one completion alarm (core's native record names its
+//     time); with the process killed, the alarm fires once at that time: one "Pomodoro Timer" notification with core's words,
+//     and no second one; the next start shows RN's finished-phase line and keeps no Pomodoro alarm; a tap on the notification
+//     opens the app.
+// Everything it changed in the development data (the settings, RN's Pomodoro session and fold, the switch's key) is put back at
+// the end, on failure too. It grants the development app the notification permission (kept). It never launches over another
+// app and leaves the device on its home screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { check, connect, evidenced, fail, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+
+const [serial, apkArg] = process.argv.slice(2);
+if (!serial) {
+    console.error('usage: node check-notifications-device.mjs <adb-serial> [apk]');
+    process.exit(2);
+}
+const app = resolve(import.meta.dirname, '..');
+const apk = apkArg ?? resolve(app, 'android/app/build/outputs/apk/play/debug/app-play-debug.apk');
+const adbBin = process.env.ADB ?? '/home/dd/Android/Sdk/platform-tools/adb';
+const aapt2 = process.env.AAPT2 ?? '/home/dd/Android/Sdk/build-tools/36.1.0/aapt2';
+const PKG = 'tech.dongdongbh.mindwtr.nativeclient.dev';
+const apkPackage = execFileSync(aapt2, ['dump', 'packagename', apk], { encoding: 'utf8' }).trim();
+if (apkPackage !== PKG) {
+    console.error(`REFUSED: ${apk} is package "${apkPackage}", not ${PKG}`);
+    process.exit(2);
+}
+const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
+const FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
+const UI_FILE = '/data/local/tmp/mindwtr-native-dev-notifications-ui.xml';
+const DB = 'mindwtr-native-dev.db';
+const STAGED = '/data/local/tmp/mindwtr-native-dev-notifications.db';
+const CAPTURE_ID = 41120;
+const CAPTURE_CHANNEL = 'mindwtr-persistent-capture';
+const POMODORO_ID = 2 ** 31 - 1;
+const KEYS = { capture: 'mindwtr:persistentCaptureNotification', session: '@mindwtr_pomodoro_state', fold: '@mindwtr_pomodoro_collapsed',
+    alarm: 'mindwtr:native:pomodoro-alarm:v1' };
+const SETTINGS = ['notificationsEnabled', 'startDateNotificationsEnabled', 'weeklyReviewEnabled', 'weeklyReviewDay', 'weeklyReviewTime',
+    'dailyDigestMorningEnabled', 'dailyDigestMorningTime', 'features', 'gtd'];
+const work = resolve(app, 'android/build/notifications-check');
+const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
+
+const device = connect({ serial, pkg: PKG, uiFile: UI_FILE, adb: adbBin });
+const { sh, adbRaw, home, front, requireAppFront, pid, screen, waitFor, tap, tapExpecting } = device;
+const runAs = (command) => sh(`run-as ${PKG} sh -c '${command}'`);
+const journal = () => runAs('ls files/journal 2>/dev/null || true').split(/\s+/).filter((name) => /^\d{16}\.json$/.test(name));
+const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const value = await predicate();
+        if (value) return value;
+        if (Date.now() > deadline) fail(`timed out waiting for ${description}`);
+        await sleep(everyMs);
+    }
+};
+
+// ---- the app's files: pulled through run-as, edited with Bun's SQLite (the tasks table's triggers need FTS5), pushed back ----
+const pull = (name, dir) => {
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    const [folder, file] = [name.slice(0, name.lastIndexOf('/')), name.slice(name.lastIndexOf('/') + 1)];
+    const present = runAs(`ls ${folder} 2>/dev/null || true`).split(/\s+/);
+    for (const suffix of ['', '-wal', '-shm', '-journal']) if (present.includes(`${file}${suffix}`)) device.pull(`${name}${suffix}`, resolve(dir, `${file}${suffix}`));
+    return resolve(dir, file);
+};
+const bun = (script, env) => execFileSync('bun', ['-e', `import { Database } from 'bun:sqlite';\n${script}`], { encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+/** The stored settings (the database's one settings row), read from a fresh copy. */
+const settings = () => JSON.parse(bun(`const db = new Database(process.env.CHECK_DB, { readonly: true });
+    console.log(db.query('SELECT data FROM settings WHERE id = 1').get()?.data ?? '{}');`, { CHECK_DB: pull(`files/${DB}`, resolve(work, 'db')) }));
+/** RN's AsyncStorage values for [keys] (null: not stored). */
+const kv = (keys) => JSON.parse(bun(`const db = new Database(process.env.CHECK_DB, { readonly: true });
+    const keys = JSON.parse(process.env.CHECK_KEYS);
+    console.log(JSON.stringify(Object.fromEntries(keys.map((key) => [key, db.query('SELECT value FROM catalystLocalStorage WHERE key = ?').get(key)?.value ?? null]))));`,
+{ CHECK_DB: pull('databases/RKStorage', resolve(work, 'rkstorage')), CHECK_KEYS: JSON.stringify(keys) }));
+/** With the app stopped: [file] (an app file) edited by [script] (Bun, `db` open on it) and put back, its WAL removed. */
+const edit = (file, script, env = {}) => {
+    if (pid()) fail('the app must be stopped to edit its files');
+    const local = pull(file, resolve(work, 'edit'));
+    bun(`const db = new Database(process.env.CHECK_DB);\n${script}\ndb.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close();`, { ...env, CHECK_DB: local });
+    const next = `${file}.notifications-new`;
+    adbRaw('push', local, STAGED);
+    try {
+        runAs(`cp ${STAGED} ${next}`);
+        if (Number(runAs(`stat -c %s ${next}`)) !== statSync(local).size) fail('the staged file has the wrong size');
+        if (pid()) fail('the app started while its file was being replaced');
+        runAs(`rm -f ${file}-wal ${file}-shm && mv -f ${next} ${file}`);
+    } finally {
+        sh(`rm -f ${STAGED}`);
+    }
+};
+/** The settings row's [values] set (null removes the key). */
+const editSettings = (values) => edit(`files/${DB}`, `const row = JSON.parse(db.query('SELECT data FROM settings WHERE id = 1').get()?.data ?? '{}');
+    for (const [key, value] of Object.entries(JSON.parse(process.env.CHECK_VALUES))) { if (value === null) delete row[key]; else row[key] = value; }
+    db.query('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(row));`, { CHECK_VALUES: JSON.stringify(values) });
+/** RN's AsyncStorage [values] set (null removes the key). */
+const editKv = (values) => edit('databases/RKStorage', `for (const [key, value] of Object.entries(JSON.parse(process.env.CHECK_VALUES))) {
+        if (value === null) db.query('DELETE FROM catalystLocalStorage WHERE key = ?').run(key);
+        else db.query('INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES (?, ?)').run(key, value);
+    }`, { CHECK_VALUES: JSON.stringify(values) });
+
+// ---- the system's view ----
+const notifications = () => sh('dumpsys notification --noredact').split(/\n(?=\s*NotificationRecord\()/)
+    .filter((block) => block.includes(`pkg=${PKG}`))
+    .map((block) => ({
+        id: Number(/\bid=(-?\d+)/.exec(block)?.[1]),
+        channel: /(?:mChannelId|channelId|channel)=([\w.-]+)/.exec(block)?.[1] ?? '',
+        title: /android\.title=\w+ \((.*)\)/.exec(block)?.[1] ?? '',
+        text: /android\.text=\w+ \((.*)\)/.exec(block)?.[1] ?? '',
+    }));
+const pomodoroAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
+    .filter((block) => block.includes(`*walarm*:${FIRE}`) && block.includes(PKG))
+    .map((block) => ({ at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN), block }));
+const closeShade = () => sh('cmd statusbar collapse');
+const tapInShade = async (text) => {
+    sh('cmd statusbar expand-notifications');
+    await sleep(1500);
+    const node = (await screen()).find((item) => item.text === text) ?? fail(`"${text}" is not in the shade`);
+    const [x1, y1, x2, y2] = node.bounds.match(/\d+/g).map(Number);
+    sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`);
+};
+
+// ---- the process and the screens ----
+/** The process gone as after the system reclaimed it: a signal, never a force-stop (that drops every alarm). */
+const killApp = async () => {
+    if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME');
+    for (let attempt = 0; attempt < 20 && pid(); attempt += 1) {
+        try { runAs(`kill -9 ${pid()}`); } catch { /* gone meanwhile */ }
+        await sleep(500);
+    }
+    if (pid()) fail('the app process did not end');
+};
+const onTabs = (nodes) => Boolean(tab(nodes, en['tab.menu'])) && !tagged(nodes, 'menu-screen') && !tagged(nodes, 'more-sheet') && !inEditor(nodes);
+const toTabs = async () => {
+    for (let step = 0; step < 8; step += 1) {
+        const nodes = await screen();
+        if (onTabs(nodes)) return nodes;
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(900);
+    }
+    return fail('the tabs did not come back');
+};
+const launch = async () => {
+    device.launch(ACTIVITY);
+    return waitFor('the tabs', onTabs, 60_000);
+};
+const row = (nodes, label) => nodes.find((node) => (node['content-desc'] ?? '').startsWith(`${label}: `));
+const value = (nodes, label) => row(nodes, label)?.['content-desc'].slice(label.length + 2);
+const openNotifications = async () => {
+    let nodes = await toTabs();
+    nodes = await tapExpecting(tab(nodes, en['tab.menu']), (current) => Boolean(tagged(current, 'more-sheet')), 'the More sheet');
+    nodes = await device.settle(nodes);
+    nodes = await tapExpecting(withDescription(nodes, en['nav.settings']) ?? fail('no Settings tile'), (current) => Boolean(tagged(current, 'settings-main')), 'Settings');
+    const label = `${en['settings.notifications']}. ${en['settings.menuDesc.notifications']}`;
+    return tapExpecting(withDescription(nodes, label) ?? fail('no Notifications row'), (current) => Boolean(tagged(current, 'settings-notifications')), 'Settings › Notifications');
+};
+/** Scrolls Notifications until [found] shows. */
+const reveal = async (found) => {
+    let nodes = await screen();
+    for (let step = 0; step < 6 && !found(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
+    return found(nodes) ? nodes : fail('not on the Notifications screen');
+};
+/** The switch labelled [label] flipped through the app, then [stored] (the settings) awaited. */
+const flip = async (label, stored, description) => {
+    const nodes = await reveal((current) => Boolean(withDescription(current, label)));
+    const was = switchOn(nodes, label);
+    await tapExpecting(withDescription(nodes, label), (current) => switchOn(current, label) !== was, `${label} to switch`);
+    await waitUntil(description, async () => stored(settings()), 20_000);
+    await waitUntil('the journal to empty', async () => journal().length === 0, 20_000);
+    check(true, description);
+};
+
+let original;
+let originalKv;
+const restore = async () => {
+    try { closeShade(); } catch { /* device gone */ }
+    try {
+        if (original) {
+            await killApp();
+            editSettings(Object.fromEntries(SETTINGS.map((key) => [key, original[key] ?? null])));
+            if (originalKv) editKv(originalKv);
+            await launch();
+            await toTabs();
+            const after = settings();
+            if (SETTINGS.some((key) => JSON.stringify(after[key] ?? null) !== JSON.stringify(original[key] ?? null))) console.error('RESTORE: a setting did not come back');
+        }
+    } catch (error) { console.error(`RESTORE FAILED: the development settings are not as they were (${error.message})`); process.exitCode = 1; }
+    try { if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME'); } catch { /* device gone */ }
+    try { sh('settings put system accelerometer_rotation 1'); } catch { /* device gone */ }
+    try { sh(`rm -f ${UI_FILE} ${STAGED}`); } catch { /* device gone */ }
+};
+
+try {
+    mkdirSync(work, { recursive: true });
+    console.log(`device: ${sh('getprop ro.product.model')} / Android ${sh('getprop ro.build.version.release')} (API ${sh('getprop ro.build.version.sdk')})`);
+    console.log(`apk: ${apk}\napk sha256: ${createHash('sha256').update(readFileSync(apk)).digest('hex')}`);
+    const beforeInstall = front();
+    if (!beforeInstall.includes(`${PKG}/`) && !beforeInstall.includes(`${home}/`)) throw new Stopped(`another app is in front: ${beforeInstall.trim()}`);
+    execFileSync(adbBin, ['-s', serial, 'install', '-r', apk], { stdio: 'inherit' });
+    sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
+    sh('settings put system accelerometer_rotation 0');
+    await launch();
+    await killApp();
+    original = settings();
+    originalKv = kv(Object.values(KEYS));
+    const gtd = original.gtd ?? {};
+    editSettings({ notificationsEnabled: false, startDateNotificationsEnabled: null, weeklyReviewEnabled: false, weeklyReviewDay: 0, weeklyReviewTime: null,
+        dailyDigestMorningEnabled: false, dailyDigestMorningTime: null, features: { ...(original.features ?? {}), pomodoro: true },
+        gtd: { ...gtd, pomodoro: { ...(gtd.pomodoro ?? {}), customDurations: { focusMinutes: 1, breakMinutes: 1 }, completionAlert: true,
+            autoStartBreaks: false, autoStartFocus: false, linkTask: false } } });
+    editKv({ [KEYS.capture]: null, [KEYS.session]: null, [KEYS.fold]: null, [KEYS.alarm]: null });
+    await launch();
+
+    // (1) Each setting stored through the app, and read back after a restart.
+    let nodes = await openNotifications();
+    check(Boolean(withDescription(nodes, en['settings.notificationsEnable'])) && !switchOn(nodes, en['settings.notificationsEnable']),
+        '(1) Settings › Notifications shows core\'s Task reminders switch, off');
+    await flip(en['settings.notificationsEnable'], (stored) => stored.notificationsEnabled === true, '(1) Task reminders on is stored');
+    await flip(en['settings.weeklyReview'], (stored) => stored.weeklyReviewEnabled === true, '(1) Weekly review on is stored');
+    nodes = await reveal((current) => Boolean(row(current, en['settings.weeklyReviewDay'])));
+    check(value(nodes, en['settings.weeklyReviewDay']) === 'Sunday', '(1) the review day row shows Sunday (RN\'s default)');
+    nodes = await tapExpecting(row(nodes, en['settings.weeklyReviewDay']), (current) => Boolean(tagged(current, 'settings-picker')), 'the day picker');
+    await tapExpecting(withDescription(nodes, 'Wednesday') ?? fail('no Wednesday'), (current) => !tagged(current, 'settings-picker'), 'the picker to close');
+    await waitUntil('the review day stored', async () => settings().weeklyReviewDay === 3, 20_000);
+    check(true, '(1) the review day Wednesday is stored (3)');
+    await flip(en['settings.dailyDigestMorning'], (stored) => stored.dailyDigestMorningEnabled === true, '(1) the morning digest on is stored');
+    nodes = await reveal((current) => Boolean(row(current, en['settings.dailyDigestMorningTime'])));
+    await tap(row(nodes, en['settings.dailyDigestMorningTime']));
+    // Android's time dialog: its keyboard mode, then the hour and minute typed, then OK.
+    let dialog = await waitFor('the time dialog', (current) => current.some((node) => /toggle_mode|button1/.test(node['resource-id'] ?? '')), 15_000);
+    const byId = (current, id) => current.find((node) => (node['resource-id'] ?? '').endsWith(`:id/${id}`));
+    if (byId(dialog, 'toggle_mode') && !byId(dialog, 'input_hour')) {
+        await tap(byId(dialog, 'toggle_mode'));
+        dialog = await waitFor('the time dialog\'s fields', (current) => Boolean(byId(current, 'input_hour')), 10_000);
+    }
+    for (const [id, text] of [['input_hour', '07'], ['input_minute', '45']]) {
+        await tap(byId(dialog, id) ?? fail(`no ${id} in the time dialog`));
+        sh('input keyevent KEYCODE_MOVE_END');
+        for (let i = 0; i < 3; i += 1) sh('input keyevent KEYCODE_DEL');
+        sh(`input text ${text}`);
+        dialog = await screen();
+    }
+    const am = dialog.find((node) => node.text === 'AM' && node.class?.includes('RadioButton'));
+    if (am && am.checked !== 'true') await tap(am);
+    await tap(byId(await screen(), 'button1') ?? fail('no OK in the time dialog'));
+    await waitUntil('the morning time stored', async () => settings().dailyDigestMorningTime === '07:45', 20_000);
+    check(journal().length === 0, '(1) the morning time 07:45 from Android\'s time picker is stored, and no journal entry is left');
+    await killApp();
+    await launch();
+    nodes = await openNotifications();
+    check(switchOn(nodes, en['settings.notificationsEnable']), '(1) after a restart Task reminders shows on');
+    nodes = await reveal((current) => Boolean(row(current, en['settings.dailyDigestMorningTime'])));
+    check(value(nodes, en['settings.dailyDigestMorningTime']) === '07:45' && switchOn(nodes, en['settings.dailyDigestMorning']),
+        '(1) after a restart the morning digest shows on, at 07:45');
+    nodes = await reveal((current) => Boolean(row(current, en['settings.weeklyReviewDay'])));
+    check(value(nodes, en['settings.weeklyReviewDay']) === 'Wednesday' && switchOn(nodes, en['settings.weeklyReview']),
+        '(1) after a restart the weekly review shows on, on Wednesday');
+    // Off again through the app, so no reminder of the development data fires while the check runs.
+    await flip(en['settings.notificationsEnable'], (stored) => stored.notificationsEnabled === false, '(1) Task reminders off is stored');
+    await flip(en['settings.dailyDigestMorning'], (stored) => stored.dailyDigestMorningEnabled === false, '(1) the morning digest off is stored');
+
+    // (2) The persistent capture notification.
+    const capture = () => notifications().filter((item) => item.id === CAPTURE_ID && item.channel === CAPTURE_CHANNEL);
+    await flip(en['settings.persistentCaptureLabel'], () => kv([KEYS.capture])[KEYS.capture] === 'true', '(2) the switch stores RN\'s key');
+    await waitUntil('the capture notification', () => capture().length === 1, 15_000);
+    check(capture()[0].title === en['captureNotification.title'] && capture()[0].text === en['captureNotification.text'],
+        `(2) RN's notification is posted (id ${CAPTURE_ID}, channel ${CAPTURE_CHANNEL}) with core's words`);
+    await killApp();
+    await launch();
+    await waitUntil('the capture notification after a restart', () => capture().length === 1, 20_000);
+    check(true, '(2) after a process death the start shows it');
+    await toTabs();
+    sh('input keyevent KEYCODE_HOME');
+    await sleep(1000);
+    await tapInShade(en['captureNotification.title']);
+    await waitUntil('the quick capture dialog', () => front().includes('QuickCaptureActivity'), 20_000);
+    check(true, '(2) a tap on it opens RN\'s quick capture dialog');
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(1500);
+    if (!front().includes(`${PKG}/`)) await launch();
+    await openNotifications();
+    await flip(en['settings.persistentCaptureLabel'], () => kv([KEYS.capture])[KEYS.capture] === null, '(2) off removes RN\'s key');
+    await waitUntil('the capture notification to go', () => capture().length === 0, 15_000);
+    check(true, '(2) off removes the notification');
+
+    // (3) The Pomodoro card and its completion alarm.
+    nodes = await toTabs();
+    if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
+    nodes = await waitFor('the Pomodoro card', (current) => Boolean(tagged(current, 'pomodoro-card')) && !current.some((node) => node.text === en['common.loading']), 30_000);
+    nodes = await tapExpecting(tagged(nodes, 'pomodoro-preset-custom') ?? fail('no 1/1 preset'),
+        (current) => current.some((node) => node.text === '01:00'), 'the 1/1 preset');
+    check(true, '(3) the 1/1 preset sets the clock to 01:00');
+    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => current.some((node) => node.text === en['common.pause']), 'Start');
+    const entry = await waitUntil('core\'s Pomodoro alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; return raw && JSON.parse(raw); }, 15_000);
+    await waitUntil('one Pomodoro alarm', () => pomodoroAlarms().filter((alarm) => alarm.at === entry.fireAtMs).length === 1, 15_000);
+    check(entry.id === POMODORO_ID && entry.phase === 'focus-complete', `(3) Start makes one completion alarm at ${new Date(entry.fireAtMs).toISOString()} under the Pomodoro id`);
+    await killApp();
+    const pomodoro = () => notifications().filter((item) => item.title === en['pomodoro.mobileTitle']);
+    await waitUntil('the completion alert', () => pomodoro().length === 1, Math.max(0, entry.fireAtMs - Date.now()) + 60_000);
+    check(pomodoro()[0].text === en['pomodoro.focusComplete'] && Date.now() >= entry.fireAtMs - 2000,
+        '(3) with the app closed, the alarm fires once at the phase end with core\'s words');
+    await sleep(20_000);
+    check(pomodoro().length === 1 && pomodoroAlarms().length === 0, '(3) no second alert, and no alarm left');
+    await launch();
+    nodes = await toTabs();
+    if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
+    await waitFor('the finished-phase line', (current) => current.some((node) => node.text === en['pomodoro.focusComplete']), 30_000);
+    await sleep(3000);
+    check(pomodoroAlarms().length === 0 && pomodoro().length === 1, '(3) the next start shows RN\'s finished-phase line, makes no alarm, and keeps the alert');
+    sh('input keyevent KEYCODE_HOME');
+    await sleep(1000);
+    await tapInShade(en['pomodoro.mobileTitle']);
+    await waitUntil('the app in front', () => front().includes(`${PKG}/`), 20_000);
+    check(pomodoro().length === 0, '(3) a tap on the alert opens the app, and the alert goes');
+    await toTabs();
+
+    console.log('Notifications device check passed');
+} catch (error) {
+    evidenced(error);
+    console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
+    process.exitCode = error instanceof Stopped ? 3 : 1;
+} finally {
+    await restore();
+}

@@ -124,7 +124,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         return when (screen) {
             "main" -> view.getString("title")
             "advanced" -> view.getJSONObject("advanced").getString("title")
-            "general", "manage", "data", "sync", "ai", "about" -> view.getString("title")
+            "general", "manage", "data", "notifications", "sync", "ai", "about" -> view.getString("title")
             "gtd" -> view.getJSONObject("hub").getString("title")
             else -> gtdScreen(view)?.getString("title") ?: t("settings.title")
         }
@@ -202,6 +202,7 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
         screen == "general" -> "generalSettings" to JSONObject().put("deviceTheme", prefs.getString(THEME_KEY, null) ?: JSONObject.NULL)
         screen == "manage" -> "manageSettings" to JSONObject().put("openSections", prefs.getString(MANAGE_SECTIONS_KEY, null) ?: JSONObject.NULL)
         screen == "data" -> "dataSettings" to JSONObject()
+        screen == "notifications" -> "notificationsSettings" to JSONObject()
         else -> "gtdSettings" to JSONObject().put("taskOpenMode", prefs.getString(TASK_OPEN_MODE_KEY, null) ?: JSONObject.NULL)
     }
 
@@ -383,6 +384,9 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     /** The editor's Save: its exact request, on disk (synced) before the call (a new area or person is a create). */
     fun saveEditor(action: FailedAction) = menu.create(action)
 
+    /** A Notifications control's edit (core's `edit`, or a time row's `{ type, value: 'HH:MM' }`), with a new request UUID. */
+    fun notifications(edit: JSONObject) = menu.command("notificationsSetting", JSONObject().put("edit", edit))
+
     /** Data's Debug logging switch: core's edit, with a new request UUID. */
     fun data(edit: JSONObject) = menu.command("dataSetting", JSONObject().put("edit", edit))
 
@@ -451,6 +455,9 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
      * a new theme core's colors.
      */
     internal fun applied(runtime: CoreHost, reply: JSONObject) {
+        // Notifications' persistent capture switch: RN's notification posted or removed as core's reply says (RN's
+        // applyPersistentCaptureNotification, PersistentCaptureNotifier.kt).
+        reply.optJSONObject("persistentCapture")?.let { PersistentCapture.apply(shell.getApplication<Application>(), it) }
         val writes = reply.optJSONArray("deviceWrites") ?: return
         val keys = List(writes.length()) { writes.getJSONObject(it).getString("key") }
         if (LANGUAGE_KEY in keys) {

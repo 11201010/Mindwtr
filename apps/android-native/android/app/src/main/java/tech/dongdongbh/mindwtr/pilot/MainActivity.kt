@@ -187,6 +187,7 @@ class MainActivity : FragmentActivity() {
                             // The Inbox's and the quick-access tab's sheets and dialogs (MenuModel), and Focus's (FocusModel), over the tabs.
                             if (quick || screen == Screen.Inbox) MenuDialogs(model)
                             if (screen == Screen.Focus) FocusDialogs(model)
+                            if (screen == Screen.Focus) PomodoroPicker(model)
                             StatusMenu(model)
                         }
                     }
