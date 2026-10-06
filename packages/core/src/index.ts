@@ -258,6 +258,8 @@ export * from './diagnostics-log';
 export * from './performance-log';
 export * from './log-breadcrumbs';
 export * from './pomodoro';
+export * from './pomodoro-session';
+export * from './pomodoro-controller';
 export * from './color-constants';
 export * from './task-accent-color';
 export * from './analytics-heartbeat';
