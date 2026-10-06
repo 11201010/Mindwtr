@@ -1165,6 +1165,14 @@ const scenarioPomodoro = async () => {
         ? `UPDATE catalystLocalStorage SET value = json_set(value, '$.settings.features.pomodoro', json('true')) WHERE key = '${JSON_BACKUP}';` : '';
     rewriteAsyncStorage('9-switch', `${backup} INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${POMODORO_KEYS.capture}', 'true');`);
     device.launch(RN_ACTIVITY);
+    // An empty RN opens on its onboarding, which holds the link back: skip it as a user would (as 6 does).
+    let first = [];
+    for (const deadline = Date.now() + 20_000; Date.now() < deadline && !first.some((node) => node.text === RN_SKIP_ONBOARDING); await sleep(1_000)) {
+        first = await screen();
+    }
+    const skip = first.find((node) => node.text === RN_SKIP_ONBOARDING);
+    if (skip) await tap(skip);
+    await sleep(2_000);
     openLink('mindwtr-upgradetest://focus');
     let nodes = await waitFor('RN\'s Pomodoro card', (current) => current.some((node) => node.text === 'Pomodoro Timer') && current.some((node) => node.text === 'Start'), 60_000);
     await tap(nodes.find((node) => node.text === 'Start'));

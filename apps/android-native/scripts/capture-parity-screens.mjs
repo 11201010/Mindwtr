@@ -151,9 +151,9 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
     await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
         gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
-    // Pass R2's shots: the Pomodoro card on Focus, its Link task row.
+    // Pass R2's shots: the Pomodoro card on Focus, its Link task row, and the weekly review on (its day picker opens).
     if (process.env.FIXTURE_POMODORO === '1') await store().updateSettings({ features: { ...(store().settings.features ?? {}), pomodoro: true },
-        gtd: { ...(store().settings.gtd ?? {}), pomodoro: { linkTask: true } } });
+        gtd: { ...(store().settings.gtd ?? {}), pomodoro: { linkTask: true } }, weeklyReviewEnabled: true });
     await flushPendingSave();
     if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -589,7 +589,15 @@ const shootR2 = async (prefix, suffix, rn) => {
         || (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)), 15_000);
     await tap(day.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)) ?? day.find((node) => node.text === en['settings.weeklyReviewDay']));
     await shoot(`${prefix}-notifications-day-picker-${suffix}`, (current) => hasText(current, 'Wednesday'));
-    for (let step = 0; step < 4; step += 1) { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(900); }
+    // Back until the tabs show (the picker, Notifications, Settings), never past them.
+    for (let step = 0; step < 6; step += 1) {
+        const current = await screen();
+        if (rn ? current.some((node) => node['content-desc'] === 'Menu') && !hasText(current, en['settings.notificationsEnable']) && !hasText(current, 'Wednesday')
+            : Boolean(tab(current, 'Inbox')) && !hasText(current, en['settings.notificationsEnable']) && !hasText(current, 'Wednesday')) break;
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(900);
+    }
 };
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },

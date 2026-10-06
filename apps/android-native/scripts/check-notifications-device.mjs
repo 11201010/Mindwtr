@@ -173,6 +173,8 @@ const openNotifications = async () => {
 /** Scrolls Notifications until [found] shows. */
 const reveal = async (found) => {
     let nodes = await screen();
+    // Up to the top first (a row above what shows), then down.
+    for (let step = 0; step < 6 && !found(nodes); step += 1) nodes = await device.swipe(nodes, 'up');
     for (let step = 0; step < 6 && !found(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
     return found(nodes) ? nodes : fail('not on the Notifications screen');
 };
