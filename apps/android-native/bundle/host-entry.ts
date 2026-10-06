@@ -1073,6 +1073,8 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // Mind Sweep and a saved search's screen.
     mindSweep: (input) => contract.getMindSweep(input),
     savedSearch: (input) => contract.getSavedSearchView(input),
+    // RN's widget list screen (`/widget-list/<id>`, a Tasks widget's header): native-host-contract-widget-list.ts.
+    widgetList: (input) => contract.getWidgetListView(input),
     // A link, text share or assistant note (native-host-contract-entry-points.ts), and the capture popup's Import .txt.
     entryPoint: (input) => logEntryPoint(input, isNotificationTap(input) ? notificationEntry(input) : contract.resolveNativeEntryPoint(input)),
     captureImport: (input) => contract.planQuickCaptureImport(input),

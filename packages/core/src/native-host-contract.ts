@@ -352,6 +352,7 @@ export {
 export { NATIVE_AI_UNJOURNALED_COMMANDS, type NativeAIHost } from './native-host-contract-ai';
 import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
+import { createWidgetListMethods } from './native-host-contract-widget-list';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
 import { createReminderMethods } from './native-host-contract-reminders';
 export { NATIVE_REMINDER_STATE_STORAGE_KEY } from './native-host-contract-reminders';
@@ -1830,6 +1831,17 @@ export function createNativeHostContract(options: {
             readiness,
             save,
             t: () => translate,
+            revision: (now) => `${revision()}:${displayRevision(now)}`,
+            rows: (tasks, now) => {
+                const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));
+                return tasks.map((task) => toNativeTaskRow(task, titles, rowMeta(task, now)));
+            },
+        }),
+        // The widget list screen (a Tasks widget's header): native-host-contract-widget-list.ts.
+        ...createWidgetListMethods({
+            readiness,
+            t: () => translate,
+            language: () => language,
             revision: (now) => `${revision()}:${displayRevision(now)}`,
             rows: (tasks, now) => {
                 const titles = new Map(useTaskStore.getState().projects.map((project) => [project.id, project.title]));

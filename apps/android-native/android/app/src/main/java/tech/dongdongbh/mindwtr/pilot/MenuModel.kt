@@ -62,8 +62,8 @@ enum class MenuScreen(val title: String) {
     Waiting("waiting.title"), Someday("someday.title"), Reference("nav.reference"), History("nav.history"),
     Contexts("contexts.title"), Trash("trash.title"), Review("nav.review"), Projects("projects.title"), Weekly("nav.review"), Daily("nav.review"),
     Calendar("nav.calendar"), Board("nav.board"), Settings("settings.title"),
-    // RN's Mind Sweep modal and a saved search's screen (its stack title).
-    MindSweep("mindSweep.title"), SavedSearch("search.title"),
+    // RN's Mind Sweep modal and a saved search's screen (its stack title); a widget list's screen titles itself with core's title.
+    MindSweep("mindSweep.title"), SavedSearch("search.title"), WidgetList("search.noResults"),
 }
 
 /** Core's bulk actions (Contexts, Trash, Review, and a Review row's Mark reviewed): each ends RN's selection mode once core answers. */
@@ -220,6 +220,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         MenuScreen.Settings -> "settings"
         MenuScreen.MindSweep -> "mindSweep"
         MenuScreen.SavedSearch -> "savedSearch"
+        MenuScreen.WidgetList -> "widgetList"
         MenuScreen.Projects -> null
         null -> when {
             shell.screen == Screen.Projects && quickView != "projects" -> quickView
@@ -310,6 +311,12 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     fun openSavedSearch(id: String) {
         editOwn("savedSearch") { put("id", id) }
         open(MenuScreen.SavedSearch)
+    }
+
+    /** RN's widget list screen (`/widget-list/<id>`, a Tasks widget's header for Next Actions or a saved filter), over the tabs. */
+    fun openWidgetList(id: String) {
+        editOwn("widgetList") { put("id", id) }
+        open(MenuScreen.WidgetList)
     }
 
     /** RN's Mind Sweep (the Inbox's button, the Weekly Review's link): a new sweep, full screen over the screen it opens from. */
@@ -452,6 +459,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 .put("expandedProjectId", own.opt("expandedProjectId") ?: JSONObject.NULL)
             "daily" -> JSONObject().put("checkpoint", prefs.getString(DAILY_REVIEW_KEY, null) ?: JSONObject.NULL)
             "savedSearch" -> JSONObject().put("id", own.optString("id"))
+            "widgetList" -> JSONObject().put("id", own.optString("id"))
             else -> JSONObject()
         }
     }

@@ -2912,6 +2912,18 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(lockKt, /\.testTag\("app-lock-unlock"\)\s+\.clearAndSetSemantics \{ contentDescription = label; role = Role\.Button; if \(enabled\) onClick \{ lock\.unlock\(\); true \} else disabled\(\) \}/);
 }
 
+// W1b (#1213): RN's widget list screen. A Tasks widget's header link (core's openUri) opens it with the URI-decoded id; the read is
+// core's getWidgetListView, unchanged; the screen draws core's rows, title and empty line only.
+{
+    assert.match(hostEntry, /^\s+widgetList: \(input\) => contract\.getWidgetListView\(input\),$/m);
+    const entryKt = source('EntryPoints.kt');
+    assert.match(entryKt, /route\.startsWith\("\/widget-list\/"\) -> menu\.openWidgetList\(Uri\.decode\(route\.removePrefix\("\/widget-list\/"\)\)\)/);
+    assert.match(menuModel, /"widgetList" -> JSONObject\(\)\.put\("id", own\.optString\("id"\)\)/);
+    assert.match(menuModel, /MenuScreen\.WidgetList -> "widgetList"/);
+    const widgetListKt = source('WidgetListScreen.kt');
+    assert.match(widgetListKt, /TaskRowItem\(model, it, status = RowStatus\.Badge\)/);
+    assert.doesNotMatch(code(widgetListKt), /getString\("(id|status|title)"\)|filter\s*\{|sorted/, 'the screen draws core\'s list, no policy of its own');
+}
 // Pass 11: Mind Sweep and a saved search's screen on core's new contracts; the Focus filter pickers' search;
 // Bulk organize's project and area pickers that create one.
 {

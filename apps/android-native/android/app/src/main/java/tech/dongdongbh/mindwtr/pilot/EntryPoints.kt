@@ -202,6 +202,8 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
                 if (menu.quickView == view) { menu.toTabs(); show(Screen.Projects) } else menu.openTile(view)
             }
             name in TILE_ROUTES -> menu.openTile(name)
+            // A Tasks widget's header (core's openUri `mindwtr:///widget-list/<id>`, the id URI-encoded); core checks the id.
+            route.startsWith("/widget-list/") -> menu.openWidgetList(Uri.decode(route.removePrefix("/widget-list/")))
             menu.openRoute(route) -> Unit
             else -> { menu.toTabs(); show(Screen.Inbox) }
         }
