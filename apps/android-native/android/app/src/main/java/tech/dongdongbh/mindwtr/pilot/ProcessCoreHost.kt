@@ -128,7 +128,7 @@ internal object ProcessCoreHost {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "", legacy?.preflight == true)
             // After the boot, so the line reaches RN's diagnostics log with the settings loaded.
             if (legacy != null) {
-                runtime.logLine("Native Android legacy import preflight", JSONObject()
+                runtime.logLine("Native Android legacy import preflight releaseCheck=v1.3.5/native-android-legacy-preflight", JSONObject()
                     .put("releaseCheck", "v1.3.5/native-android-legacy-preflight").put("outcome", if (legacy.preflight) "passed" else "skipped"))
             }
             setLanguage(runtime, language ?: legacy?.language)
