@@ -204,7 +204,9 @@ export type NativeSomedayItem =
         /** Section grouping only: the section a new task goes to (null = No section). */
         addTask: { sectionId: string | null; label: string; accessibilityLabel: string } | null;
     }
-    | { type: 'task'; row: NativeTaskRow; groupId: string | null };
+    | { type: 'task'; row: NativeTaskRow; groupId: string | null }
+    /** With `projectsInSections`: a parked project in its section group, before the group's tasks (#1319). */
+    | { type: 'project'; id: string; groupId: string; project: DeferredRow; activateLabel: string };
 
 export type NativeSomedayView = Paged<{
     items: NativeSomedayItem[];
@@ -548,6 +550,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             || (input.sortBy !== undefined && !TASK_LIST_SORT_OPTIONS.includes(input.sortBy as TaskSortBy))
             || (input.groupBy !== undefined && !SOMEDAY_GROUP_OPTIONS.includes(input.groupBy as SomedayGroupBy))
             || (input.showDetails !== undefined && typeof input.showDetails !== 'boolean')
+            || (input.projectsInSections !== undefined && typeof input.projectsInSections !== 'boolean')
             || (input.filterEdit !== undefined && !isFilterEdit(input.filterEdit))) {
             return null;
         }
@@ -556,6 +559,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             sortBy: (input.sortBy as TaskSortBy | undefined) ?? 'default',
             groupBy: (input.groupBy as SomedayGroupBy | undefined) ?? 'viewSection',
             showDetails: input.showDetails === true,
+            projectsInSections: input.projectsInSections === true,
             filters: edit ? applyListFilterEdit(filters, edit) : filters,
         };
     };
@@ -579,25 +583,32 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                 sortBy: params.sortBy, groupBy: params.groupBy, showDetails: params.showDetails,
                 criteria: resolved.criteria, searchQuery: resolved.searchQuery, filterChips: resolved.chips, t,
             });
-            // Native Someday keeps the parked-projects block above the list and draws no
-            // project rows inside groups (#1319 native parity is a follow-up). So it skips
-            // a "No section" group that holds only projects, as before #1319.
-            const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null })[] = model.groups
-                ? model.groups.filter((group) => group.tasks.length > 0 || getSomedayGroupSectionId(group.id) !== undefined).flatMap((group) => [
+            // With `projectsInSections` (native Android) parked projects sit in their section group, before its tasks, and
+            // no block shows above the list, as React Native draws core's model (#1319). Without it (native iOS, until its
+            // parity lands) the block stays above the list and a "No section" group that holds only projects is skipped.
+            const inGroups = params.projectsInSections && model.deferred === null;
+            const deferredAll = withProjectRevisions(buildDeferredProjectsSection(model.deferredProjects, areaById, t));
+            const deferredRows = new Map((deferredAll?.rows ?? []).map((row) => [row.id, row]));
+            const items: ({ type: 'heading'; id: string; title: string; muted: boolean } | { type: 'task'; task: Task; groupId: string | null }
+                | { type: 'project'; id: string; groupId: string; project: DeferredRow; activateLabel: string })[] = model.groups
+                ? model.groups.filter((group) => inGroups || group.tasks.length > 0 || getSomedayGroupSectionId(group.id) !== undefined).flatMap((group) => [
                     { type: 'heading' as const, id: group.id, title: group.title, muted: group.muted === true },
+                    ...(inGroups ? group.projects ?? [] : []).map((project) => ({
+                        type: 'project' as const, id: project.id, groupId: group.id, project: deferredRows.get(project.id)!, activateLabel: deferredAll!.activateLabel,
+                    })),
                     ...group.tasks.map((task) => ({ type: 'task' as const, task, groupId: group.id })),
                 ])
                 : model.tasks.map((task) => ({ type: 'task' as const, task, groupId: null }));
             return {
                 model, resolved, options, items,
-                deferred: withProjectRevisions(buildDeferredProjectsSection(model.deferredProjects, areaById, t)),
+                deferred: inGroups ? null : deferredAll,
                 tokens: tokenOptions(options, resolved.state),
                 projects: projectOptions(options, resolved.state),
             };
         });
-        const { sortBy, groupBy, showDetails } = params;
+        const { sortBy, groupBy, showDetails, projectsInSections } = params;
         return {
-            revision: `${base}:${paramsKey(['someday', sortBy, groupBy, showDetails, data.resolved.state])}`,
+            revision: `${base}:${paramsKey(['someday', sortBy, groupBy, showDetails, projectsInSections, data.resolved.state])}`,
             now,
             data,
             collections: {
@@ -799,6 +810,8 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
             sortBy?: TaskSortBy;
             groupBy?: SomedayGroupBy;
             showDetails?: boolean;
+            /** Parked projects as `project` items in their section groups, with no block above the list (#1319). */
+            projectsInSections?: boolean;
             filters?: Partial<ListFilterState>;
             filterEdit?: ListFilterEdit;
             offset: number;
@@ -831,6 +844,7 @@ export function createMenuViewMethods(deps: MenuViewDeps) {
                     total: built.data.items.length,
                     items: windowItems.map((item): NativeSomedayItem => {
                         if (item.type === 'task') return { type: 'task', row: rows[rowIndex++], groupId: item.groupId };
+                        if (item.type === 'project') return item;
                         const sectionId = model.canAddTaskToGroup ? getSomedayGroupSectionId(item.id) : null;
                         return {
                             ...item,

@@ -429,9 +429,12 @@ fun DeferredProjects(model: InboxViewModel, page: MenuPage) = with(model.menu) {
     }
 }
 
-/** One parked project row; a drag right past 72 opens RN's Reactivate action and runs it, as RN's onSwipeableLeftOpen does. */
+/**
+ * One parked project row (RN's DeferredProjectRow): a tap opens it; a drag right past 72 opens RN's Reactivate action and runs it, as
+ * RN's onSwipeableLeftOpen does. Someday's section groups draw it too (#1319).
+ */
 @Composable
-private fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: String) = with(model) {
+internal fun ParkedProject(model: InboxViewModel, project: JSONObject, activate: String) = with(model) {
     val c = LocalTheme.current.colors
     val density = LocalDensity.current
     val offset = remember { Animatable(0f) }

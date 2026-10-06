@@ -425,7 +425,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         val kept = { names: List<String> -> JSONObject().apply { for (name in names) if (own.has(name)) put(name, own.get(name)) } }
         return when (list) {
             "waiting" -> JSONObject().put("person", own.optString("person"))
-            "someday" -> kept(listOf("sortBy", "groupBy", "showDetails", "filters"))
+            // RN draws parked projects inside their section group (#1319).
+            "someday" -> kept(listOf("sortBy", "groupBy", "showDetails", "filters")).put("projectsInSections", true)
             "reference" -> kept(listOf("groupBy", "includeArchivedProjects", "filters")).apply {
                 if (!has("groupBy")) prefs.getString(REFERENCE_GROUP_BY_KEY, null)
                     ?.takeIf { it in REFERENCE_GROUP_BY_OPTIONS }?.let { put("groupBy", it) }

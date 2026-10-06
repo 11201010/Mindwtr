@@ -444,9 +444,10 @@ export async function replayMenuViewsScenario(options: {
             const choices = Array.isArray(dialog.choices) ? dialog.choices : dialog.choices.items;
             return { title: dialog.title, choices: choices.map((choice) => ({ id: choice.sectionId ?? '', title: choice.title, selected: choice.selected })) };
         };
+        // The native Android host draws parked projects inside their section, as React Native does (#1319).
         const somedayRead = (limit: number) => ok(contract!.getSomedayView({
             sortBy: session.sortBy, groupBy: session.groupBy, showDetails: session.showDetails,
-            filters: session.filters, offset: 0, limit,
+            filters: session.filters, projectsInSections: true, offset: 0, limit,
         }));
         const leaf = (id: string, label: string, accessibilityLabel: string | null, value: string | null, selected: boolean | null) => ({
             id, label, accessibilityLabel, value, selected,
@@ -458,7 +459,7 @@ export async function replayMenuViewsScenario(options: {
                 const { menu } = view;
                 const rows = view.items.map((item) => (item.type === 'heading'
                     ? ['heading', item.id, item.title, item.muted]
-                    : ['task', item.row.id]));
+                    : item.type === 'project' ? ['project', item.id] : ['task', item.row.id]));
                 const grouped = view.items.some((item) => item.type === 'heading');
                 return {
                     stats: view.stats.map((stat) => [String(stat.value), stat.label]),

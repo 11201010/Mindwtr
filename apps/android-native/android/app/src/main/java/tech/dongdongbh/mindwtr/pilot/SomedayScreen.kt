@@ -33,8 +33,8 @@ import org.json.JSONObject
  * RN's Someday/Maybe (components/views/someday-view.tsx) on core's getSomedayView: core's stats with the filter summary
  * chip (its X clears the filters) and RN's list menu (Filters, Sort, Group, Details, New section…, all core's), the
  * parked projects, core's headings with their Add task, core's rows (their detail parts when Details is on) whose status
- * menu offers Move to section… (a long-press starts selection mode, core's bulk bar with its own Move to section…), and
- * core's empty state.
+ * menu offers Move to section… (a long-press starts selection mode, core's bulk bar with its own Move to section…), the
+ * parked projects inside their section groups when core groups by section (#1319), and core's empty state.
  */
 @Composable
 fun SomedayList(model: InboxViewModel) = with(model.menu) {
@@ -66,7 +66,14 @@ fun SomedayList(model: InboxViewModel) = with(model.menu) {
         items(shown.items, key = { it.key }) { item ->
             Box(Modifier.padding(horizontal = 16.dp)) {
                 val row = item.row
-                if (row == null) Heading(model, item.json) else TaskRowItem(model, row, status = RowStatus.Icon, details = details, actions = bulkRow(row))
+                when {
+                    row != null -> TaskRowItem(model, row, status = RowStatus.Icon, details = details, actions = bulkRow(row))
+                    // A parked project in its section, before the section's tasks (#1319); RN's sectionProjectRow adds 8 below.
+                    item.type == "project" -> Box(Modifier.padding(bottom = 8.dp)) {
+                        ParkedProject(model, item.json.getJSONObject("project"), item.json.getString("activateLabel"))
+                    }
+                    else -> Heading(model, item.json)
+                }
             }
         }
         if (shown.items.size < shown.total) item(key = "more") { MoreRow(model) }

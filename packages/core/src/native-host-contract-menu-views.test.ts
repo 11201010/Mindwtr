@@ -106,6 +106,36 @@ describe('native host contract: More sheet and list views', () => {
         expect(ids(view)).not.toContain('view-section:someday:');
         expect(ids(view).slice(0, 1)).toEqual(['view-section:someday:s-later']);
     });
+    it('draws parked projects inside their section when the host asks, as React Native does (#1319)', async () => {
+        const { host } = await openHost(scenario('someday', 'sections'));
+        const parked = useTaskStore.getState()._allProjects.filter((project) => project.status === 'someday');
+        expect(parked.length).toBeGreaterThan(1);
+        const [first, ...rest] = parked;
+        // One parked project in a section, the others in a section that no longer exists (they fall back to No section).
+        useTaskStore.setState((state) => {
+            const place = (rows: typeof state._allProjects) => rows.map((row) => (row.status !== 'someday' ? row
+                : { ...row, viewSectionIds: { someday: row.id === first.id ? 's-later' : 'deleted-section' } }));
+            return { _allProjects: place(state._allProjects), projects: place(state.projects) };
+        });
+        const read = (projectsInSections?: boolean) => value(host.getSomedayView({ groupBy: 'viewSection', projectsInSections, offset: 0, limit: 100 }));
+        const view = read(true);
+        expect(view.deferred).toBeNull();
+        const shown = view.items.map((item) => (item.type === 'task' ? `task:${item.groupId}` : `${item.type}:${item.id}`));
+        const later = shown.indexOf('heading:view-section:someday:s-later');
+        expect(shown[later + 1]).toBe(`project:${first.id}`);
+        const noSection = shown.indexOf('heading:view-section:someday:');
+        expect(noSection).toBeGreaterThan(later);
+        expect(shown.slice(noSection + 1, noSection + 1 + rest.length)).toEqual(rest.map((project) => `project:${project.id}`));
+        const item = view.items.find((entry) => entry.type === 'project' && entry.id === first.id);
+        expect(item).toMatchObject({ groupId: 'view-section:someday:s-later', activateLabel: expect.any(String),
+            project: { id: first.id, title: first.title, projectRevision: expect.any(String) } });
+        // The same read without the flag keeps the block above the list (native iOS).
+        expect(read().deferred?.rows.items.map((row) => row.id)).toEqual(parked.map((project) => project.id));
+        expect(read().items.some((entry) => entry.type === 'project')).toBe(false);
+        expect(view.revision).not.toBe(read().revision);
+        // Any grouping other than sections keeps the block.
+        expect(value(host.getSomedayView({ groupBy: 'project', projectsInSections: true, offset: 0, limit: 100 })).deferred).not.toBeNull();
+    });
     it('returns what core\'s models return when called directly', async () => {
         freezeClock();
         const { host } = await openHost(scenario('someday', 'sections'));
