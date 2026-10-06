@@ -65,7 +65,10 @@ describe('native host contract: Settings › Notifications', () => {
         expect(view.weeklyReview.day.options.map((option) => option.label)).toEqual(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
         expect(view.weeklyReview.time).toEqual({ label: t('settings.weeklyReviewTime'), description: '18:00', value: '18:00', hour: 18, minute: 0,
             disabled: true, type: 'weeklyReviewTime' });
-        expect(view.dailyDigest.morning).toMatchObject({ description: `${t('settings.dailyDigestMorningTime')}: 09:00`, value: false });
+        // The digests and the weekly review stand apart from Task reminders (RN's 255444968, 4176b4ec7): never dimmed by it.
+        expect(view.dailyDigest.morning).toMatchObject({ description: `${t('settings.dailyDigestMorningTime')}: 09:00`, value: false, disabled: false });
+        expect(view.dailyDigest.evening.disabled).toBe(false);
+        expect(view.weeklyReview.enable.disabled).toBe(false);
         expect(view.dailyDigest.eveningTime).toMatchObject({ value: '20:00', disabled: true });
         const menu = value(host.getSettingsMenu());
         expect(menu.groups.flat().find((row) => row.id === 'notifications')?.enabled).toBe(true);

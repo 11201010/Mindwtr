@@ -145,6 +145,9 @@ describe('native host contract: the Pomodoro card', () => {
         expect(value(await action(host, { type: 'markDone', taskId: 'b' })).changed).toBe(false);
         await flushPendingSave();
         expect(saved?.tasks.find((row) => row.id === 'b')?.rev).toBe(rev);
+        // A linked task outside the picker's lists (an Inbox task) stays linked (RN's 08e882590).
+        expect(value(await action(host, { type: 'selectTask', taskId: 'c' })).panel.link?.value).toBe('Task c');
+        value(await action(host, { type: 'selectTask', taskId: 'b' }));
         // A deleted task is no longer a visible task: RN's card drops it.
         await useTaskStore.getState().deleteTask('b');
         expect(value(host.getPomodoroPanel()).link?.value).toBe(t('pomodoro.timerOnly'));
@@ -180,6 +183,15 @@ describe('native host contract: the Pomodoro completion alarm', () => {
         // Without the notification permission the alarm and what it showed go.
         expect(plan(host, armed.entryAhead, { permissionGranted: false })).toMatchObject({ outcome: 'cancelled', reason: 'notification-permission-denied',
             cancel: [{ key: 'pomodoro', id: NATIVE_POMODORO_ALARM_ID, reason: 'withdrawn' }], clearEntry: true });
+    });
+
+    it('alerts whether or not task reminders are on (RN\'s #528)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const { host } = await openHost({ ...POMODORO_ON, notificationsEnabled: false } as AppSettings);
+        value(await host.startPomodoro());
+        value(await action(host, { type: 'run', value: true }));
+        expect(plan(host, null).outcome).toBe('scheduled');
     });
 
     it('cancels on pause and when the alert is turned off, and keeps a due alarm when the timer stopped on its own', async () => {
