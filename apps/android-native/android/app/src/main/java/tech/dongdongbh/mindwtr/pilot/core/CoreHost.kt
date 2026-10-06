@@ -185,8 +185,11 @@ class CoreHost(
      * SQLite opens and takes its recovery checkpoint on the caller's thread while the engine thread loads the bundle. No SQL
      * runs before the checkpoint: the bridge's SQL calls take the database from [opened] (they would wait for it), and boot,
      * the first caller, starts only after the engine owns it. From then on only the engine thread uses it.
+     *
+     * With [preflight] (LegacyRnStoreGuard.preflightNeeded) core's legacyCheck runs first, once the bundle has loaded: a refusal
+     * ends the start before anything opens the RN database, so neither the import nor the checkpoint touches it.
      */
-    fun start(bundle: CoreBundle, legacyState: String = "", legacyBackup: String = ""): JSONObject {
+    fun start(bundle: CoreBundle, legacyState: String = "", legacyBackup: String = "", preflight: Boolean = false): JSONObject {
         val opened = FutureTask {
             val database = traced("core:sqliteOpen") { SqliteBridge(databaseFile) }
             try {
@@ -218,6 +221,20 @@ class CoreHost(
                 io.readDone = files::readDone
                 load(engine, database, bundle)
             })
+        }
+        if (preflight) {
+            try {
+                onEngine {
+                    loading.get()
+                    // Its answer is null, not an object, so the answer is read here rather than through callAsync.
+                    val checked = answer("legacyCheck", arrayOf(legacyState, legacyBackup), OPERATION_DEADLINE_MS)
+                    check(checked.getBoolean("ok")) { checked.getString("error") }
+                }
+            } catch (failure: Throwable) {
+                // The database never opened: close only the engine.
+                onEngine { closeOnEngine() }
+                throw (failure as? ExecutionException)?.cause ?: failure
+            }
         }
         opened.run()
         // The engine runs this after the load (one thread, in order).

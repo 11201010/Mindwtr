@@ -21,8 +21,9 @@
 //       else, and imports nothing on a relaunch;
 //   4b  recovery after the import (continues 2): RN 154 shows the imported task
 //       once and, with its marker gone, imports nothing again;
-//   2b  json-ahead marker with a corrupt backup: the native app abandons it as
-//       RN would, clears the marker, and keeps SQLite as it was;
+//   2b  json-ahead marker with a corrupt backup: RN would abandon it (#964), but core's
+//       stricter preflight (legacyCheck) refuses before the RN database opens: the
+//       native app shows core's refusal and changes no file, the marker included;
 //   3   damaged database, empty WAL: the native app changes no file;
 //   3b  damaged database with WAL frames: the native app changes no file;
 //   5   database missing, no JSON backup, other RN state present: the native app creates nothing;
@@ -46,7 +47,7 @@
 //       and Pomodoro record byte for byte, cancels RN's alarm with RN's others (R1), makes no Pomodoro alarm and shows no card;
 //       the persistent capture notification is shown. Then RN 154 over the
 //       native app holds no native alarm of any kind.
-// In 1, 2, 2b and 5b the native app also publishes RN's home-screen widget payload (shared_prefs/mindwtr_widget.xml,
+// In 1, 2 and 5b the native app also publishes RN's home-screen widget payload (shared_prefs/mindwtr_widget.xml,
 // pass W1): that one other file may change, and only as RN's format with its one `payload` key, the value equal to
 // core's publication on a copy of the database the app left (host-side core with bun, widget-payload.mjs).
 //
@@ -115,6 +116,8 @@ const RN_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const NATIVE_ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const GUARD = 'releaseCheck=v1.3.3/native-android-legacy-json-ahead-guard';
+// core's assertNativeLegacyBackupSafe refusal (legacy-json-import.ts), shown as the boot's failure.
+const PREFLIGHT_REFUSAL = 'Legacy backup requires recovery before native upgrade';
 const IMPORT = 'v1.3.3/native-android-legacy-json-import';
 const MARKER = 'mindwtr-data:json-ahead-of-sqlite';
 const RECONCILED = 'mindwtr-data:sqlite-json-reconcile-v1';
@@ -480,6 +483,11 @@ const importLine = (label, fields) => {
     check(lines.length === 1 && Object.entries(fields).every(([name, value]) => lines[0].includes(`"${name}":"${value}"`)),
         `(${label}) one import line with ${JSON.stringify(fields)}: ${lines.map((line) => line.slice(line.indexOf('{'))).join(' | ')}`);
 };
+// The boot's preflight line (ProcessCoreHost, v1.3.5): core's legacyCheck ran before the RN database opened, or was not needed.
+const preflightLine = (label, outcome) => {
+    const lines = device.logs(pid(), TAG).replace(/\\/g, '').split('\n').filter((line) => line.includes('v1.3.5/native-android-legacy-preflight'));
+    check(lines.length === 1 && lines[0].includes(`"outcome":"${outcome}"`), `(${label}) one preflight line with outcome ${outcome}: ${lines.map((line) => line.slice(line.indexOf('{'))).join(' | ')}`);
+};
 // Installs the native build over the prepared RN state and checks it fails closed.
 const expectBlocked = async (label, reason, message) => {
     install(APKS.native153, true);
@@ -742,6 +750,7 @@ const scenarioJsonAhead = async () => {
     check(hasText(nodes, t.backupOnly), '(2) native Inbox shows the task only the JSON backup held');
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(2) guard logged outcome=clear');
     importLine('2', { outcome: 'imported', path: 'json-ahead', rnState: 'updated' });
+    preflightLine('2', 'passed');
     const published = await widgetsPublished('2');
     await stopApp();
 
@@ -880,44 +889,31 @@ const scenarioRecoverySnapshots = async () => {
 };
 
 const scenarioCorruptBackup = async () => {
-    console.log('\n# 2b json-ahead marker with a corrupt backup');
+    console.log("\n# 2b json-ahead marker with a corrupt backup: core's preflight refuses");
     fresh();
     await seed('7'); // digit prefixes keep seed titles digits-only
     rewriteAsyncStorage('2b-rkstorage', `UPDATE catalystLocalStorage SET value = '{"tasks": [' WHERE key = '${JSON_BACKUP}'; `
         + `INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES ('${MARKER}', '1');`);
     console.log(`INJECTED (2b): AsyncStorage ${JSON_BACKUP} cut to text that does not parse, and ${MARKER} = '1'`);
     const before = snapshot();
-    const widgetsBefore = widgetPrefsNow();
-    const pre = readState(pullDatabase('2b-pre'));
-    const preAsync = asyncStorage('2b-pre-rkstorage');
+    for (const path of [DB, `${DB}-wal`, ASYNC_STORAGE]) if (before.has(path)) console.log(`sha256 ${path} ${before.get(path)}`);
 
+    // RN would abandon the marker (#964); the native upgrade refuses a backup that needs lossy repair (core's
+    // assertNativeLegacyBackupSafe, audit C), before anything opens the RN database.
     install(APKS.native153, true);
     device.launch(NATIVE_ACTIVITY);
     const nodes = await nativeScreen();
-    check(!unavailable(nodes), `(2b) native boot succeeded ${unavailable(nodes) ?? ''}`);
-    check(header(nodes) === liveInbox(pre.tasks).length, '(2b) native Inbox shows the RN Inbox as SQLite held it');
-    importLine('2b', { outcome: 'abandoned', path: 'json-ahead', reason: 'backup-corrupt', rnState: 'updated' });
-    const published = await widgetsPublished('2b');
+    check((unavailable(nodes) ?? '').startsWith(PREFLIGHT_REFUSAL), `(2b) native app shows: ${unavailable(nodes)}`);
+    check(nativeGuardLog().includes(`${GUARD} outcome=clear`), "(2b) the guard passed, so core's preflight refused");
+    check(importLines().length === 0, '(2b) no import line: the import never ran');
+    check(!field(nodes) && !nodes.some((node) => node.package === PKG && node.clickable === 'true'), '(2b) no capture field and no control is offered');
     await stopApp();
 
     const after = snapshot();
-    const postDb = pullDatabase('2b-post');
-    const changes = rowChanges(pre.rows, postDb);
-    check(changes.length === 0, `(2b) every pre-upgrade row is unchanged${shortList(changes)}`);
-    const dataTables = TABLES.filter((table) => table !== 'schema_migrations');
-    const postCounts = counts(postDb);
-    check(dataTables.every((table) => postCounts[table] === pre.counts[table]), `(2b) SQLite gained no data row: ${JSON.stringify(postCounts)}`);
-    const postAsync = asyncStorage('2b-post-rkstorage');
-    check(!postAsync.has(MARKER), '(2b) the json-ahead marker is cleared');
-    const asyncChanged = asyncChanges(preAsync, postAsync);
-    check(asyncChanged.length === 0, `(2b) no other AsyncStorage row changed; the corrupt backup stays as RN left it${shortList(asyncChanged)}`);
-    check(checkpointMatches(before, after), `(2b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte`);
-    const changed = differences(before, after, {
-        changedOk: (path) => isDatabase(path) || isAsyncStorage(path) || isWidgetPayload(path),
-        newOk: (path) => isDatabase(path) || path === `${DB}.prewrite` || isAsyncStorage(path) || isRnCheckpoint(path) || isWidgetPayload(path),
-    });
-    check(changed.length === 0, `(2b) every other file is unchanged but RN's widget payload${shortList(changed)}`);
-    verifyWidgetPayload('2b', widgetsBefore, published);
+    check(after.get(DB) === before.get(DB) && after.get(`${DB}-wal`) === before.get(`${DB}-wal`), '(2b) database and -wal bytes are unchanged');
+    check(asyncStorage('2b-post-rkstorage').has(MARKER), '(2b) the json-ahead marker stays for RN');
+    const changed = differences(before, after);
+    check(changed.length === 0, `(2b) every file is unchanged and none is new, so no .prewrite, no RKStorage checkpoint and no write (${before.size} files)${shortList(changed)}`);
 };
 
 const scenarioUnreadable = async (label, withWal) => {
@@ -994,6 +990,7 @@ const scenarioMissingWithBackup = async () => {
     check(nativeGuardLog().includes(`${GUARD} outcome=clear`), '(5b) guard logged outcome=clear');
     const flagWasSet = preAsync.has(RECONCILED);
     importLine('5b', { outcome: 'imported', path: 'migrate', rnState: flagWasSet ? 'unchanged' : 'updated' });
+    preflightLine('5b', 'passed');
     const published = await widgetsPublished('5b');
     await stopApp();
 

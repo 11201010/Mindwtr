@@ -125,7 +125,12 @@ internal object ProcessCoreHost {
             scheduleBackgroundSync = { on -> CoreWork.scheduleSyncStored(app, on) }, appInfo = aboutAppInfo(),
             backups = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), File(app.filesDir, "snapshots"), maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES))
         try {
-            runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
+            runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "", legacy?.preflight == true)
+            // After the boot, so the line reaches RN's diagnostics log with the settings loaded.
+            if (legacy != null) {
+                runtime.logLine("Native Android legacy import preflight", JSONObject()
+                    .put("releaseCheck", "v1.3.5/native-android-legacy-preflight").put("outcome", if (legacy.preflight) "passed" else "skipped"))
+            }
             setLanguage(runtime, language ?: legacy?.language)
             loadTheme(runtime, legacy?.theme)
             // Before the journal's replay, the first write that can reach files/attachments: an install a death cut short is

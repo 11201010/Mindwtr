@@ -69,6 +69,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // legacy-capture-audio: HTTP method plus existing releaseCheck/operation/outcome.
     'method',
     // capture-token-revocation reuses releaseCheck and outcome below.
+    // native-android-legacy-preflight reuses releaseCheck and outcome below.
     // cloud-attachment-gc-retention reuses releaseCheck, count, operation, and outcome below.
     // archive-section-retention: number of restorable sections kept during timed cleanup.
     'retainedSectionCount',

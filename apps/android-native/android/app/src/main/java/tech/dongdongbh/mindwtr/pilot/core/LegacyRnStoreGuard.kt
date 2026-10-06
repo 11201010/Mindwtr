@@ -58,8 +58,21 @@ internal object LegacyRnStoreGuard {
         "database-unreadable" to "The previous app version's database failed its integrity check",
     )
 
-    /** The RN database, and what RN left in AsyncStorage: [bootState] as JSON, the backup text ("" when absent), RN's language and theme. */
-    class Opened(val database: File, val bootState: String, val backup: String, val language: String?, val theme: String?)
+    /**
+     * The RN database, and what RN left in AsyncStorage: [bootState] as JSON, the backup text ("" when absent), RN's language and
+     * theme, and whether core's legacy-import preflight must pass before the database opens ([preflightNeeded]).
+     */
+    class Opened(val database: File, val bootState: String, val backup: String, val language: String?, val theme: String?, val preflight: Boolean)
+
+    /**
+     * Whether core's stricter preflight (host-entry legacyCheck, core's assertNativeLegacyBackupSafe) must pass before the database
+     * opens: while RN's import can still act on its JSON backup (the json-ahead marker, the one-time reconcile not done yet, or no
+     * database to read). After the import the backup is RN's frozen copy that no import step reads again, so the open keeps its
+     * start beside the bundle's load, and a later, stricter core cannot lock a migrated library out.
+     */
+    // ponytail: a reconciled, existing but empty database with a backup migrates without the preflight; count rows in the guard's copy if that case ever matters.
+    fun preflightNeeded(jsonAhead: Boolean, reconciled: Boolean, backupPresent: Boolean, databaseExists: Boolean): Boolean =
+        jsonAhead || (backupPresent && (!reconciled || !databaseExists))
 
     private class RnState(
         val jsonAhead: Boolean, val reconciled: Boolean, val backupVersion: String?, val backupBytes: Long, val backup: String?,
@@ -91,6 +104,7 @@ internal object LegacyRnStoreGuard {
         Log.i(CoreHost.TAG, "Native Android legacy store guard releaseCheck=v1.3.3/native-android-legacy-json-ahead-guard " +
             "outcome=${if (blocked == null) "clear" else "blocked"}${blocked?.let { " reason=$it" } ?: ""}")
         check(blocked == null) { MESSAGES.getValue(blocked!!) }
+        val preflight = preflightNeeded(state.jsonAhead, state.reconciled, state.backup != null, database.exists())
         // A fresh install, or a missing database with a JSON backup to migrate, gets here without
         // the file. SQLite creates the file, not its folder.
         database.parentFile!!.mkdirs()
@@ -102,7 +116,7 @@ internal object LegacyRnStoreGuard {
             .put("reconciled", state.reconciled)
             .put("backupVersion", state.backupVersion ?: JSONObject.NULL)
             .put("backupPresent", state.backup != null)
-        return Opened(database, bootState.toString(), state.backup ?: "", state.language, state.theme)
+        return Opened(database, bootState.toString(), state.backup ?: "", state.language, state.theme, preflight)
     }
 
     /** The AsyncStorage reads RN's startup makes. The backup is passed on as text and never parsed here. */

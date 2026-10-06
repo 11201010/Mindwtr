@@ -678,7 +678,7 @@ assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\
 {
     const start = coreHost.slice(coreHost.indexOf('fun start(bundle: CoreBundle'), coreHost.indexOf('/** Where the bundle came from'));
     const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
-        'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', 'loading.get()', 'sqlite = database()',
+        'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', '                loading.get()\n                sqlite = database()',
         'activationOwed = pendingBackupIds().isNotEmpty()',
         '(if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled") else callAsync("boot", legacyState, legacyBackup, "journaled"))'].map((text) => start.indexOf(text));
     assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
@@ -687,6 +687,12 @@ assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\
     assert.match(coreHost, /if \(index == lastBackup && activationOwed\) resumeActivation\(\)/);
     assert.match(coreHost, /if \(owed == null && activationOwed\) resumeActivation\(\)/);
     assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
+    // Audit C: core's stricter legacy-import preflight runs once the bundle has loaded and before the RN database opens; a
+    // refusal closes only the engine (the open never ran, so nothing waits on it).
+    const preflight = ['load(engine, database, bundle)', 'if (preflight) {', '                    loading.get()\n', 'answer("legacyCheck", arrayOf(legacyState, legacyBackup)',
+        'check(checked.getBoolean("ok"))', 'onEngine { closeOnEngine() }', 'opened.run()'].map((text) => start.indexOf(text));
+    assert(preflight.every((index, i) => index > (i ? preflight[i - 1] : -1)), `preflight order ${preflight}`);
+    assert.equal(coreHost.match(/"legacyCheck"/g).length, 1);
     assert.match(start, /catch \(failure: Throwable\) \{\s+if \(sqlite == null\) runCatching \{ database\(\)\.close\(\) \}\s+closeOnEngine\(\)/, 'a failed start closes an open database it never handed over');
     assert.match(start, /catch \(error: Throwable\) \{\s+runCatching \{ database\.close\(\) \}\s+throw error/, 'a failed checkpoint closes its database');
     assert.equal(coreHost.match(/database\(\)\.(run|all|exec)\(/g).length, 3, 'the SQL calls take the database from the open\'s future');
@@ -887,7 +893,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\),\s*backups = BackupOperations\(File\(app\.noBackupFilesDir, \"backup-operations\"\), File\(app\.filesDir, \"snapshots\"\), maxPlanBytes = DataTransferLimits\.MAX_PLAN_BYTES\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\),\s*backups = BackupOperations\(File\(app\.noBackupFilesDir, \"backup-operations\"\), File\(app\.filesDir, \"snapshots\"\), maxPlanBytes = DataTransferLimits\.MAX_PLAN_BYTES\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: "", legacy\?\.preflight == true\)/);
 // Once the guard passes, it copies RN's RKStorage before it returns, so before RnKeyValue (or anything) opens it: an open can
 // checkpoint RN's WAL away when it closes.
 assert.match(guard, /check\(blocked == null\)[^\n]*\n(?:(?!return Opened\()[\s\S])*?\n\s*checkpointRnState\(dataDir\)\n(?:(?!fun )[\s\S])*?return Opened\(/);
@@ -925,6 +931,11 @@ assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `guard order 
 assert.match(decision, /state\.backup == null && hasRnState\(dataDir, asyncStorage\)\) "database-missing"/);
 assert.doesNotMatch(guard, /"json-ahead"/);
 assert(guard.indexOf('check(blocked == null)') < guard.indexOf('database.parentFile!!.mkdirs()'));
+// The preflight is needed while RN's import can still read the backup, decided before the folder is made (a missing database).
+assert(guard.indexOf('check(blocked == null)') < guard.indexOf('val preflight = preflightNeeded(state.jsonAhead, state.reconciled, state.backup != null, database.exists())')
+    && guard.indexOf('val preflight = preflightNeeded(') < guard.indexOf('database.parentFile!!.mkdirs()'));
+assert.match(guard, /jsonAhead \|\| \(backupPresent && \(!reconciled \|\| !databaseExists\)\)/);
+assert.match(hostEntry, /legacyCheck\(legacyState: string, legacyBackup: string\): string \{\s*return submit\(async \(\) => \{\s*const state = JSON\.parse\(legacyState\) as LegacyState;\s*assertNativeLegacyBackupSafe\(\{ jsonAhead: state\.jsonAhead, backupJson: state\.backupPresent \? legacyBackup : null \}\);/);
 assert.match(guard, /\/\/ ponytail: copies the whole database on every boot\. Skip it once a native-owned\s*\/\/ marker proves the last shutdown was clean\./);
 // RKStorage and the RN database are only read as bytes: SQLite writes -wal/-shm even through a
 // read-only connection, and a failed read-write open can checkpoint the WAL into the file on close.
@@ -949,7 +960,7 @@ assert.match(rnCheckpoint, /if \(!checkpoint\.exists\(\)\)[\s\S]*listOf\("", "-w
 assert.match(guard, /RN_STATE_CHECKPOINT = "files\/SQLite\/RKStorage\.prewrite"/);
 // Kotlin reads, JS decides: no merge, and the backup is passed on as text, never parsed.
 assert.doesNotMatch(code(kotlinFiles.join('\n')), /merge|JSONObject\((state\.)?backup|JSONArray\((state\.)?backup/i);
-assert.match(guard, /return Opened\(database, bootState\.toString\(\), state\.backup \?: "", state\.language, state\.theme\)/);
+assert.match(guard, /return Opened\(database, bootState\.toString\(\), state\.backup \?: "", state\.language, state\.theme, preflight\)/);
 // RN's device-local language is one more AsyncStorage row read from the byte copy, passed on as text.
 assert.match(guard, /private const val LANGUAGE = "mindwtr-language"/);
 assert.match(guard, /listOf\(JSON_AHEAD, RECONCILED, BACKUP_VERSION, LANGUAGE, THEME\)/);
@@ -1470,8 +1481,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert.match(readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8'), /android\.permission\.ACCESS_NETWORK_STATE/);
     }
 
-    // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
-    // and the replay; nothing else calls a host method.
+    // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync,
+    // the replay and the start's legacy preflight (a read, never a write); nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
     assert.match(callAsyncFn, /private fun begin\([^)]*\): Call \{\s+val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null/);
     assert.match(callAsyncFn, /private fun finish\(call: Call, result: JSONObject\) \{\s+call\.deadlineCheck\?\.cancel\(false\)\s+if \(call\.entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(call\.stop, "after", call\.entry\)\s+\}\s+try \{\s+if \(call\.method == BackupOperations\.METHOD\) backupFinish\(call\.entry, call\.args\.toList\(\), result, replay = false\)\s+else if \(call\.method in WriteJournal\.WRITES\) settle\(call\.entry, result, replay = false\)/);
@@ -1480,7 +1491,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(callAsyncFn, /val sent = try \{ sendArgs\(call\.method, call\.args\) \} catch \(mismatch: BackupOperations\.Mismatch\)/);
     // Pass D1a review: commit_stop (check-data-device E4c) is set as each journaled write is sent, debug builds only.
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+sqlite\?\.stopAfterCommit = debugFault\("commit_stop"\) == method\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
-    assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, answerChecked (a backup commit\'s plan put in, callAsync and replayJournal) and resumeActivation');
+    assert.equal(coreHost.match(/\banswer\(/g).length, 4, 'answer(): its definition, answerChecked (a backup commit\'s plan put in, callAsync and replayJournal), resumeActivation and the legacy preflight');
     assert.equal(coreHost.match(/\banswerChecked\(/g).length, 3, 'answerChecked(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 2, 'answer() and callLong (an unjournaled command only) start host methods');
     assert.deepEqual([...new Set([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]))].sort(), ['abort', 'cancel', 'poll'], 'the engine\'s own calls: abort (a long call no longer wanted), cancel and poll');
@@ -1752,7 +1763,7 @@ assert.match(labelsKt, /strings = LABEL_KEYS\.filter\(values::has\)\.associateWi
 assert.match(labelsKt, /if \(logged\.add\(name\)\) Log\.w\(/, 'a missing key is logged once');
 assert.equal(kotlinFiles.join('\n').match(/Labels\.load\(/g).length, 1);
 assert.match(owner, /runtime\.language\(stored \?: "", Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
-assert.match(owner, /runtime\.start\([^\n]*\)\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.hold\(runtime\)\s+return runtime/);
+assert.match(owner, /runtime\.start\([^\n]*\)\s+(?:\/\/[^\n]*\s+)*if \(legacy != null\) \{\s+runtime\.logLine\([^}]*\}\s+setLanguage\(runtime, language \?: legacy\?\.language\)\s+loadTheme\(runtime, legacy\?\.theme\)\s+(?:\/\/[^\n]*\s+)*recoverInstalls\(installer\)\s+if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)\s+(?:\/\/[^\n]*\s+)*deferredWidgets\.hold\(runtime\)\s+return runtime/);
 // After a finished replay (the boot's, the owed retry's, CoreWork's): the queue drain, then sync (StartOrder, StartOrderTest). Any
 // drain that did not finish becomes the screens' owed journal retry, holds sync back, and CoreWork retries it.
 assert.match(owner, /fun recovered\(app: Application, runtime: CoreHost, deferSync: Boolean = false\): Boolean = StartOrder\.afterReplay\(\s+drain = \{ drain\(runtime, queue\(app\), app\) \},\s+owe = \{ message -> recordFailure\(PendingFailure\(FailedAction\("journal", ""\), message, null\)\) \},\s+retryLater = \{ runCatching \{ CoreWork\.retryDrain\(app\) \}[^\n]*\},\s+(?:\/\/[^\n]*\s+)*startSync = \{\s+if \(deferSync\) deferredSync\.set \{\s+startSync\(app, runtime\)\s+startReminders\(runtime\)\s+\} else \{\s+startSyncWithScreen\(app, runtime\)\s+startReminders\(runtime\)\s+\}\s+\},\s+refreshWidgets = \{ refreshWidgets\(runtime\) \},\s+\)/);
