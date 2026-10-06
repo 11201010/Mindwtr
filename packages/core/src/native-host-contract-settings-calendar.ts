@@ -21,7 +21,9 @@
  * reads the view. Screen state the host keeps, reset on every visit: whether the
  * push card and the device calendar card are open (a command's `open` opens
  * one), which Area choice is open (its `key`; one at a time), and the name and
- * URL drafts (send them as `draft`; a command's `clearDraft` empties both). The
+ * URL drafts (send them as `draft`; a command's `clearDraft` empties both). A command's `requestAccess`
+ * asks the host to run grantDeviceCalendarAccess at once: turning the device calendars on never shows
+ * the system prompt inside the journaled write. The
  * host runs the system document picker for "Choose local .ics file" and sends
  * the picked file with addCalendarFeed; a cancelled pick sends nothing. Delete
  * Mindwtr calendar asks first with `push.target.delete.confirm`.
@@ -313,6 +315,13 @@ export type NativeCalendarCommandResult = {
     open: 'push' | 'device' | null;
     /** Empty the name and URL drafts. */
     clearDraft: boolean;
+    /**
+     * Run Grant access now (grantDeviceCalendarAccess): the device calendars were turned on without
+     * access. A journaled write never shows the system prompt itself (it holds the host's engine, and
+     * a replay at boot has no screen), so the host asks for it, as React Native asks right after the switch.
+     * Present only when true, so every other answer keeps its four fields.
+     */
+    requestAccess?: true;
 };
 
 /** The screens that each keep their own feed load (a newer range replaces the running one). */
@@ -771,7 +780,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
 
     const result = (changed: boolean, extra: Partial<Omit<NativeCalendarCommandResult, 'changed' | 'toasts'>> = {}): NativeHostResult<NativeCalendarCommandResult> => ({
         ok: true,
-        value: { changed, toasts: [], open: extra.open ?? null, clearDraft: extra.clearDraft ?? false },
+        value: { changed, toasts: [], open: extra.open ?? null, clearDraft: extra.clearDraft ?? false, ...(extra.requestAccess ? { requestAccess: true as const } : {}) },
     });
     const staleFeeds = () => fail('STALE_REVISION', 'The subscriptions changed since the view showed them; read the view again');
     const refreshShownRevision = async (host: NativeCalendarHost) => {
@@ -938,7 +947,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                 current.device.settings = { ...edit.value, areaIdsByCalendar: edit.value.areaIdsByCalendar ?? {} };
                 await feeds.saveSystemCalendarSettings(edit.value);
                 const turnedOn = planned.value.result.open === 'device';
-                if (turnedOn && current.device.permission !== 'granted') await loadDevice(current, true);
+                if (turnedOn && current.device.permission !== 'granted') return { ok: true, value: { ...planned.value.result, requestAccess: true } };
                 return { ok: true, value: planned.value.result };
             }
             case 'removeFeed': {

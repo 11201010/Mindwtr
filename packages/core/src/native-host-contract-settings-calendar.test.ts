@@ -241,6 +241,8 @@ function calendarDriver(contract: Host, device: ReturnType<typeof phone>, openin
             screen.name = '';
             screen.url = '';
         }
+        // The host runs Grant access when core asks (the journaled write never prompts itself).
+        if (answer.requestAccess) addToasts(value(await contract.grantDeviceCalendarAccess()).toasts);
     };
     const run = async (command: Promise<NativeHostResult<{ toasts: NativeCalendarToast[] }>>) => { addToasts(value(await command).toasts); };
     /** A new subscription: its own command, never journaled (its URL may carry a password). */
@@ -1144,6 +1146,22 @@ describe('native host contract: Settings › Calendar', () => {
                     .toEqual({ dieAt, calendars: ['g-primary'], device: { [KEYS.pushEnabled]: '0' } });
                 if (!died) break;
             }
+        });
+
+        it('the device calendars switch: the write never shows the system prompt (nor its replay); it asks the host to run Grant access', async () => {
+            const { handset, contract, view } = await boot({ calendars: ['primary'], permission: 'undetermined' });
+            const requestId = generateUUID();
+            const change = view().device.toggle;
+            expect(value(await edit(contract, change, requestId))).toMatchObject({ changed: true, open: 'device', requestAccess: true });
+            expect(handset.state.prompts).toBe(0);
+            expect(JSON.parse(handset.state.storage.get(KEYS.system)!).enabled).toBe(true);
+            const { answer, before, after } = await replay(handset, requestId, change);
+            expect(value(answer).changed).toBe(false);
+            expect(after).toEqual(before);
+            expect(handset.state.prompts).toBe(0);
+            value(await contract.grantDeviceCalendarAccess());
+            expect(handset.state.prompts).toBe(1);
+            expect(value(contract.getCalendarSettings()).device.calendars.map((calendar) => calendar.id)).toEqual([fixture.calendars.primary.id]);
         });
 
         it('the device calendar choices: a replay after a later change keeps it', async () => {
