@@ -16,7 +16,9 @@
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
 // General, GTD (their switches drawn as RN's for the props it sets), Sync (off, then WebDAV chosen with the encryption card's
-// Enable flow open, never saved) and AI (each card unfolded), in light
+// Enable flow open, never saved), AI (each card unfolded) and Calendar (pass C3: the cards and form, then the subscription
+// list; the fixture's one ICS subscription is served on this computer through `adb reverse`, and its events show in the
+// Calendar's week and month, the Weekly Review's calendar step and the Daily Review), in light
 // and dark mode; and in light mode the attachments (a task's file and link in the editor, the Add link sheet, the project's).
 // Then it installs
 // the native upgradetest build (153) over it, on the same database, and shoots the same
@@ -32,6 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { button, check, chipOn, connect, evidenced, fail, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
+import { icsCalendar, serveCalendar } from './calendar-feed-server.mjs';
 
 const [serial] = process.argv.slice(2);
 if (!serial) {
@@ -73,6 +76,13 @@ const T = {
     mom: 'Call Mom back', taxes: 'Gather tax documents',
     deck: 'Hear back from Sam about the deck', insurance: 'Renew car insurance',
 };
+/**
+ * Pass C3: one ICS subscription (synced settings), served on this computer through `adb reverse`: a timed event today and an
+ * all-day one tomorrow, for the Calendar, the reviews and Settings › Calendar. The device calendars stay off (never read here).
+ */
+const CALENDAR_PORT = Number(process.env.MINDWTR_CALENDAR_PORT ?? 18784);
+const CALENDAR_EVENTS = { timed: 'Design review', allDay: 'Team offsite' };
+const CALENDAR_FEED = { id: 'parity-feed', name: 'Team calendar', url: `http://127.0.0.1:${CALENDAR_PORT}/parity.ics`, enabled: true };
 /** One task in Trash (not among T's live tasks), for the Trash screen. */
 const TRASHED = 'Old grocery list';
 const fixture = resolve(out, 'fixture/mindwtr.db');
@@ -149,7 +159,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     if (!(await store().deleteTask(trashed.id)).success) throw new Error('deleteTask failed');
     await flushPendingSave();
     // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
-    await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
+    await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' }, externalCalendars: [JSON.parse(process.env.FIXTURE_FEED)],
         gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
     // Pass R2's shots: the weekly review on (its day picker opens).
     if (process.env.FIXTURE_R2 === '1') await store().updateSettings({ weeklyReviewEnabled: true });
@@ -160,7 +170,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     console.log(store()._allTasks.filter((task) => !task.deletedAt).length);
     process.exit(0);
 `], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED,
-    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length), FIXTURE_R2: R2_ONLY ? '1' : '' } }).trim().split('\n').pop();
+    FIXTURE_FEED: JSON.stringify(CALENDAR_FEED), FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length), FIXTURE_R2: R2_ONLY ? '1' : '' } }).trim().split('\n').pop();
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
@@ -171,6 +181,7 @@ const originalNight = /Night mode: (\w+)/.exec(sh('cmd uimode night'))?.[1] ?? '
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
 const originalRotation = sh('settings get system user_rotation');
 const shots = [];
+let calendarServer = null;
 
 const stopApp = async () => {
     await device.stopApp();
@@ -366,9 +377,28 @@ const shootMenu = async (prefix, suffix, rn) => {
             const choices = await waitFor('the Weekly Review choice', (current) => Boolean(button(current, en['review.openGuide'])), 15_000);
             await tap(button(choices, en['review.openGuide']));
             await shoot(`${prefix}-weekly-${suffix}`, (current) => hasText(current, T.call));
+            // Pass C3: Next until the calendar step (its "Mindwtr tasks" heading), with the subscription's events.
+            try {
+                for (let step = 0; step < 6 && !hasText(await screen(), en['review.calendarTasks']); step += 1) {
+                    await tap(button(await screen(), en['review.next']) ?? fail('no Next'));
+                    await sleep(1500);
+                }
+                await shoot(`${prefix}-weekly-calendar-${suffix}`, (current) => hasText(current, CALENDAR_EVENTS.timed) || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed)));
+            } catch (error) { console.log(`warn - ${prefix} weekly calendar step: ${error.message}`); }
             const close = await waitFor('the review\'s Close', (current) => Boolean(button(current, en['common.close'])), 15_000);
             await tap(button(close, en['common.close']));
             await sleep(1000);
+            // The Daily Review's first step (today: the subscription's event under Today's calendar).
+            try {
+                const again = await waitFor('Start Review', (current) => Boolean(button(current, en['review.startReview'])), 15_000);
+                await tap(button(again, en['review.startReview']));
+                const daily = await waitFor('the Daily Review choice', (current) => Boolean(button(current, en['dailyReview.title'])), 15_000);
+                await tap(button(daily, en['dailyReview.title']));
+                await shoot(`${prefix}-daily-${suffix}`, (current) => hasText(current, CALENDAR_EVENTS.timed) || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed)));
+                const closeDaily = await waitFor('the review\'s Close', (current) => Boolean(button(current, en['common.close'])), 15_000);
+                await tap(button(closeDaily, en['common.close']));
+                await sleep(1000);
+            } catch (error) { console.log(`warn - ${prefix} daily review: ${error.message}`); }
         }
         requireAppFront();
         sh('input keyevent KEYCODE_BACK');
@@ -537,6 +567,32 @@ const shootAI = async (prefix, suffix, rn) => {
     }
 };
 /**
+ * Pass C3: Settings › Advanced › Calendar at its top (the push and device calendar cards, the subscription form) and scrolled
+ * to the subscription list. Shot before the Menu screens: RN 154's Calendar reads the device copy this screen writes. Starts and
+ * ends on the tabs; a shot that cannot be reached is reported, never fatal.
+ */
+const shootCalendarSettings = async (prefix, suffix, rn) => {
+    const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
+    try {
+        const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
+        await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
+        const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);
+        await tap(withDescription(sheet, en['nav.settings']));
+        const rows = await waitFor('the Advanced row', (current) => Boolean(withDescription(current, `${en['settings.advanced']}. ${en['settings.menuDesc.advanced']}`)), 30_000);
+        await tap(withDescription(rows, `${en['settings.advanced']}. ${en['settings.menuDesc.advanced']}`));
+        const advanced = await waitFor('the Calendar row', (current) => Boolean(withDescription(current, `${en['settings.calendar']}. ${en['settings.menuDesc.calendar']}`)), 30_000);
+        await tap(withDescription(advanced, `${en['settings.calendar']}. ${en['settings.menuDesc.calendar']}`));
+        await shoot(`${prefix}-settings-calendar-${suffix}`, (current) => hasText(current, en['settings.externalCalendarUrl']));
+        let nodes = await screen();
+        for (let step = 0; step < 6 && !hasText(nodes, CALENDAR_FEED.name); step += 1) nodes = await device.swipe(nodes, 'down');
+        await shoot(`${prefix}-settings-calendar-list-${suffix}`, (current) => hasText(current, CALENDAR_FEED.name));
+        for (let step = 0; step < 3; step += 1) await back();
+    } catch (error) {
+        console.log(`warn - ${prefix} settings calendar: ${error.message}`);
+        for (let step = 0; step < 3; step += 1) await back();
+    }
+};
+/**
  * Pass A2's attachments, light mode: the editor's Attachments field on T.paint (a file and a link), its Add link sheet, and the
  * project's Attachments (RN: inside the project's Details; native: the card above the tasks). Ends on the tabs. A shot that
  * cannot be reached is reported, never fatal to the other shots.
@@ -688,6 +744,8 @@ try {
     pushDataFiles();
     sh('settings put system accelerometer_rotation 0');
     sh('settings put system user_rotation 0');
+    calendarServer = await serveCalendar(CALENDAR_PORT, icsCalendar({ ...CALENDAR_EVENTS, name: CALENDAR_FEED.name }));
+    adbRaw('reverse', `tcp:${CALENDAR_PORT}`, `tcp:${CALENDAR_PORT}`);
 
     // RN 154, fresh, with the fixture as its database before its first launch.
     if (installed()) sh(`pm uninstall ${PKG}`);
@@ -725,6 +783,8 @@ try {
         await shootPopup('rn', mode === 'yes' ? 'dark' : 'light');
         openLink('inbox');
         await shootModal('rn', mode === 'yes' ? 'dark' : 'light', RN_ACTIVITY);
+        openLink('inbox');
+        await shootCalendarSettings('rn', mode === 'yes' ? 'dark' : 'light', true);
         openLink('inbox');
         await shootMenu('rn', mode === 'yes' ? 'dark' : 'light', true);
         openLink('inbox');
@@ -774,6 +834,7 @@ try {
         await shootProcess(`native-process-${mode === 'yes' ? 'dark' : 'light'}`);
         await shootPopup('native', mode === 'yes' ? 'dark' : 'light');
         await shootModal('native', mode === 'yes' ? 'dark' : 'light', NATIVE_ACTIVITY);
+        await shootCalendarSettings('native', mode === 'yes' ? 'dark' : 'light', false);
         await shootMenu('native', mode === 'yes' ? 'dark' : 'light', false);
         await shootSettings('native', mode === 'yes' ? 'dark' : 'light', false);
         if (mode === 'no') await shootAttachments('native', false);
@@ -794,6 +855,8 @@ try {
     console.error(error instanceof Stopped ? `STOPPED: ${error.message}` : `FAIL: ${error.message}`);
     process.exitCode = error instanceof Stopped ? 3 : 1;
 } finally {
+    try { adbRaw('reverse', '--remove', `tcp:${CALENDAR_PORT}`); } catch { /* device gone */ }
+    void calendarServer?.close();
     try { if (installed()) sh(`pm uninstall ${PKG}`); } catch { /* device gone */ }
     try { sh(`cmd uimode night ${['yes', 'no', 'auto'].includes(originalNight) ? originalNight : 'auto'}`); } catch { /* device gone */ }
     for (const [name, value] of [['user_rotation', originalRotation], ['accelerometer_rotation', originalAccelerometer]]) {
