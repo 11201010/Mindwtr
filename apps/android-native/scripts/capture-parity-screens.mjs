@@ -379,8 +379,8 @@ const shootMenu = async (prefix, suffix, rn) => {
             await shoot(`${prefix}-weekly-${suffix}`, (current) => hasText(current, T.call));
             // Pass C3: Next until the calendar step (its "Mindwtr tasks" heading), with the subscription's events.
             try {
-                for (let step = 0; step < 6 && !hasText(await screen(), en['review.calendarTasks']); step += 1) {
-                    await tap(button(await screen(), en['review.next']) ?? fail('no Next'));
+                for (let step = 0; step < 6 && !hasText(await device.screen(), en['review.calendarTasks']); step += 1) {
+                    await tap(button(await device.screen(), en['review.next']) ?? fail('no Next'));
                     await sleep(1500);
                 }
                 await shoot(`${prefix}-weekly-calendar-${suffix}`, (current) => hasText(current, CALENDAR_EVENTS.timed) || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed)));

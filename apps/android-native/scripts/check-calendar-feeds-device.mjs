@@ -153,6 +153,13 @@ const tapTag = async (tag, expected, description, timeoutMs = 30_000) => {
 /** The subscription list's row whose name is [name] (its index tag `calendar-feed-<n>`). */
 const feedRow = (nodes, name) => nodes.find((node) => /calendar-feed-\d+$/.test(node['resource-id'] ?? '')
     && nodes.some((inner) => inner.text === name && box(inner)[1] >= box(node)[1] && box(inner)[3] <= box(node)[3]));
+/** Add, until core answered it (the command's saved line), then the new row revealed in the list (a long list puts it below the fold). */
+const feedAdds = () => logs().replace(/\\/g, '').split('\n').filter((line) => line.includes('"operation":"calendarFeedAdd"') && line.includes('"outcome":"saved"')).length;
+const addTapped = async (name) => {
+    const before = feedAdds();
+    await tapTag('calendar-add', () => feedAdds() > before, `Add for ${name} answered`);
+    await reveal((current) => feedRow(current, name), `${name} in the list`);
+};
 const removeFeed = async (name) => {
     await openCalendarSettings();
     await reveal((current) => feedRow(current, name), `${name}'s row`);
@@ -217,14 +224,14 @@ try {
     // (2) Add, and a URL with credentials.
     await typeInto('calendar-name', NAME);
     await typeInto('calendar-url', URL);
-    await tapTag('calendar-add', (current) => Boolean(feedRow(current, NAME)), `${NAME} in the list`);
+    await addTapped(NAME);
     added.add(NAME);
     check(deviceCopy()?.some((feed) => feed.url === URL && feed.name === NAME) === true, '(2) Add stored the subscription under RN\'s key in RKStorage');
     check(synced()?.some((feed) => feed.url === URL) === true, '(2) and in the synced settings');
     const authName = `Auth${run}`;
     await typeInto('calendar-name', authName);
     await typeInto('calendar-url', AUTH_URL);
-    nodes = await tapTag('calendar-add', (current) => Boolean(feedRow(current, authName)), `${authName} in the list`);
+    await addTapped(authName);
     added.add(authName);
     await reveal((current) => feedRow(current, authName), `${authName}'s row`);
     nodes = await screen();
