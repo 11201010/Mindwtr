@@ -901,6 +901,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     private fun showFocus(view: FocusView?) {
         focus = view
         view?.let(menu.focusControls::adopt)
+        // The Pomodoro card above Focus's date line reads with every Focus read (a feature turned on shows it at once).
+        if (view != null) pomodoro.read()
     }
 
     private fun FocusView?.depth(): Map<String, Int> = this?.sections?.associate { it.key to it.rows.size }.orEmpty()

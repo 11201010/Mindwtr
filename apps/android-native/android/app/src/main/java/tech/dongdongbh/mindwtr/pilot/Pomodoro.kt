@@ -70,9 +70,15 @@ class PomodoroModel(private val shell: InboxViewModel) {
     var picker by mutableStateOf<List<JSONObject>?>(null); private set
     private var pickerTotal = 0
 
-    /** Core's card now, in the background (it reconciles the session, as RN's one-second tick does). */
-    fun read() = shell.background(listOf(Part.Pomodoro), { runtime -> runtime.menuRead("pomodoroPanel", "{}") }) { next, mine ->
-        if (shell.fresh(mine, Part.Pomodoro)) panel = next
+    /**
+     * Core's card now, in the background (it reconciles the session, as RN's one-second tick does). A read asked for while an
+     * action runs (the boot's first Focus read) waits for it, never drops.
+     */
+    fun read() {
+        if (shell.busy) return shell.menu.whenIdle(::read)
+        shell.background(listOf(Part.Pomodoro), { runtime -> runtime.menuRead("pomodoroPanel", "{}") }) { next, mine ->
+            if (shell.fresh(mine, Part.Pomodoro)) panel = next
+        }
     }
 
     /** A control's action, with a new request UUID; the answer carries the card after it. */
