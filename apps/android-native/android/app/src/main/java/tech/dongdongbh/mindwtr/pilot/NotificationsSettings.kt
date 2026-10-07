@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureNotifier
@@ -97,8 +98,8 @@ internal fun NotificationsSettings(model: InboxViewModel, view: JSONObject) = wi
                 val shape = RoundedCornerShape(10.dp)
                 // RN's manageEditorButton, primary: #2563eb, white 14/600.
                 Box(Modifier.widthIn(min = 92.dp).heightIn(min = 42.dp).clip(shape).background(ALLOW_BLUE).border(1.dp, ALLOW_BLUE, shape)
-                    .clearAndSetSemantics { contentDescription = action; role = Role.Button; onClick { ReminderAlarms.openExactAlarmSettings(context); true } }
-                    .clickable { ReminderAlarms.openExactAlarmSettings(context) }.padding(horizontal = 14.dp).testTag("exact-alarm-allow"),
+                    .clearAndSetSemantics { testTag = "exact-alarm-allow"; contentDescription = action; role = Role.Button; onClick { ReminderAlarms.openExactAlarmSettings(context); true } }
+                    .clickable { ReminderAlarms.openExactAlarmSettings(context) }.padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center) {
                     Text(action, style = rnText(14, 600), color = Color.White)
                 }

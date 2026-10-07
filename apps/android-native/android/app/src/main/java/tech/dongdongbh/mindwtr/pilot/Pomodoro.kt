@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -135,8 +136,8 @@ fun PomodoroCard(model: InboxViewModel) = with(model.pomodoro) {
     val toggle = shown.getJSONObject("collapseToggle")
     @Composable fun Fold(collapsed: Boolean) {
         val label = toggle.getString("label")
-        Box(Modifier.clearAndSetSemantics { contentDescription = label; role = Role.Button; onClick { act(toggle.getJSONObject("action")); true } }
-            .clickable(enabled = model.menu.idle) { act(toggle.getJSONObject("action")) }.padding(horizontal = 6.dp, vertical = 2.dp).testTag("pomodoro-fold")) {
+        Box(Modifier.clearAndSetSemantics { testTag = "pomodoro-fold"; contentDescription = label; role = Role.Button; onClick { act(toggle.getJSONObject("action")); true } }
+            .clickable(enabled = model.menu.idle) { act(toggle.getJSONObject("action")) }.padding(horizontal = 6.dp, vertical = 2.dp)) {
             Icon(if (collapsed) Lucide.ChevronDownPlain else Lucide.ChevronUp, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))
         }
     }
@@ -190,8 +191,8 @@ private fun PomodoroModel.Presets(shown: JSONObject, enabled: Boolean, loading: 
             val active = preset.getBoolean("active")
             val label = preset.getString("label")
             Box(Modifier.fade(if (loading) 0.6f else 1f).clip(CircleShape).background(if (active) c.tint else c.filterBg).border(1.dp, if (active) c.tint else c.border, CircleShape)
-                .clearAndSetSemantics { contentDescription = label; role = Role.Button; selected = active; if (enabled) onClick { act(preset.getJSONObject("action")); true } else disabled() }
-                .clickable(enabled = enabled) { act(preset.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 6.dp).testTag("pomodoro-preset-${preset.getString("id")}")) {
+                .clearAndSetSemantics { testTag = "pomodoro-preset-${preset.getString("id")}"; contentDescription = label; role = Role.Button; selected = active; if (enabled) onClick { act(preset.getJSONObject("action")); true } else disabled() }
+                .clickable(enabled = enabled) { act(preset.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 6.dp)) {
                 Text(label, style = rnText(11, 700), color = if (active) c.onTint else c.secondaryText)
             }
         }
@@ -205,8 +206,8 @@ private fun PomodoroModel.CardButton(button: JSONObject, enabled: Boolean, faded
     val shape = RoundedCornerShape(10.dp)
     val label = button.getString("label")
     Box(Modifier.fade(if (faded) 0.5f else 1f).clip(shape).background(background).border(1.dp, border, shape)
-        .clearAndSetSemantics { contentDescription = label; role = Role.Button; if (enabled) onClick { act(button.getJSONObject("action")); true } else disabled() }
-        .clickable(enabled = enabled) { act(button.getJSONObject("action")) }.padding(horizontal = horizontal.dp, vertical = 9.dp).testTag(tag)) {
+        .clearAndSetSemantics { testTag = tag; contentDescription = label; role = Role.Button; if (enabled) onClick { act(button.getJSONObject("action")); true } else disabled() }
+        .clickable(enabled = enabled) { act(button.getJSONObject("action")) }.padding(horizontal = horizontal.dp, vertical = 9.dp)) {
         Text(label, style = rnText(12, 700), color = text)
     }
 }
@@ -219,8 +220,8 @@ private fun PomodoroModel.LinkRow(model: InboxViewModel, link: JSONObject, enabl
     val label = link.getString("label")
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.weight(1f).clip(shape).background(c.filterBg).border(1.dp, c.border, shape)
-            .clearAndSetSemantics { contentDescription = label; role = Role.Button; onClick { openPicker(); true } }
-            .clickable(enabled = model.menu.idle) { openPicker() }.padding(horizontal = 10.dp, vertical = 8.dp).testTag("pomodoro-link"),
+            .clearAndSetSemantics { testTag = "pomodoro-link"; contentDescription = label; role = Role.Button; onClick { openPicker(); true } }
+            .clickable(enabled = model.menu.idle) { openPicker() }.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(label.uppercase(), style = rnText(10, 700), color = c.secondaryText)
@@ -231,8 +232,8 @@ private fun PomodoroModel.LinkRow(model: InboxViewModel, link: JSONObject, enabl
         link.optJSONObject("markDone")?.let { done ->
             val spoken = done.getString("accessibilityLabel")
             Box(Modifier.fillMaxHeight().fade(if (loading) 0.5f else 1f).clip(shape).background(c.success.copy(alpha = 0x18 / 255f)).border(1.dp, c.success, shape)
-                .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; if (enabled) onClick { act(done.getJSONObject("action")); true } else disabled() }
-                .clickable(enabled = enabled) { act(done.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 8.dp).testTag("pomodoro-done"),
+                .clearAndSetSemantics { testTag = "pomodoro-done"; contentDescription = spoken; role = Role.Button; if (enabled) onClick { act(done.getJSONObject("action")); true } else disabled() }
+                .clickable(enabled = enabled) { act(done.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center) {
                 Text(done.getString("label"), style = rnText(12, 700), color = c.success)
             }
@@ -277,8 +278,8 @@ private fun Option(label: String, selected: Boolean, lines: Int, tag: String, on
     val c = LocalTheme.current.colors
     val shape = RoundedCornerShape(10.dp)
     Box(Modifier.fillMaxWidth().clip(shape).background(if (selected) c.tint.copy(alpha = 0x18 / 255f) else c.filterBg).border(1.dp, if (selected) c.tint else c.border, shape)
-        .clearAndSetSemantics { contentDescription = label; role = Role.Button; this.selected = selected; onClick { onClick(); true } }
-        .clickable(onClick = onClick).padding(10.dp).testTag(tag)) {
+        .clearAndSetSemantics { testTag = tag; contentDescription = label; role = Role.Button; this.selected = selected; onClick { onClick(); true } }
+        .clickable(onClick = onClick).padding(10.dp)) {
         Text(label, style = rnText(14, 700), color = if (selected) c.tint else c.text, maxLines = lines, overflow = TextOverflow.Ellipsis)
     }
 }
