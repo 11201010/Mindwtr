@@ -185,8 +185,8 @@ try {
     const file = resolve(shots, 'someday-section-native.png');
     writeFileSync(file, adbRaw('exec-out', 'screencap', '-p'));
     console.log(`screenshot ${file}`);
-    // Its tap opens the project (RN's onOpenProject), and Back returns to Someday.
-    nodes = await tapExpecting(projectNode, (current) => !textNode(current, SECTION) && Boolean(textNode(current, PROJECT)), `the project "${PROJECT}"`);
+    // Its tap opens the project (RN's onOpenProject; its title is the header's text field).
+    nodes = await tapExpecting(projectNode, (current) => !textNode(current, SECTION) && current.some((node) => node.text === PROJECT), `the project "${PROJECT}"`);
     check(true, `the project row's tap opens "${PROJECT}"`);
     requireAppFront();
     sh('input keyevent KEYCODE_BACK');

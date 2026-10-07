@@ -57,7 +57,7 @@ const core = (ids) => {
     return JSON.parse(execFileSync('bun', ['-e', `
         import { Database } from 'bun:sqlite';
         import { SqliteAdapter, createNativeHostContract, setStorageAdapter, useTaskStore } from '${coreSrc}/index.ts';
-        const db = new Database(process.env.CHECK_DB, { readonly: false });
+        const db = new Database(process.env.CHECK_DB);
         setStorageAdapter(new SqliteAdapter({
             run: async (sql, params = []) => { db.query(sql).run(...params); },
             all: async (sql, params = []) => db.query(sql).all(...params),
@@ -160,14 +160,19 @@ try {
     shot('next');
     const [first] = rowTitles(nodes);
     const action = await device.revealAction(nodes, first);
-    check(Boolean(action?.text || action?.['content-desc']), `(a) a row's swipe shows RN's action "${action?.text || action?.['content-desc']}" (not run)`);
+    // The action's label is its child text, inside its bounds.
+    const [al, at, ar, ab] = box(action);
+    const label = (await screen()).find((node) => node.text && (() => { const [l, t, r, b] = box(node); return l >= al && t >= at && r <= ar && b <= ab; })())?.text;
+    check(Boolean(label), `(a) a row's swipe shows RN's action "${label}" (not run)`);
     // Dragging back left closes the action without running it.
     {
         const row = taskRows(await screen()).find((node) => node.text === first) ?? fail(`no row ${first}`);
         const [x1, y1, x2, y2] = box(row);
         const y = Math.round((y1 + y2) / 2);
         requireAppFront();
-        sh(`input swipe ${Math.round(x2 - 40)} ${y} ${Math.max(x1 + 10, 160)} ${y} 300`);
+        // From the row's middle, never its right edge: an edge swipe is the system Back gesture.
+        const from = Math.round((x1 + x2) / 2);
+        sh(`input swipe ${from} ${y} ${Math.max(from - 440, 160)} ${y} 300`);
         await waitFor('the action to close', (current) => !current.some((node) => (node['resource-id'] ?? '').endsWith('swipe-action')), 8_000);
     }
     nodes = await tapExpecting(taskRows(await screen()).find((node) => node.text === first) ?? fail(`no row ${first}`), inEditor, `the editor for ${first}`);
