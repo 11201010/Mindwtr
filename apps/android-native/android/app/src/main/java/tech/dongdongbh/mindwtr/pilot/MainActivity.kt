@@ -2,7 +2,9 @@ package tech.dongdongbh.mindwtr.pilot
 
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import android.window.SplashScreenView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -87,6 +89,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 
@@ -107,7 +110,13 @@ class MainActivity : FragmentActivity() {
 
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        // RN's start screen (expo-splash-screen): held until the first screen is ready (InboxViewModel.holdSplash), then gone
+        // with no fade, as RN's (SplashScreen.setOptions({ fade: false })). Android 12+'s view is removed directly, as
+        // expo-splash-screen does, so the theme's system bar appearance never replaces the screen's.
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        splash.setKeepOnScreenCondition { model.holdSplash() }
+        splash.setOnExitAnimationListener { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) (it.view as SplashScreenView).remove() else it.remove() }
         model.attach()
         // First content drawn (InboxList's ReportDrawnWhen): the boot's leftover work, the bytecode cache, may run now.
         fullyDrawnReporter.addOnReportDrawnListener(model::contentShown)
@@ -148,7 +157,8 @@ class MainActivity : FragmentActivity() {
                     Modifier.fillMaxSize().background(c.cardBg).systemBarsPadding().semantics { testTagsAsResourceId = true },
                 ) {
                     if (loading) {
-                        CircularProgressIndicator(Modifier.padding(24.dp))
+                        // The start screen covers the boot; only a start past its cap shows RN's spinner here.
+                        if (slowStart) CircularProgressIndicator(Modifier.padding(24.dp))
                     } else if (!writable) {
                         // The boot failed: no command can run, and core's labels may never have loaded.
                         Text(error.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("boot-failure").padding(24.dp))

@@ -179,6 +179,8 @@ dependencies {
     "playImplementation"("com.google.android.play:review:2.0.1")
     "playImplementation"("com.android.installreferrer:installreferrer:2.2")
     implementation("androidx.activity:activity-compose:1.10.1")
+    // RN's start screen (expo-splash-screen's, same version): held until the first screen is ready (MainActivity).
+    implementation("androidx.core:core-splashscreen:1.2.0-alpha02")
     implementation(platform("androidx.compose:compose-bom:2025.08.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

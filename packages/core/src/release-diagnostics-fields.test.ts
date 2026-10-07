@@ -44,6 +44,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'owed',
     // candidate-ciphertext-probe: what the activation candidate's folder held (plaintext, encrypted or mixed).
     'found',
+    // native-splash-cap reuses releaseCheck, stage, and durationMs below.
     // widget-publication-after-content: what ran the held widget publication (content, boot-timeout, resume-fallback).
     'trigger',
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.

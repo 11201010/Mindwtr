@@ -3,6 +3,7 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -143,6 +144,8 @@ const val WAITING_PROMPT = "waitingFor"
 private const val SUGGESTIONS = 4
 /** The boot's sync start waits at most this long after the boot for the Inbox's first rows (ProcessCoreHost.startDeferredSync). */
 private const val SYNC_FALLBACK_MS = 3_000L
+/** The start screen waits at most this long for the first screen (InboxViewModel.holdSplash), then lets a slow start show. */
+private const val SPLASH_CAP_MS = 10_000L
 /** Core windows the View tab's checklist by NATIVE_HOST_MAX_WINDOW. */
 private const val VIEW_WINDOW = 100
 
@@ -165,6 +168,8 @@ private class Lists(val focus: FocusView?, val projects: ProjectsView?, val proj
  */
 class InboxViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
     var loading by mutableStateOf(true); private set
+    /** The start was still not ready [SPLASH_CAP_MS] after it began: the start screen is gone and the loading screen shows RN's spinner. */
+    var slowStart by mutableStateOf(false); private set
     var writable by mutableStateOf(false); private set
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
@@ -252,6 +257,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     @Volatile private var host: CoreHost? = null
     private var attaches = 0
     private val main = Handler(Looper.getMainLooper())
+    private val started = SystemClock.uptimeMillis()
 
     /** The booted host, for work that takes no lock (Settings › Sync's commands); null before the boot ends. */
     internal fun coreHost(): CoreHost? = host
@@ -322,8 +328,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         // was never answered comes back even without saved state (a force-stop or a crash): the captured text is user data.
         val storedCapture = captureStore.read()
         val reopenCapture = storedCapture?.takeIf { saved.get<Boolean>("capturing") == true || it.pending != null }
+        // A start that is still not ready lets the start screen go ([holdSplash]); a booted host logs it now, a boot when it ends.
+        main.postDelayed({ if (holdSplash()) { slowStart = true; host?.let { logSlowStart(it, "read") } } }, SPLASH_CAP_MS)
         Thread({
             try {
+                // A device check's slow boot (debug builds only).
+                debugProperty("boot_delay_ms").toLongOrNull()?.let(Thread::sleep)
                 val runtime = ProcessCoreHost.get(getApplication(), prefs.getString(LANGUAGE_KEY, null))
                 // The language and theme chosen in this app's Settings (RN's device keys) win over the ones found at boot.
                 applyDeviceChoices(runtime, prefs)
@@ -350,6 +360,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     // A tab chosen while the boot ran, whose list the boot left for later (no Inbox draws, so [contentShown] never runs).
                     if (screen == Screen.Focus && lists.focus == null) refreshFocus()
                     if (screen == Screen.Projects && lists.projects == null) refreshProjects()
+                    if (slowStart) logSlowStart(runtime, "boot")
                     // The boot's held sync start: now when the boot read was this screen's content (not the Inbox, whose first rows
                     // report it: contentShown); a fallback covers an Inbox read that never draws.
                     // RN's first-paint prompt activity and the day's heartbeat (once per process).
@@ -379,6 +390,25 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 }
             }
         }, "mindwtr-startup").start()
+    }
+
+    /**
+     * MainActivity's start screen (RN's expo-splash-screen) stays while the boot runs and the open list's first rows are read, as
+     * RN hides it once its first screen has data, so the app opens on that screen with no spinner. A failed boot or an owed retry
+     * lets it go at once (its message shows), and a start still not ready after [SPLASH_CAP_MS] lets it go then ([slowStart]).
+     */
+    fun holdSplash(): Boolean {
+        // Once let go it stays gone: a later list change or a recreated screen never brings it back.
+        if (!splashGone) splashGone = slowStart || !(loading || writable && failedAction == null && error == null && menu.firstPagePending)
+        return !splashGone
+    }
+    private var splashGone = false
+
+    /** The start screen's cap ran out while [stage] ("boot" or "read") still ran: one diagnostics line through core, off the main thread. */
+    private fun logSlowStart(runtime: CoreHost, stage: String) {
+        val context = JSONObject().put("releaseCheck", "v1.3.5/native-splash-cap").put("stage", stage)
+            .put("durationMs", SystemClock.uptimeMillis() - started)
+        Thread({ runtime.logLine("Native Android start screen released by its cap releaseCheck=v1.3.5/native-splash-cap", context) }, "mindwtr-log").start()
     }
 
     /** Each Activity instance calls this once. A later call is a recreation on the running host. */
@@ -461,6 +491,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         error = pending.error
         writable = true
         loading = false
+        if (slowStart) host?.let { logSlowStart(it, "boot") }
     }
 
     /** Done's exact request: the task and the revision its row showed ([TaskRow.taskRevision]). */

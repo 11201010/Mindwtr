@@ -150,6 +150,9 @@ private class MenuStore(private val dir: File) {
 
 private fun JSONArray.strings(): List<String> = List(length()) { getString(it) }
 
+/** The lists [MenuModel.refresh] hands to their own models, which keep their own rows. */
+private val OWN_READS = setOf("calendar", "board", "settings", "mindSweep")
+
 /**
  * The Menu tab's state, held by InboxViewModel (so rotation keeps it) and saved in the Bundle (so process death keeps the
  * open sheet, screen, History tab, dialog, and RN's session choices). Rows reload from core.
@@ -225,6 +228,9 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
             else -> null
         }
     }
+
+    /** The open list's rows come in [page] (the lists [refresh] hands to their own models do not) and none are read yet. */
+    val firstPagePending get() = list.let { it != null && it !in OWN_READS } && page == null
 
     /** No command runs and no retry is owed: the lists' controls are enabled. */
     val idle get() = shell.writable && !shell.busy && shell.failedAction == null

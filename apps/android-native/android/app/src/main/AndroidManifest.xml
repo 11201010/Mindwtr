@@ -51,6 +51,7 @@
             android:exported="false"
             android:label="Mindwtr Native Dev"
             android:launchMode="singleTask"
+            android:theme="@style/Theme.App.SplashScreen"
             android:windowSoftInputMode="adjustResize" />
 
         <!-- RN's component name, <applicationId>.MainActivity: home-screen icons, pinned shortcuts and widgets launch it
