@@ -125,7 +125,9 @@ const notifications = () => sh('dumpsys notification --noredact').split(/\n(?=\s
     }));
 const pomodoroAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
     .filter((block) => block.includes(`*walarm*:${FIRE}`) && block.includes(PKG))
-    .map((block) => ({ at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN), block }));
+    .map((block) => ({ at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN), block }))
+    // Pending RTC alarms only: a block that ends dumpsys's pending list can carry the delivery history's lines (as in the R1 check).
+    .filter((alarm) => alarm.at > 1e12);
 const closeShade = () => sh('cmd statusbar collapse');
 const tapInShade = async (text) => {
     sh('cmd statusbar expand-notifications');
@@ -320,7 +322,8 @@ try {
     check(pomodoro()[0].text === en['pomodoro.focusComplete'] && Date.now() >= entry.fireAtMs - 2000,
         '(3) with the app closed, the alarm fires once at the phase end with core\'s words');
     await sleep(20_000);
-    check(pomodoro().length === 1 && pomodoroAlarms().length === 0, '(3) no second alert, and no alarm left');
+    check(pomodoro().length === 1 && pomodoroAlarms().length === 0,
+        `(3) no second alert, and no alarm left (alerts ${pomodoro().length}, pending alarms ${JSON.stringify(pomodoroAlarms().map((alarm) => alarm.at))})`);
     await launch();
     nodes = await toTabs();
     if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
