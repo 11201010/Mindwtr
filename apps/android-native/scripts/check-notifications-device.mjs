@@ -310,7 +310,7 @@ try {
     nodes = await tapExpecting(tagged(nodes, 'pomodoro-preset-custom') ?? fail('no 1/1 preset'),
         (current) => current.some((node) => node.text === '01:00'), 'the 1/1 preset');
     check(true, '(3) the 1/1 preset sets the clock to 01:00');
-    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => current.some((node) => node.text === en['common.pause']), 'Start');
+    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => Boolean(withDescription(current, en['common.pause'])), 'Start');
     const entry = await waitUntil('core\'s Pomodoro alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; return raw && JSON.parse(raw); }, 15_000);
     await waitUntil('one Pomodoro alarm', () => pomodoroAlarms().filter((alarm) => alarm.at === entry.fireAtMs).length === 1, 15_000);
     check(entry.id === POMODORO_ID && entry.phase === 'focus-complete', `(3) Start makes one completion alarm at ${new Date(entry.fireAtMs).toISOString()} under the Pomodoro id`);
