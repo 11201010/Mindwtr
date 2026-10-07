@@ -181,6 +181,20 @@ const calendarMode = async (label) => {
     if (!chipOn(nodes, label)) await tap(withDescription(nodes, label));
     return waitFor(`the ${label} view`, (current) => chipOn(current, label), 15_000);
 };
+/**
+ * The Calendar's day view on today (its timeline scrolled to now, where the timed events sit: the week's columns widen to
+ * 260 dp beside a deadline, which can leave a day off screen), or on tomorrow ([tomorrow]).
+ */
+const dayView = async (tomorrow = false) => {
+    await calendarMode(en['calendar.mobile.day']);
+    await tapExpecting(withDescription(await screen(), en['calendar.today']) ?? fail('no Today'), (current) => Boolean(withDescription(current, en['calendar.nextDay'])), 'today');
+    await sleep(1500);
+    if (tomorrow) {
+        const title = tagged(await screen(), 'calendar-title')?.text;
+        await tapExpecting(withDescription(await screen(), en['calendar.nextDay']) ?? fail('no Next day'), (current) => tagged(current, 'calendar-title')?.text !== title, 'tomorrow');
+    }
+    return screen();
+};
 const eventBlock = (nodes, title) => nodes.find((node) => (node['content-desc'] ?? '').includes(title));
 const feedLines = (slot) => logs().replace(/\\/g, '').split('\n').filter((line) => line.includes('Native Android external calendars loaded') && line.includes(`"slot":"${slot}"`));
 const restart = async () => {
@@ -250,9 +264,11 @@ try {
     // (4) The Calendar's week: the feed's events; the event's sheet.
     const linesBefore = feedLines('calendar').length;
     nodes = await openTile(en['nav.calendar'], onCalendar, 'the Calendar');
-    await calendarMode(en['calendar.mobile.week']);
-    nodes = await waitFor('the feed\'s events in the week', (current) => Boolean(eventBlock(current, EVENTS.timed)) && Boolean(eventBlock(current, EVENTS.allDay)), 45_000);
-    check(true, `(4) the Calendar's week shows "${EVENTS.timed}" and the all-day "${EVENTS.allDay}"`);
+    await dayView();
+    await waitFor('the timed event today', (current) => Boolean(eventBlock(current, EVENTS.timed)), 45_000);
+    await dayView(true);
+    nodes = await waitFor('the all-day event tomorrow', (current) => Boolean(eventBlock(current, EVENTS.allDay)), 45_000);
+    check(true, `(4) the Calendar shows "${EVENTS.timed}" today and the all-day "${EVENTS.allDay}" tomorrow`);
     await waitFor('the load\'s diagnostics line', () => feedLines('calendar').length > linesBefore, 15_000);
     const line = feedLines('calendar').at(-1);
     check(line.includes('"outcome":"ready"') && line.includes('"releaseCheck":"v1.3.5/native-android-calendar-feeds"') && !line.includes('127.0.0.1'),
@@ -287,7 +303,7 @@ try {
         check(stored() === before, `(6) ${mode}: Test answers RN's "${en['settings.calendarMobile.failedToLoadEvents']}", and nothing stored changed`);
     }
     nodes = await openTile(en['nav.calendar'], onCalendar, 'the Calendar');
-    await calendarMode(en['calendar.mobile.week']);
+    await dayView();
     await sleep(3000);
     check(!eventBlock(await screen(), EVENTS.timed), '(6) the Calendar shows the failing subscription\'s events no more');
     server.state.mode(FEED, 'ok');
@@ -340,9 +356,9 @@ try {
         nodes = await waitFor(`${CAL} listed`, (current) => hasText(current, CAL), 30_000);
         check(hasText(nodes, en['settings.deviceCalendar']), `(8) Allow: the device calendar ${CAL} is listed as RN lists it`);
         nodes = await openTile(en['nav.calendar'], onCalendar, 'the Calendar');
-        await calendarMode(en['calendar.mobile.week']);
-        nodes = await waitFor('the device event in the week', (current) => Boolean(eventBlock(current, DEVICE_EVENT)), 45_000);
-        check(true, `(8) the Calendar's week shows the device event "${DEVICE_EVENT}"`);
+        await dayView();
+        nodes = await waitFor('the device event today', (current) => Boolean(eventBlock(current, DEVICE_EVENT)), 45_000);
+        check(true, `(8) the Calendar shows the device event "${DEVICE_EVENT}" today`);
         nodes = await tapExpecting(eventBlock(nodes, DEVICE_EVENT), (current) => Boolean(tagged(current, 'calendar-sheet')), 'the device event\'s sheet');
         check(Boolean(button(nodes, en['calendar.openInCalendar'])) && Boolean(button(nodes, en['calendar.createTaskFromEvent'])), '(8) its sheet offers Create task and Open in calendar');
         sh('logcat -c');
