@@ -277,7 +277,7 @@ const restore = async () => {
             await setSwitch(en['settings.dailyDigestMorning'], found.morning, () => true);
             await setSwitch(en['settings.persistentCaptureLabel'], found.capture, () => true);
             await openGtd(true);
-            await setMinutes(found.focus, found.brk);
+            if (found.focus !== null) await setMinutes(found.focus, found.brk);
             for (const [label, on] of found.switches) await setPomodoroSwitch(label, on);
             if (!found.feature) await openGtd(false);
             await toTabs();
@@ -305,9 +305,11 @@ try {
     const start = { reminders: await shown(en['settings.notificationsEnable']), weekly: await shown(en['settings.weeklyReview']),
         day: await at(en['settings.weeklyReviewDay']), weeklyTime: await at(en['settings.weeklyReviewTime']), morning: await shown(en['settings.dailyDigestMorning']),
         morningTime: await at(en['settings.dailyDigestMorningTime']), capture: await shown(en['settings.persistentCaptureLabel']) };
-    const feature = settings().features?.pomodoro === true;
+    // Kept before anything changes, so a failure from here on still puts back what it changed.
+    found = { ...start, feature: settings().features?.pomodoro === true, focus: null, brk: null, switches: [] };
     nodes = await openGtd(true);
-    found = { ...start, feature, focus: field(nodes, POMODORO.focus)?.text ?? '25', brk: field(nodes, POMODORO.break)?.text ?? '5', switches: [] };
+    found.focus = field(nodes, POMODORO.focus)?.text ?? '25';
+    found.brk = field(nodes, POMODORO.break)?.text ?? '5';
     for (const label of [POMODORO.linkTask, POMODORO.autoBreaks, POMODORO.autoFocus, POMODORO.alert]) {
         let current = await screen();
         for (let step = 0; step < 4 && !visible(withDescription(current, label)); step += 1) current = await device.swipe(current, 'down');
