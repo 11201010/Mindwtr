@@ -280,6 +280,7 @@ try {
     // Off again through the app, so no reminder of the development data fires while the check runs.
     await flip(en['settings.notificationsEnable'], (stored) => stored.notificationsEnabled === false, '(1) Task reminders off is stored');
     await flip(en['settings.dailyDigestMorning'], (stored) => stored.dailyDigestMorningEnabled === false, '(1) the morning digest off is stored');
+    await flip(en['settings.weeklyReview'], (stored) => stored.weeklyReviewEnabled === false, '(1) Weekly review off is stored');
 
     // (2) The persistent capture notification.
     const capture = () => notifications().filter((item) => item.id === CAPTURE_ID && item.channel === CAPTURE_CHANNEL);
@@ -322,14 +323,15 @@ try {
     check(pomodoro()[0].text === en['pomodoro.focusComplete'] && Date.now() >= entry.fireAtMs - 2000,
         '(3) with the app closed, the alarm fires once at the phase end with core\'s words');
     await sleep(20_000);
-    check(pomodoro().length === 1 && pomodoroAlarms().length === 0,
-        `(3) no second alert, and no alarm left (alerts ${pomodoro().length}, pending alarms ${JSON.stringify(pomodoroAlarms().map((alarm) => alarm.at))})`);
+    // Reminder alarms of the development data share the receiver: only one at the Pomodoro's time counts.
+    const pomodoroLeft = () => pomodoroAlarms().filter((alarm) => alarm.at === entry.fireAtMs).length;
+    check(pomodoro().length === 1 && pomodoroLeft() === 0, `(3) no second alert, and no alarm left (alerts ${pomodoro().length})`);
     await launch();
     nodes = await toTabs();
     if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
     await waitFor('the finished-phase line', (current) => current.some((node) => node.text === en['pomodoro.focusComplete']), 30_000);
     await sleep(3000);
-    check(pomodoroAlarms().length === 0 && pomodoro().length === 1, '(3) the next start shows RN\'s finished-phase line, makes no alarm, and keeps the alert');
+    check(pomodoroLeft() === 0 && pomodoro().length === 1, '(3) the next start shows RN\'s finished-phase line, makes no alarm, and keeps the alert');
     sh('input keyevent KEYCODE_HOME');
     await sleep(1000);
     await tapInShade(en['pomodoro.mobileTitle']);
