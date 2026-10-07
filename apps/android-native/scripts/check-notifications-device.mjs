@@ -3,9 +3,9 @@
 //
 //   node apps/android-native/scripts/check-notifications-device.mjs <adb-serial> [apk]
 //
-// Installs the debug APK with `install -r` (existing development data stays). With the app stopped it sets a known start in the
-// development database (task reminders, the weekly review and the morning digest off, the Pomodoro feature on with a 1/1 custom
-// preset, its completion alert on and no auto-start), then checks through the app's own screens:
+// Installs the debug APK with `install -r` (existing development data stays). Through the app's own screens only, it first sets a
+// known start (task reminders, the weekly review, the morning digest and the capture switch off; Settings › GTD: the Pomodoro feature
+// on, its focus and break minutes 1 and 1, its completion alert on, no auto-start, no task link), then checks:
 // (1) Settings › Notifications shows core's rows; Task reminders, Weekly review, its day (Wednesday, from RN's day picker), the
 //     morning digest and its time (07:45, from Android's time picker) are each stored in the database through the app (no
 //     journal entry left), and after a process death and a new start the screen shows each stored value again;
@@ -16,12 +16,12 @@
 //     time); with the process killed, the alarm fires once at that time: one "Pomodoro Timer" notification with core's words,
 //     and no second one; the next start shows RN's finished-phase line and keeps no Pomodoro alarm; a tap on the notification
 //     opens the app.
-// Everything it changed in the development data (the settings, RN's Pomodoro session and fold, the switch's key) is put back at
-// the end, on failure too. It grants the development app the notification permission (kept). It never launches over another
+// Every switch, the day, the time and the Pomodoro settings it changed are put back through the app at the end, on failure too
+// (custom minutes never set before stay at the fields' 25 and 5). It reads the app's database and RKStorage from copies only. It grants the development app the notification permission (kept). It never launches over another
 // app and leaves the device on its home screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { check, connect, evidenced, fail, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
@@ -45,14 +45,10 @@ const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-notifications-ui.xml';
 const DB = 'mindwtr-native-dev.db';
-const STAGED = '/data/local/tmp/mindwtr-native-dev-notifications.db';
 const CAPTURE_ID = 41120;
 const CAPTURE_CHANNEL = 'mindwtr-persistent-capture';
 const POMODORO_ID = 2 ** 31 - 1;
-const KEYS = { capture: 'mindwtr:persistentCaptureNotification', session: '@mindwtr_pomodoro_state', fold: '@mindwtr_pomodoro_collapsed',
-    alarm: 'mindwtr:native:pomodoro-alarm:v1' };
-const SETTINGS = ['notificationsEnabled', 'startDateNotificationsEnabled', 'weeklyReviewEnabled', 'weeklyReviewDay', 'weeklyReviewTime',
-    'dailyDigestMorningEnabled', 'dailyDigestMorningTime', 'features', 'gtd'];
+const KEYS = { capture: 'mindwtr:persistentCaptureNotification', alarm: 'mindwtr:native:pomodoro-alarm:v1' };
 const work = resolve(app, 'android/build/notifications-check');
 const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
 
@@ -70,7 +66,7 @@ const waitUntil = async (description, predicate, timeoutMs = 60_000, everyMs = 1
     }
 };
 
-// ---- the app's files: pulled through run-as, edited with Bun's SQLite (the tasks table's triggers need FTS5), pushed back ----
+// ---- the app's files, read from copies pulled through run-as ----
 const pull = (name, dir) => {
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(dir, { recursive: true });
@@ -88,32 +84,6 @@ const kv = (keys) => JSON.parse(bun(`const db = new Database(process.env.CHECK_D
     const keys = JSON.parse(process.env.CHECK_KEYS);
     console.log(JSON.stringify(Object.fromEntries(keys.map((key) => [key, db.query('SELECT value FROM catalystLocalStorage WHERE key = ?').get(key)?.value ?? null]))));`,
 { CHECK_DB: pull('databases/RKStorage', resolve(work, 'rkstorage')), CHECK_KEYS: JSON.stringify(keys) }));
-/** With the app stopped: [file] (an app file) edited by [script] (Bun, `db` open on it) and put back, its WAL removed. */
-const edit = (file, script, env = {}) => {
-    if (pid()) fail('the app must be stopped to edit its files');
-    const local = pull(file, resolve(work, 'edit'));
-    bun(`const db = new Database(process.env.CHECK_DB);\n${script}\ndb.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close();`, { ...env, CHECK_DB: local });
-    const next = `${file}.notifications-new`;
-    adbRaw('push', local, STAGED);
-    try {
-        runAs(`cp ${STAGED} ${next}`);
-        if (Number(runAs(`stat -c %s ${next}`)) !== statSync(local).size) fail('the staged file has the wrong size');
-        if (pid()) fail('the app started while its file was being replaced');
-        runAs(`rm -f ${file}-wal ${file}-shm && mv -f ${next} ${file}`);
-    } finally {
-        sh(`rm -f ${STAGED}`);
-    }
-};
-/** The settings row's [values] set (null removes the key). */
-const editSettings = (values) => edit(`files/${DB}`, `const row = JSON.parse(db.query('SELECT data FROM settings WHERE id = 1').get()?.data ?? '{}');
-    for (const [key, value] of Object.entries(JSON.parse(process.env.CHECK_VALUES))) { if (value === null) delete row[key]; else row[key] = value; }
-    db.query('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(row));`, { CHECK_VALUES: JSON.stringify(values) });
-/** RN's AsyncStorage [values] set (null removes the key). */
-const editKv = (values) => edit('databases/RKStorage', `for (const [key, value] of Object.entries(JSON.parse(process.env.CHECK_VALUES))) {
-        if (value === null) db.query('DELETE FROM catalystLocalStorage WHERE key = ?').run(key);
-        else db.query('INSERT OR REPLACE INTO catalystLocalStorage (key, value) VALUES (?, ?)').run(key, value);
-    }`, { CHECK_VALUES: JSON.stringify(values) });
-
 // ---- the system's view ----
 const notifications = () => sh('dumpsys notification --noredact').split(/\n(?=\s*NotificationRecord\()/)
     .filter((block) => block.includes(`pkg=${PKG}`))
@@ -192,24 +162,119 @@ const flip = async (label, stored, description) => {
     check(true, description);
 };
 
-let original;
-let originalKv;
+/** The switch labelled [label] set to [on] through the app (nothing when it already is); [stored] checks the settings after. */
+const setSwitch = async (label, on, stored) => {
+    const nodes = await reveal((current) => visible(withDescription(current, label)));
+    if (switchOn(nodes, label) === on) return;
+    await flip(label, stored, `${label} ${on ? 'on' : 'off'} is stored`);
+};
+const byId = (current, id) => current.find((node) => (node['resource-id'] ?? '').endsWith(`:id/${id}`));
+/** The time row labelled [label] set to [time] ('HH:MM') through Android's time dialog: its keyboard mode, the fields typed, OK. */
+const setTime = async (label, time) => {
+    const nodes = await reveal((current) => visible(row(current, label)));
+    if (value(nodes, label) === time) return;
+    await tap(row(nodes, label));
+    let dialog = await waitFor('the time dialog', (current) => current.some((node) => /toggle_mode|button1/.test(node['resource-id'] ?? '')), 15_000);
+    if (byId(dialog, 'toggle_mode') && !byId(dialog, 'input_hour')) {
+        await tap(byId(dialog, 'toggle_mode'));
+        dialog = await waitFor('the time dialog\'s fields', (current) => Boolean(byId(current, 'input_hour')), 10_000);
+    }
+    const [hour, minute] = time.split(':').map(Number);
+    const twelve = dialog.some((node) => node.text === 'AM' || node.text === 'PM');
+    const shownHour = twelve ? String(hour % 12 === 0 ? 12 : hour % 12).padStart(2, '0') : String(hour).padStart(2, '0');
+    for (const [id, text] of [['input_hour', shownHour], ['input_minute', String(minute).padStart(2, '0')]]) {
+        await tap(byId(dialog, id) ?? fail(`no ${id} in the time dialog`));
+        sh('input keyevent KEYCODE_MOVE_END');
+        for (let i = 0; i < 3; i += 1) sh('input keyevent KEYCODE_DEL');
+        sh(`input text ${text}`);
+        dialog = await screen();
+    }
+    const half = dialog.find((node) => node.text === (hour < 12 ? 'AM' : 'PM') && node.class?.includes('RadioButton'));
+    if (half && half.checked !== 'true') await tap(half);
+    await tap(byId(await screen(), 'button1') ?? fail('no OK in the time dialog'));
+};
+/** The review day picked from RN's day picker. */
+const setDay = async (day) => {
+    let nodes = await reveal((current) => visible(row(current, en['settings.weeklyReviewDay'])));
+    if (value(nodes, en['settings.weeklyReviewDay']) === day) return;
+    nodes = await tapExpecting(row(nodes, en['settings.weeklyReviewDay']), (current) => Boolean(tagged(current, 'settings-picker')), 'the day picker');
+    await tapExpecting(withDescription(nodes, day) ?? fail(`no ${day}`), (current) => !tagged(current, 'settings-picker'), 'the picker to close');
+};
+
+// ---- Settings › GTD › Pomodoro, through the app ----
+const GTD_ROW = `${en['settings.gtd']}. ${en['settings.menuDesc.gtd']}`;
+const POMODORO = { feature: en['settings.featurePomodoro'], link: en['settings.pomodoroSettings'], focus: en['settings.pomodoroFocusMinutes'],
+    break: en['settings.pomodoroBreakMinutes'], linkTask: en['settings.pomodoroLinkTask'], autoBreaks: en['settings.pomodoroAutoStartBreaks'],
+    autoFocus: en['settings.pomodoroAutoStartFocus'], alert: en['settings.pomodoroCompletionAlert'] };
+const field = (nodes, label) => nodes.find((node) => node.class === 'android.widget.EditText' && node['content-desc'] === label);
+/** Settings › GTD from the tabs, the Pomodoro feature set to [feature], and (while on) its settings screen. */
+const openGtd = async (feature) => {
+    let nodes = await toTabs();
+    nodes = await tapExpecting(tab(nodes, en['tab.menu']), (current) => Boolean(tagged(current, 'more-sheet')), 'the More sheet');
+    nodes = await device.settle(nodes);
+    nodes = await tapExpecting(withDescription(nodes, en['nav.settings']) ?? fail('no Settings tile'), (current) => Boolean(tagged(current, 'settings-main')), 'Settings');
+    nodes = await tapExpecting(withDescription(nodes, GTD_ROW) ?? fail('no GTD row'), (current) => Boolean(withDescription(current, POMODORO.feature)), 'Settings › GTD');
+    if (switchOn(nodes, POMODORO.feature) !== feature) {
+        nodes = await tapExpecting(withDescription(nodes, POMODORO.feature), (current) => switchOn(current, POMODORO.feature) === feature, 'the Pomodoro feature');
+        await waitUntil('the Pomodoro feature stored', async () => (settings().features?.pomodoro === true) === feature, 20_000);
+    }
+    if (!feature) return nodes;
+    nodes = await waitFor('the Pomodoro settings link', (current) => Boolean(withDescription(current, POMODORO.link)), 15_000);
+    return tapExpecting(withDescription(nodes, POMODORO.link), (current) => Boolean(field(current, POMODORO.focus)), 'Settings › GTD › Pomodoro');
+};
+/** GTD › Pomodoro's minute fields typed ([focus], [brk]) and committed with the keyboard's Done (RN commits both on blur). */
+const setMinutes = async (focus, brk) => {
+    let nodes = await screen();
+    if (field(nodes, POMODORO.focus)?.text === focus && field(nodes, POMODORO.break)?.text === brk) return;
+    for (const [label, text] of [[POMODORO.focus, focus], [POMODORO.break, brk]]) {
+        await tap(field(nodes, label) ?? fail(`no ${label} field`));
+        sh('input keyevent KEYCODE_MOVE_END');
+        for (let i = 0; i < 4; i += 1) sh('input keyevent KEYCODE_DEL');
+        sh(`input text ${text}`);
+        nodes = await screen();
+    }
+    sh('input keyevent KEYCODE_ENTER');
+    await waitUntil(`the minutes ${focus}/${brk} stored`, async () => {
+        const durations = settings().gtd?.pomodoro?.customDurations;
+        return String(durations?.focusMinutes) === focus && String(durations?.breakMinutes) === brk;
+    }, 20_000);
+};
+/** A GTD › Pomodoro switch set to [on]. */
+const setPomodoroSwitch = async (label, on) => {
+    let nodes = await screen();
+    for (let step = 0; step < 4 && !visible(withDescription(nodes, label)); step += 1) nodes = await device.swipe(nodes, 'down');
+    if (switchOn(nodes, label) === on) return;
+    await tapExpecting(withDescription(nodes, label), (current) => switchOn(current, label) === on, label);
+    await waitUntil('the journal to empty', async () => journal().length === 0, 20_000);
+};
+
+/** The start as found (each control's shown state), to put back at the end. */
+let found = null;
 const restore = async () => {
     try { closeShade(); } catch { /* device gone */ }
     try {
-        if (original) {
-            await killApp();
-            editSettings(Object.fromEntries(SETTINGS.map((key) => [key, original[key] ?? null])));
-            if (originalKv) editKv(originalKv);
-            await launch();
+        if (found) {
+            if (!front().includes(`${PKG}/`)) await launch();
+            await openNotifications();
+            await setSwitch(en['settings.notificationsEnable'], found.reminders, () => true);
+            await setSwitch(en['settings.weeklyReview'], true, () => true);
+            await setDay(found.day);
+            await setTime(en['settings.weeklyReviewTime'], found.weeklyTime);
+            await setSwitch(en['settings.weeklyReview'], found.weekly, () => true);
+            await setSwitch(en['settings.dailyDigestMorning'], true, () => true);
+            await setTime(en['settings.dailyDigestMorningTime'], found.morningTime);
+            await setSwitch(en['settings.dailyDigestMorning'], found.morning, () => true);
+            await setSwitch(en['settings.persistentCaptureLabel'], found.capture, () => true);
+            await openGtd(true);
+            await setMinutes(found.focus, found.brk);
+            for (const [label, on] of found.switches) await setPomodoroSwitch(label, on);
+            if (!found.feature) await openGtd(false);
             await toTabs();
-            const after = settings();
-            if (SETTINGS.some((key) => JSON.stringify(after[key] ?? null) !== JSON.stringify(original[key] ?? null))) console.error('RESTORE: a setting did not come back');
         }
-    } catch (error) { console.error(`RESTORE FAILED: the development settings are not as they were (${error.message})`); process.exitCode = 1; }
+    } catch (error) { console.error(`RESTORE FAILED: the development settings are not as they were (${error.message}); put them back by hand`); process.exitCode = 1; }
     try { if (front().includes(`${PKG}/`)) sh('input keyevent KEYCODE_HOME'); } catch { /* device gone */ }
     try { sh('settings put system accelerometer_rotation 1'); } catch { /* device gone */ }
-    try { sh(`rm -f ${UI_FILE} ${STAGED}`); } catch { /* device gone */ }
+    try { sh(`rm -f ${UI_FILE}`); } catch { /* device gone */ }
 };
 
 try {
@@ -222,49 +287,48 @@ try {
     sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
     sh('settings put system accelerometer_rotation 0');
     await launch();
-    await killApp();
-    original = settings();
-    originalKv = kv(Object.values(KEYS));
-    const gtd = original.gtd ?? {};
-    editSettings({ notificationsEnabled: false, startDateNotificationsEnabled: null, weeklyReviewEnabled: false, weeklyReviewDay: 0, weeklyReviewTime: null,
-        dailyDigestMorningEnabled: false, dailyDigestMorningTime: null, features: { ...(original.features ?? {}), pomodoro: true },
-        gtd: { ...gtd, pomodoro: { ...(gtd.pomodoro ?? {}), customDurations: { focusMinutes: 1, breakMinutes: 1 }, completionAlert: true,
-            autoStartBreaks: false, autoStartFocus: false, linkTask: false } } });
-    editKv({ [KEYS.capture]: null, [KEYS.session]: null, [KEYS.fold]: null, [KEYS.alarm]: null });
-    await launch();
+    // The start as found, then the known start, all through the app.
+    let nodes = await openNotifications();
+    const shown = async (label) => switchOn(await reveal((current) => visible(withDescription(current, label))), label);
+    const at = async (label) => value(await reveal((current) => visible(row(current, label))), label);
+    const start = { reminders: await shown(en['settings.notificationsEnable']), weekly: await shown(en['settings.weeklyReview']),
+        day: await at(en['settings.weeklyReviewDay']), weeklyTime: await at(en['settings.weeklyReviewTime']), morning: await shown(en['settings.dailyDigestMorning']),
+        morningTime: await at(en['settings.dailyDigestMorningTime']), capture: await shown(en['settings.persistentCaptureLabel']) };
+    const feature = settings().features?.pomodoro === true;
+    nodes = await openGtd(true);
+    found = { ...start, feature, focus: field(nodes, POMODORO.focus)?.text ?? '25', brk: field(nodes, POMODORO.break)?.text ?? '5', switches: [] };
+    for (const label of [POMODORO.linkTask, POMODORO.autoBreaks, POMODORO.autoFocus, POMODORO.alert]) {
+        let current = await screen();
+        for (let step = 0; step < 4 && !visible(withDescription(current, label)); step += 1) current = await device.swipe(current, 'down');
+        found.switches.push([label, switchOn(current, label)]);
+    }
+    await setMinutes('1', '1');
+    for (const [label, on] of [[POMODORO.linkTask, false], [POMODORO.autoBreaks, false], [POMODORO.autoFocus, false], [POMODORO.alert, true]]) await setPomodoroSwitch(label, on);
+    await toTabs();
+    nodes = await openNotifications();
+    await setSwitch(en['settings.notificationsEnable'], false, (stored) => stored.notificationsEnabled === false);
+    await setSwitch(en['settings.weeklyReview'], true, (stored) => stored.weeklyReviewEnabled === true);
+    await setDay('Sunday');
+    await setSwitch(en['settings.weeklyReview'], false, (stored) => stored.weeklyReviewEnabled === false);
+    await setSwitch(en['settings.dailyDigestMorning'], true, (stored) => stored.dailyDigestMorningEnabled === true);
+    await setTime(en['settings.dailyDigestMorningTime'], '09:00');
+    await setSwitch(en['settings.dailyDigestMorning'], false, (stored) => stored.dailyDigestMorningEnabled === false);
+    await setSwitch(en['settings.persistentCaptureLabel'], false, () => kv([KEYS.capture])[KEYS.capture] === null);
 
     // (1) Each setting stored through the app, and read back after a restart.
-    let nodes = await openNotifications();
+    nodes = await openNotifications();
     check(Boolean(withDescription(nodes, en['settings.notificationsEnable'])) && !switchOn(nodes, en['settings.notificationsEnable']),
         '(1) Settings › Notifications shows core\'s Task reminders switch, off');
     await flip(en['settings.notificationsEnable'], (stored) => stored.notificationsEnabled === true, '(1) Task reminders on is stored');
     await flip(en['settings.weeklyReview'], (stored) => stored.weeklyReviewEnabled === true, '(1) Weekly review on is stored');
     nodes = await reveal((current) => visible(row(current, en['settings.weeklyReviewDay'])));
-    check(value(nodes, en['settings.weeklyReviewDay']) === 'Sunday', '(1) the review day row shows Sunday (RN\'s default)');
+    check(value(nodes, en['settings.weeklyReviewDay']) === 'Sunday', '(1) the review day row shows Sunday (set at the start)');
     nodes = await tapExpecting(row(nodes, en['settings.weeklyReviewDay']), (current) => Boolean(tagged(current, 'settings-picker')), 'the day picker');
     await tapExpecting(withDescription(nodes, 'Wednesday') ?? fail('no Wednesday'), (current) => !tagged(current, 'settings-picker'), 'the picker to close');
     await waitUntil('the review day stored', async () => settings().weeklyReviewDay === 3, 20_000);
     check(true, '(1) the review day Wednesday is stored (3)');
     await flip(en['settings.dailyDigestMorning'], (stored) => stored.dailyDigestMorningEnabled === true, '(1) the morning digest on is stored');
-    nodes = await reveal((current) => visible(row(current, en['settings.dailyDigestMorningTime'])));
-    await tap(row(nodes, en['settings.dailyDigestMorningTime']));
-    // Android's time dialog: its keyboard mode, then the hour and minute typed, then OK.
-    let dialog = await waitFor('the time dialog', (current) => current.some((node) => /toggle_mode|button1/.test(node['resource-id'] ?? '')), 15_000);
-    const byId = (current, id) => current.find((node) => (node['resource-id'] ?? '').endsWith(`:id/${id}`));
-    if (byId(dialog, 'toggle_mode') && !byId(dialog, 'input_hour')) {
-        await tap(byId(dialog, 'toggle_mode'));
-        dialog = await waitFor('the time dialog\'s fields', (current) => Boolean(byId(current, 'input_hour')), 10_000);
-    }
-    for (const [id, text] of [['input_hour', '07'], ['input_minute', '45']]) {
-        await tap(byId(dialog, id) ?? fail(`no ${id} in the time dialog`));
-        sh('input keyevent KEYCODE_MOVE_END');
-        for (let i = 0; i < 3; i += 1) sh('input keyevent KEYCODE_DEL');
-        sh(`input text ${text}`);
-        dialog = await screen();
-    }
-    const am = dialog.find((node) => node.text === 'AM' && node.class?.includes('RadioButton'));
-    if (am && am.checked !== 'true') await tap(am);
-    await tap(byId(await screen(), 'button1') ?? fail('no OK in the time dialog'));
+    await setTime(en['settings.dailyDigestMorningTime'], '07:45');
     await waitUntil('the morning time stored', async () => settings().dailyDigestMorningTime === '07:45', 20_000);
     check(journal().length === 0, '(1) the morning time 07:45 from Android\'s time picker is stored, and no journal entry is left');
     await killApp();
