@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -63,6 +64,13 @@ import tech.dongdongbh.mindwtr.pilot.InboxViewModel.Part
  * card, its task picker, every word and action core's. Kotlin keeps only whether the picker is open and its loaded rows; each control
  * sends core's action (runPomodoroAction), the state it asks for.
  */
+
+/**
+ * RN's Text on Android for the card's styles, which set no line height: Android's TextView metrics with the font's padding
+ * (RN's includeFontPadding default), so each line is as tall as RN's (the S23 side by side, pass R2).
+ */
+private fun cardText(size: Int, weight: Int, lineHeight: Int? = null, letterSpacing: Float = 0f) =
+    rnText(size, weight, lineHeight, letterSpacing).copy(platformStyle = PlatformTextStyle(includeFontPadding = true))
 
 /** The card's state on screen: core's panel, read again each second while its timer runs, and the open picker's rows. */
 class PomodoroModel(private val shell: InboxViewModel) {
@@ -144,8 +152,8 @@ fun PomodoroCard(model: InboxViewModel) = with(model.pomodoro) {
     val card = Modifier.padding(bottom = 12.dp).fillMaxWidth().clip(shape).background(c.cardBg).border(1.dp, c.border, shape).testTag("pomodoro-card")
     if (shown.getBoolean("collapsed")) {
         Row(card.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(shown.getString("clock"), style = rnText(20, 700).copy(fontFeatureSettings = "tnum"), color = c.text, modifier = Modifier.testTag("pomodoro-clock"))
-            Text(shown.getString("status").uppercase(), style = rnText(11, 700), color = phaseColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(shown.getString("clock"), style = cardText(20, 700).copy(fontFeatureSettings = "tnum"), color = c.text, modifier = Modifier.testTag("pomodoro-clock"))
+            Text(shown.getString("status").uppercase(), style = cardText(11, 700), color = phaseColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (running) Box(Modifier.size(8.dp).clip(CircleShape).background(phaseColor))
             Spacer(Modifier.weight(1f))
             Fold(true)
@@ -154,19 +162,19 @@ fun PomodoroCard(model: InboxViewModel) = with(model.pomodoro) {
     }
     Column(card.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-            Text(shown.getString("title"), style = rnText(16, 700), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
-            Text(shown.getString("phaseLabel").uppercase(), style = rnText(11, 700), color = phaseColor, modifier = Modifier.padding(top = 2.dp))
+            Text(shown.getString("title"), style = cardText(16, 700), color = c.text, modifier = Modifier.weight(1f).semantics { heading() })
+            Text(shown.getString("phaseLabel").uppercase(), style = cardText(11, 700), color = phaseColor, modifier = Modifier.padding(top = 2.dp))
             Fold(false)
         }
         if (loading) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(20.dp), color = c.tint, strokeWidth = 2.dp)
-            Text(shown.getString("loading"), style = rnText(12, 500), color = c.secondaryText)
+            Text(shown.getString("loading"), style = cardText(12, 500), color = c.secondaryText)
         }
         Presets(shown, enabled, loading)
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(shown.getString("clock"), style = rnText(36, 800, letterSpacing = 1f).copy(fontFeatureSettings = "tnum"), color = c.text,
+            Text(shown.getString("clock"), style = cardText(36, 800, letterSpacing = 1f).copy(fontFeatureSettings = "tnum"), color = c.text,
                 modifier = Modifier.testTag("pomodoro-clock"))
-            Text(shown.getString("sessions"), style = rnText(11, 600), color = c.secondaryText)
+            Text(shown.getString("sessions"), style = cardText(11, 600), color = c.secondaryText)
         }
         shown.optJSONObject("link")?.let { link -> LinkRow(model, link, enabled, loading) }
         @OptIn(ExperimentalLayoutApi::class)
@@ -177,7 +185,7 @@ fun PomodoroCard(model: InboxViewModel) = with(model.pomodoro) {
             CardButton(shown.getJSONObject("reset"), enabled, false, c.filterBg, c.border, c.secondaryText, 12, "pomodoro-reset")
             CardButton(shown.getJSONObject("switchPhase"), enabled, false, c.filterBg, c.border, c.secondaryText, 12, "pomodoro-switch")
         }
-        shown.menuText("event")?.let { Text(it, style = rnText(12, 500), color = c.secondaryText, modifier = Modifier.testTag("pomodoro-event")) }
+        shown.menuText("event")?.let { Text(it, style = cardText(12, 500), color = c.secondaryText, modifier = Modifier.testTag("pomodoro-event")) }
     }
 }
 
@@ -193,7 +201,7 @@ private fun PomodoroModel.Presets(shown: JSONObject, enabled: Boolean, loading: 
             Box(Modifier.fade(if (loading) 0.6f else 1f).clip(CircleShape).background(if (active) c.tint else c.filterBg).border(1.dp, if (active) c.tint else c.border, CircleShape)
                 .clearAndSetSemantics { testTag = "pomodoro-preset-${preset.getString("id")}"; contentDescription = label; role = Role.Button; selected = active; if (enabled) onClick { act(preset.getJSONObject("action")); true } else disabled() }
                 .clickable(enabled = enabled) { act(preset.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                Text(label, style = rnText(11, 700), color = if (active) c.onTint else c.secondaryText)
+                Text(label, style = cardText(11, 700), color = if (active) c.onTint else c.secondaryText)
             }
         }
     }
@@ -208,7 +216,7 @@ private fun PomodoroModel.CardButton(button: JSONObject, enabled: Boolean, faded
     Box(Modifier.fade(if (faded) 0.5f else 1f).clip(shape).background(background).border(1.dp, border, shape)
         .clearAndSetSemantics { testTag = tag; contentDescription = label; role = Role.Button; if (enabled) onClick { act(button.getJSONObject("action")); true } else disabled() }
         .clickable(enabled = enabled) { act(button.getJSONObject("action")) }.padding(horizontal = horizontal.dp, vertical = 9.dp)) {
-        Text(label, style = rnText(12, 700), color = text)
+        Text(label, style = cardText(12, 700), color = text)
     }
 }
 
@@ -224,10 +232,10 @@ private fun PomodoroModel.LinkRow(model: InboxViewModel, link: JSONObject, enabl
             .clickable(enabled = model.menu.idle) { openPicker() }.padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label.uppercase(), style = rnText(10, 700), color = c.secondaryText)
-                Text(link.getString("value"), style = rnText(13, 700), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label.uppercase(), style = cardText(10, 700), color = c.secondaryText)
+                Text(link.getString("value"), style = cardText(13, 700), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(link.getString("changeLabel"), style = rnText(12, 700), color = c.tint)
+            Text(link.getString("changeLabel"), style = cardText(12, 700), color = c.tint)
         }
         link.optJSONObject("markDone")?.let { done ->
             val spoken = done.getString("accessibilityLabel")
@@ -235,7 +243,7 @@ private fun PomodoroModel.LinkRow(model: InboxViewModel, link: JSONObject, enabl
                 .clearAndSetSemantics { testTag = "pomodoro-done"; contentDescription = spoken; role = Role.Button; if (enabled) onClick { act(done.getJSONObject("action")); true } else disabled() }
                 .clickable(enabled = enabled) { act(done.getJSONObject("action")) }.padding(horizontal = 10.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center) {
-                Text(done.getString("label"), style = rnText(12, 700), color = c.success)
+                Text(done.getString("label"), style = cardText(12, 700), color = c.success)
             }
         }
     }
@@ -256,7 +264,7 @@ fun PomodoroPicker(model: InboxViewModel) = with(model.pomodoro) {
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.72f).dp).clip(shape).background(c.cardBg)
             .border(1.dp, c.border, shape).pointerInput(Unit) { detectTapGestures { } }.padding(12.dp).testTag("pomodoro-picker"),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(words.getString("title"), style = rnText(16, 800), color = c.text, modifier = Modifier.semantics { heading() })
+            Text(words.getString("title"), style = cardText(16, 800), color = c.text, modifier = Modifier.semantics { heading() })
             val timerOnly = words.getJSONObject("timerOnly")
             Option(timerOnly.getString("label"), timerOnly.getBoolean("selected"), 1, "pomodoro-timer-only") { choose(timerOnly.getJSONObject("action")) }
             LazyColumn(Modifier.heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -265,7 +273,7 @@ fun PomodoroPicker(model: InboxViewModel) = with(model.pomodoro) {
                     Option(row.getString("title"), row.getBoolean("selected"), 2, "pomodoro-task") { choose(row.getJSONObject("action")) }
                 }
                 if (rows.isEmpty()) item {
-                    Text(words.getString("empty"), style = rnText(13, 600), color = c.secondaryText, modifier = Modifier.padding(vertical = 8.dp))
+                    Text(words.getString("empty"), style = cardText(13, 600), color = c.secondaryText, modifier = Modifier.padding(vertical = 8.dp))
                 }
             }
         }
@@ -280,6 +288,6 @@ private fun Option(label: String, selected: Boolean, lines: Int, tag: String, on
     Box(Modifier.fillMaxWidth().clip(shape).background(if (selected) c.tint.copy(alpha = 0x18 / 255f) else c.filterBg).border(1.dp, if (selected) c.tint else c.border, shape)
         .clearAndSetSemantics { testTag = tag; contentDescription = label; role = Role.Button; this.selected = selected; onClick { onClick(); true } }
         .clickable(onClick = onClick).padding(10.dp)) {
-        Text(label, style = rnText(14, 700), color = if (selected) c.tint else c.text, maxLines = lines, overflow = TextOverflow.Ellipsis)
+        Text(label, style = cardText(14, 700), color = if (selected) c.tint else c.text, maxLines = lines, overflow = TextOverflow.Ellipsis)
     }
 }

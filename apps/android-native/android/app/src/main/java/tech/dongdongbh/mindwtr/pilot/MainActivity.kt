@@ -187,11 +187,12 @@ class MainActivity : FragmentActivity() {
                             // The Inbox's and the quick-access tab's sheets and dialogs (MenuModel), and Focus's (FocusModel), over the tabs.
                             if (quick || screen == Screen.Inbox) MenuDialogs(model)
                             if (screen == Screen.Focus) FocusDialogs(model)
-                            if (screen == Screen.Focus) PomodoroPicker(model)
                             StatusMenu(model)
                         }
                     }
                 }
+                // The Pomodoro card's task picker over the whole screen, as RN's Modal (its scrim dims the bars too).
+                if (writable && screen == Screen.Focus && listed == null && open == null) PomodoroPicker(model)
                 // The attachments' alert, link sheet, image preview and audio player (the editor's and the project card's), over the screen.
                 if (writable) AttachmentOverlays(model)
                 // The open project's pickers, section manager and help, over the whole screen as RN's modals.

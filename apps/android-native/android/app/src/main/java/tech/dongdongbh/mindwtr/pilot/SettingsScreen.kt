@@ -187,7 +187,7 @@ internal fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
  */
 @Composable
 internal fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
-                        dimmed: Boolean = false, trailing: @Composable RowScope.() -> Unit = {}) {
+                        dimmed: Boolean = false, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
         verticalAlignment = Alignment.Top) {
@@ -197,7 +197,11 @@ internal fun SettingRow(label: String, description: String?, divider: Boolean = 
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
             failure?.let { Text(it, style = rnText(13, 400, 18), color = c.danger, modifier = Modifier.padding(top = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
         }
-        trailing()
+        // RN's settingRow gap (12) between the label block and its control.
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            trailing()
+        }
     }
 }
 
