@@ -206,7 +206,18 @@ const GTD_ROW = `${en['settings.gtd']}. ${en['settings.menuDesc.gtd']}`;
 const POMODORO = { feature: en['settings.featurePomodoro'], link: en['settings.pomodoroSettings'], focus: en['settings.pomodoroFocusMinutes'],
     break: en['settings.pomodoroBreakMinutes'], linkTask: en['settings.pomodoroLinkTask'], autoBreaks: en['settings.pomodoroAutoStartBreaks'],
     autoFocus: en['settings.pomodoroAutoStartFocus'], alert: en['settings.pomodoroCompletionAlert'] };
-const field = (nodes, label) => nodes.find((node) => node.class === 'android.widget.EditText' && node['content-desc'] === label);
+/** The text field labelled [label]: the EditText around its labelled node (Compose puts the label on a child of the field). */
+const field = (nodes, label) => {
+    const labelled = withDescription(nodes, label);
+    if (!labelled) return undefined;
+    const [x1, y1, x2, y2] = labelled.bounds.match(/\d+/g).map(Number);
+    const [cx, cy] = [(x1 + x2) / 2, (y1 + y2) / 2];
+    return nodes.find((node) => {
+        if (node.class !== 'android.widget.EditText') return false;
+        const [l, t, r, b] = node.bounds.match(/\d+/g).map(Number);
+        return l <= cx && cx <= r && t <= cy && cy <= b;
+    });
+};
 /** Settings › GTD from the tabs, the Pomodoro feature set to [feature], and (while on) its settings screen. */
 const openGtd = async (feature) => {
     let nodes = await toTabs();
