@@ -55,6 +55,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -92,6 +93,9 @@ import androidx.compose.ui.zIndex
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * Isolated development UI, drawn as the React Native app draws it: its header, its bottom
@@ -110,13 +114,18 @@ class MainActivity : FragmentActivity() {
 
     @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
-        // RN's start screen (expo-splash-screen): held until the first screen is ready (InboxViewModel.holdSplash), then gone
-        // with no fade, as RN's (SplashScreen.setOptions({ fade: false })). Android 12+'s view is removed directly, as
-        // expo-splash-screen does, so the theme's system bar appearance never replaces the screen's.
+        // RN's start screen (expo-splash-screen). The system hands its view over at the first frame; it stays over the screen,
+        // which draws beneath it meanwhile (a held first frame would draw everything only once the rows came), until the first
+        // screen is ready (InboxViewModel.holdSplash), then goes with no fade, as RN's (SplashScreen.setOptions({ fade: false })).
+        // Android 12+'s view is removed directly, as expo-splash-screen does, so the theme's system bar appearance never replaces the screen's.
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
-        splash.setKeepOnScreenCondition { model.holdSplash() }
-        splash.setOnExitAnimationListener { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) (it.view as SplashScreenView).remove() else it.remove() }
+        splash.setOnExitAnimationListener { provider ->
+            lifecycleScope.launch {
+                snapshotFlow { model.holdSplash() }.first { !it }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) (provider.view as SplashScreenView).remove() else provider.remove()
+            }
+        }
         model.attach()
         // First content drawn (InboxList's ReportDrawnWhen): the boot's leftover work, the bytecode cache, may run now.
         fullyDrawnReporter.addOnReportDrawnListener(model::contentShown)
