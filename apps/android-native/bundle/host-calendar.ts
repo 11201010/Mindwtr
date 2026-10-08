@@ -19,15 +19,23 @@ type KeyValue = {
 /** host-polyfills.js's device calendar call (HostCalendars.kt) and the attachment file port's (HostFiles.kt) readBytes. */
 type CalendarCall = (request: Record<string, unknown>) => Promise<unknown>;
 type FileCall = (request: Record<string, unknown>) => Promise<unknown>;
+/** The SQLite adapter's calendar_sync reads (RN's storage-adapter getAllCalendarSyncEntries, the same table). */
+type CalendarSyncReads = {
+    getAllCalendarSyncEntries: NonNullable<NativeCalendarHost['syncEntries']>['getAll'];
+    getCalendarSyncEntry(taskId: string, platform: string): Promise<unknown>;
+};
 
 /**
  * Core's external calendar device (createNativeHostContract's `calendar`, native-host-contract-settings-calendar.ts) on an
  * Android host as RN's external-calendar.ts binds it: RN's AsyncStorage keys, the polyfill's fetch (OkHttp, no Origin header,
  * a body cut short or past the limit rejects), a picked .ics read through the content resolver (expo-file-system's UTF-8 read),
  * and the device calendars through HostCalendars (expo-calendar's Android reads). Calendar push (its writes and the
- * calendar_sync table) is pass C4: core then answers its commands ACTION_FAILED. No log line carries a URL or an event title.
+ * calendar_sync table) is pass C4: core then answers its commands ACTION_FAILED. The calendar_sync map RN wrote is read (never
+ * written: its writes refuse until C4), so a task RN exported before its notes marker existed stays out of the device events,
+ * as RN keeps it out. No log line carries a URL or an event title.
  */
-export const createNativeCalendar = (keyValue: KeyValue, call: () => CalendarCall, fileCall: () => FileCall): NativeCalendarHost => ({
+export const createNativeCalendar = (keyValue: KeyValue, call: () => CalendarCall, fileCall: () => FileCall,
+    sync?: () => CalendarSyncReads): NativeCalendarHost => ({
     platform: { os: 'android' },
     storage: {
         getItem: (key) => keyValue.get(key),
@@ -42,6 +50,15 @@ export const createNativeCalendar = (keyValue: KeyValue, call: () => CalendarCal
         getCalendars: () => call()({ op: 'getCalendars' }) as never,
         getEvents: (calendarIds, start, end) => call()({ op: 'getEvents', calendarIds, start: start.toISOString(), end: end.toISOString() }) as never,
     },
+    ...(sync ? {
+        syncEntries: {
+            ensureReady: () => Promise.reject(new Error('Calendar push is not available on this host yet')),
+            get: (taskId: string, platform: string) => sync().getCalendarSyncEntry(taskId, platform) as never,
+            upsert: () => Promise.reject(new Error('Calendar push is not available on this host yet')),
+            delete: () => Promise.reject(new Error('Calendar push is not available on this host yet')),
+            getAll: (platform: string) => sync().getAllCalendarSyncEntries(platform),
+        },
+    } : {}),
     log: {
         info: (message, context) => { try { logInfo(message, { scope: context.scope, context: context.extra }); } catch { /* a diagnostic line never fails its caller */ } },
         warn: (message, context) => { try { logWarn(message, { scope: context.scope, context: context.extra }); } catch { /* as above */ } },

@@ -112,6 +112,26 @@ describe('the reviews\' feeds', () => {
     });
 });
 
+describe('the pushed-event map', () => {
+    it('reads RN\'s calendar_sync rows (an exported task mirror without the notes marker stays out of the feed), and writes none', async () => {
+        const rows = [{ taskId: 't1', calendarEventId: '42', calendarId: '7', platform: 'android', lastSyncedAt: '2026-10-01T00:00:00.000Z' }];
+        const asked: string[] = [];
+        const host = createNativeCalendar(
+            { get: async () => null, set: async () => undefined, remove: async () => undefined },
+            () => async () => [], () => async () => new Uint8Array(),
+            () => ({
+                getAllCalendarSyncEntries: async (platform: string) => { asked.push(platform); return rows; },
+                getCalendarSyncEntry: async (taskId: string) => rows.find((row) => row.taskId === taskId) ?? null,
+            }),
+        );
+        expect(await host.syncEntries!.getAll('android')).toEqual(rows);
+        expect(await host.syncEntries!.get('t1', 'android')).toEqual(rows[0]);
+        expect(asked).toEqual(['android']);
+        await expect(host.syncEntries!.upsert(rows[0])).rejects.toThrow();
+        await expect(host.syncEntries!.delete('t1', 'android')).rejects.toThrow();
+    });
+});
+
 describe('the device', () => {
     it('reads instances by ISO bounds, and a picked .ics as UTF-8 through the file port', async () => {
         const calls: unknown[] = [];

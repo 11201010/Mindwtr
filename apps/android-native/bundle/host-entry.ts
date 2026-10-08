@@ -533,7 +533,10 @@ const persistentCapture = nativeSync ? {
  * stand-in bridge have none: no calendar, as before.
  */
 const nativeCalendar = nativeSync && typeof globalThis.__mindwtrCalendarCall === 'function'
-    ? createNativeCalendar(keyValue, () => globalThis.__mindwtrCalendarCall as never, () => globalThis.__mindwtrFileCall as never)
+    ? createNativeCalendar(keyValue, () => globalThis.__mindwtrCalendarCall as never, () => globalThis.__mindwtrFileCall as never, () => {
+        if (!bootAdapter) throw new Error('Native storage is not loaded yet');
+        return bootAdapter;
+    })
     : null;
 const contract = createNativeHostContract({ reminderPlatform: globalThis.__mindwtrHostPlatform === 'ios' ? 'ios' : 'android', get syncSettings() { return nativeSync?.settingsHost ?? iosManualSync?.settingsHost; }, ...(nativeAI ? { ai: nativeAI } : {}),
     calendar: iosCalendar ?? nativeCalendar ?? undefined,
