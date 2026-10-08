@@ -77,6 +77,20 @@ import java.util.concurrent.Executors
  */
 val CALENDAR_COMMANDS = setOf("calendarFeedAdd")
 
+/**
+ * Settings › Calendar's visits: each Back ends one, so an open (or a device call) that ends after it counts for nothing, its toasts
+ * are dropped, and the next visit opens afresh (RN unmounts the screen). Thread-safe: opens run off the main thread.
+ */
+class CalendarVisit {
+    @Volatile var current = 0L; private set
+    @Volatile var isOpen = false; private set
+
+    /** The visit [visit]'s open answered: true when it is still the visit on screen (now open). */
+    @Synchronized fun opened(visit: Long): Boolean = (visit == current).also { if (it) isOpen = true }
+    fun isCurrent(visit: Long) = visit == current
+    @Synchronized fun leave() { current += 1; isOpen = false }
+}
+
 class CalendarSettingsModel(private val menu: MenuModel) {
     private companion object {
         /** A visit's open and close, and each new subscription, in the order sent. */
@@ -85,8 +99,8 @@ class CalendarSettingsModel(private val menu: MenuModel) {
     private val shell get() = menu.shell
     private val settings get() = menu.settings
 
-    /** openCalendarSettings ran for this visit: RN reads the device once, when the screen mounts. */
-    @Volatile private var opened = false
+    /** This visit, and whether openCalendarSettings ran for it: RN reads the device once, when the screen mounts. */
+    private val visit = CalendarVisit()
     var pushOpen by mutableStateOf(false); private set
     var deviceOpen by mutableStateOf(false); private set
     /** The open Area choice (core's `key`), one at a time. */
@@ -105,24 +119,26 @@ class CalendarSettingsModel(private val menu: MenuModel) {
         } catch (failure: Exception) {
             // Core has no open screen (a close that raced this visit): open it again, once.
             if (failure.message?.contains("(openCalendarSettings)") != true) throw failure
-            opened = false
-            open(runtime)
+            open(runtime, reopen = true)
             runtime.menuRead("calendarSettings", input())
         }
     }
 
-    private fun open(runtime: CoreHost) = visits.submit {
-        if (!opened) {
-            val reply = runtime.calendarRequest("openCalendarSettings", "{}")
-            opened = true
-            shell.ui { toasts("openCalendarSettings", reply) }
-        }
+    /**
+     * One open per visit, after any close sent before it. An open that ends after Back counts for nothing: core's session it made
+     * is closed again and its toasts dropped.
+     */
+    private fun open(runtime: CoreHost, reopen: Boolean = false) = visits.submit {
+        val mine = visit.current
+        if (visit.isOpen && !reopen) return@submit
+        val reply = runtime.calendarRequest("openCalendarSettings", "{}")
+        if (visit.opened(mine)) shell.ui { if (visit.isCurrent(mine)) toasts("openCalendarSettings", reply) }
+        else runCatching { runtime.menuRead("calendarSettingsClose", "{}") }
     }.get()
 
     /** Leaving the screen (RN unmounts it): its state goes, and core forgets the visit. */
     fun leave() {
-        if (!opened && name.isEmpty() && url.isEmpty()) return
-        opened = false
+        visit.leave()
         pushOpen = false; deviceOpen = false; areas = null; name = ""; url = ""; confirm = null
         val runtime = shell.coreHost() ?: return
         visits.execute { runCatching { runtime.menuRead("calendarSettingsClose", "{}") }.onFailure { Log.w(CoreHost.TAG, "Calendar screen close failed ${failureForLog(it)}") } }
@@ -180,9 +196,12 @@ class CalendarSettingsModel(private val menu: MenuModel) {
     /** Grant access, Test and Refresh calendars: core's device calls, which wait on a prompt, the provider or every feed. */
     fun request(name: String) {
         val runtime = shell.coreHost() ?: return
+        val mine = visit.current
         Thread({
             val result = runCatching { runtime.calendarRequest(name, "{}") }
             shell.ui {
+                // An answer after Back belongs to a screen no longer shown.
+                if (!visit.isCurrent(mine)) return@ui
                 result.onSuccess { toasts(name, it) }
                 result.exceptionOrNull()?.let { failed(name, it) }
                 menu.whenIdle { settings.refresh() }
