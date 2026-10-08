@@ -7,7 +7,7 @@
 // `am start -d`. Installs the debug APK with `install -r` (development data stays) and writes nothing: (a) `next` opens RN's widget
 // list screen titled with core's title (Next Actions) and core's first rows in core's order, not the Inbox; a row's swipe shows
 // RN's action (not run) and its tap opens the editor; Back returns to the list, and Back again leaves it; (b) the device's first
-// saved filter, when it has one, opens with core's title and rows; (c) a saved filter that is gone (URI-encoded id) shows core's
+// saved filter core opens as a list, when it has one, opens with core's title and rows; (c) a saved filter that is gone (URI-encoded id) shows core's
 // "No results" title and empty line, with no row. Screenshots of (a) and (c) go to the harness folder (MINDWTR_HARNESS_DIR) for
 // the side-by-side with RN. It touches only the development package (it refuses any other APK), never launches over another
 // app, leaves the app on its Inbox tab and restores rotation on exit. Exit 0 = pass, 1 = fail, 2 = refused, 3 = stopped.
@@ -146,8 +146,9 @@ try {
     await waitFor('the Inbox', onInbox, 60_000);
     const gone = `filter:gone-${run}`;
     let seen = core(['next', gone]);
-    const filterId = seen.filters[0] ? `filter:${seen.filters[0]}` : null;
-    if (filterId) seen = core(['next', gone, filterId]);
+    // The first saved filter core opens as a widget list (one for another view, or a hidden one, opens nothing, as on RN).
+    if (seen.filters.length > 0) seen = core(['next', gone, ...seen.filters.map((id) => `filter:${id}`)]);
+    const filterId = seen.filters.map((id) => `filter:${id}`).find((id) => seen.views[id]?.found) ?? null;
     const next = seen.views.next;
     check(next.found && next.title === (en['nav.next'] ?? 'Next Actions') && next.total > 0, `core's Next Actions list holds ${next.total} tasks`);
 
@@ -189,7 +190,7 @@ try {
         await expectList(filterId, view, 'b');
         await backTo(onInbox, 'the tabs');
     } else {
-        console.log('skip - (b) the device has no saved filter');
+        console.log(`skip - (b) none of the device's ${seen.filters.length} saved filters opens as a widget list`);
     }
 
     // (c) A saved filter that is gone: core's "No results" title and empty line, no row.
