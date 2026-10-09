@@ -10,7 +10,8 @@
  *
  * Every control's action is the state it asks for (Start or Pause, the phase to switch to, the preset, the task, the
  * fold, Task done), under a request UUID: the request's receipt answers a retry or a replay after a restart, and an
- * action applied again changes nothing more.
+ * action applied again changes nothing more. An action loads the stored session first, and its session write is part of
+ * the request's save: one that failed is retried with the request.
  *
  * The completion alarm (planPomodoroAlarm) follows RN's root-layout effect: while the alert is on and the timer runs it
  * fires when the phase ends; it goes when the alert is turned off, the phase end is gone, or notifications are not
@@ -115,9 +116,36 @@ const readAction = (value: unknown): PomodoroPanelAction | null => {
 };
 
 export function createPomodoroMethods(deps: PomodoroDeps) {
-    const receipts = createNativeRequestReceipts({ save: deps.save });
+    // A session write that failed is an owed save (SAVE_FAILED: the journal keeps the request): its retry stores the session again.
+    const receipts = createNativeRequestReceipts({
+        save: async (requestId) => {
+            try {
+                await deps.host()?.controller.retryPersistence();
+            } catch {
+                return fail('SAVE_FAILED', 'The Pomodoro session was not stored');
+            }
+            return deps.save(requestId);
+        },
+    });
     /** The card's fold as stored (RN reads it once when the card mounts; it starts expanded). */
     let collapsed = false;
+    let collapsedRead = false;
+
+    /**
+     * The stored session and the card's fold, loaded once. Every action loads them first: the boot replays journaled actions
+     * before the Pomodoro start, and an action on the unloaded default session would overwrite the stored one.
+     */
+    const load = async (host: NativePomodoroHost) => {
+        await host.controller.ensureHydrated(autoStartOf());
+        if (collapsedRead) return;
+        try {
+            const raw = await host.storage.getItem(POMODORO_COLLAPSED_STORAGE_KEY);
+            if (raw !== null) collapsed = raw === 'true';
+            collapsedRead = true;
+        } catch {
+            // RN logs and keeps the card expanded.
+        }
+    };
 
     const requireHost = (): NativeHostResult<NativePomodoroHost> => {
         const host = deps.host();
@@ -144,13 +172,7 @@ export function createPomodoroMethods(deps: PomodoroDeps) {
         async startPomodoro(): Promise<NativeHostResult<{ hydrated: boolean }>> {
             const host = requireHost();
             if (!host.ok) return host;
-            await host.value.controller.ensureHydrated(autoStartOf());
-            try {
-                const raw = await host.value.storage.getItem(POMODORO_COLLAPSED_STORAGE_KEY);
-                if (raw !== null) collapsed = raw === 'true';
-            } catch {
-                // RN logs and keeps the card expanded.
-            }
+            await load(host.value);
             return { ok: true, value: { hydrated: !host.value.controller.getSnapshot().isHydrating } };
         },
 
@@ -208,6 +230,7 @@ export function createPomodoroMethods(deps: PomodoroDeps) {
             }
             const { controller, storage } = host.value;
             return receipts.run(input.requestId, JSON.stringify(['pomodoro', action]), async () => {
+                await load(host.value);
                 const options = autoStartOf();
                 controller.reconcile(options);
                 const session = controller.getSnapshot();
@@ -245,11 +268,7 @@ export function createPomodoroMethods(deps: PomodoroDeps) {
                     const taskId = action.taskId ?? undefined;
                     if (session.selectedTaskId !== taskId) changed = controller.setSelectedTaskId(taskId);
                 }
-                try {
-                    await controller.flushPersistence();
-                } catch {
-                    return fail('ACTION_FAILED', 'The Pomodoro session was not stored');
-                }
+                // The receipts' save stores the session before the answer.
                 return { ok: true, value: { changed, panel: panel(host.value) } };
             });
         },

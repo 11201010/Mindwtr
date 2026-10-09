@@ -155,6 +155,66 @@ describe('native host contract: the Pomodoro card', () => {
     });
 });
 
+describe('native host contract: a Pomodoro action replayed or retried', () => {
+    afterEach(async () => {
+        vi.useRealTimers();
+        await flushPendingSave();
+        resetForTests();
+    });
+
+    const storedSession = (props: Record<string, unknown>) => JSON.stringify({
+        durations: { focusMinutes: 50, breakMinutes: 10 },
+        timerState: { phase: 'break', remainingSeconds: 400, isRunning: false, completedFocusSessions: 1 },
+        selectedTaskId: 'a', updatedAtMs: NOW - 60_000, ...props,
+    });
+
+    it('loads the stored session before a replayed action runs (the boot replays before the Pomodoro start)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const settings = { ...POMODORO_ON, gtd: { pomodoro: { linkTask: true } } } as AppSettings;
+        const device = new Map([[POMODORO_SESSION_STORAGE_KEY, storedSession({})]]);
+        const reset = await openHost(settings, { tasks: [task('a')], device });
+        value(await action(reset.host, { type: 'reset' }));
+        expect(JSON.parse(device.get(POMODORO_SESSION_STORAGE_KEY)!)).toMatchObject({
+            durations: { focusMinutes: 50, breakMinutes: 10 }, timerState: { phase: 'break', remainingSeconds: 600, isRunning: false }, selectedTaskId: 'a' });
+
+        device.set(POMODORO_SESSION_STORAGE_KEY, storedSession({ timerState: { phase: 'focus', remainingSeconds: 900, isRunning: true },
+            phaseEndsAt: new Date(NOW + 900_000).toISOString() }));
+        const pause = await openHost(settings, { tasks: [task('a')], device });
+        expect(value(await action(pause.host, { type: 'run', value: false })).changed).toBe(true);
+        expect(JSON.parse(device.get(POMODORO_SESSION_STORAGE_KEY)!).timerState).toMatchObject({ phase: 'focus', isRunning: false });
+
+        device.set(POMODORO_COLLAPSED_STORAGE_KEY, 'true');
+        const fold = await openHost(settings, { tasks: [task('a')], device });
+        expect(value(await action(fold.host, { type: 'collapse', value: false })).changed).toBe(true);
+        expect(device.get(POMODORO_COLLAPSED_STORAGE_KEY)).toBe('false');
+    });
+
+    it('keeps a session write that failed as an owed save, and stores it on the retry', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const { device } = await openHost(POMODORO_ON);
+        let failing = true;
+        const setItem = async (key: string, text: string) => {
+            if (failing && key === POMODORO_SESSION_STORAGE_KEY) throw new Error('disk full');
+            device.set(key, text);
+        };
+        const failingHost = createNativeHostContract({ pomodoro: { controller: createMobilePomodoroController({
+            storage: { getItem: async (key: string) => device.get(key) ?? null, setItem }, logWarn: () => undefined }),
+        storage: { getItem: async (key: string) => device.get(key) ?? null, setItem } } });
+        value(await failingHost.setLanguage({ storedLanguage: 'en', systemLocale: 'en-US' }));
+        value(await failingHost.activate({ writeSafetyReady: true }));
+        value(await failingHost.startPomodoro());
+        const requestId = generateUUID();
+        const first = await action(failingHost, { type: 'run', value: true }, requestId);
+        // It landed in memory only: the journal keeps it (SAVE_FAILED) and its retry stores the session.
+        expect(first.ok ? null : first.error.code).toBe('SAVE_FAILED');
+        failing = false;
+        expect(value(await action(failingHost, { type: 'run', value: true }, requestId))).toMatchObject({ panel: { running: true } });
+        expect(JSON.parse(device.get(POMODORO_SESSION_STORAGE_KEY)!).timerState.isRunning).toBe(true);
+    });
+});
+
 describe('native host contract: the Pomodoro completion alarm', () => {
     afterEach(async () => {
         vi.useRealTimers();

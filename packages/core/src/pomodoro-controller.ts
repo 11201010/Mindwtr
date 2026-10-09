@@ -308,6 +308,11 @@ export function createMobilePomodoroController(options: ControllerOptions) {
     clearLastEvent,
     applyWatchCommand,
     flushPersistence: () => persistenceQueue,
+    /** Resolves once the session is stored: a session write that failed is made again (a retry of a change that landed in memory only). */
+    retryPersistence: () => persistenceQueue.catch(() => {
+      persist();
+      return persistenceQueue;
+    }),
     resetForTests: () => {
       if (typeof process === 'undefined' || process.env.NODE_ENV !== 'test') return;
       listeners.clear();
