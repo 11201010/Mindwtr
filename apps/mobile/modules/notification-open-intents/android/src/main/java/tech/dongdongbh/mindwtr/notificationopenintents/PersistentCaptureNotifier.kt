@@ -35,6 +35,9 @@ object PersistentCaptureNotifier {
   private const val PREF_TEXT = "text"
   private const val PREF_CHANNEL_NAME = "channelName"
 
+  // Every post, removal and process-start restore holds this object's lock, so a removal never lands between a restore's
+  // read of the mirror and its post (which would pin it again and turn the mirror back on).
+  @Synchronized
   fun post(context: Context, title: String, text: String, channelName: String) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
       .putBoolean(PREF_ENABLED, true)
@@ -103,6 +106,7 @@ object PersistentCaptureNotifier {
     notificationManager.notify(NOTIFICATION_ID, builder.build())
   }
 
+  @Synchronized
   fun cancel(context: Context) {
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()
     val notificationManager =
@@ -115,6 +119,7 @@ object PersistentCaptureNotifier {
    * Same-id notify on the silent channel is an invisible in-place update, so
    * calling this on every process start is safe.
    */
+  @Synchronized
   fun restoreOnProcessStart(context: Context) {
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     if (!prefs.getBoolean(PREF_ENABLED, false)) return
