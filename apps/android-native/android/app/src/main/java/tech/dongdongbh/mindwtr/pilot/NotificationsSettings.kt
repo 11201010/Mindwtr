@@ -139,25 +139,31 @@ internal fun coreTime(hour: Int, minute: Int): String = String.format(Locale.ROO
  * again at start and on every resume while it is on and notifications are allowed (RN's keepPersistentCaptureNotificationArmed).
  */
 internal object PersistentCapture {
-    /** Core's `{ post }`: the title, text and channel's name to post, or null to remove it. */
-    fun apply(context: Context, reply: JSONObject) {
-        runCatching {
-            val post = reply.optJSONObject("post")
-            if (post == null) PersistentCaptureNotifier.cancel(context)
-            else PersistentCaptureNotifier.post(context, post.getString("title"), post.getString("text"), post.getString("channelName"))
-        }.onFailure { Log.w(CoreHost.TAG, "Native Android persistent capture notification not applied", it) }
+    /** The line Settings › Diagnostics shows for a notification that was not posted or removed (docs/release-notes/diagnostics-ledger.md). */
+    const val FAILED = "Native Android persistent capture notification not applied releaseCheck=v1.3.5/native-persistent-capture"
+
+    /** Core's `{ post }`: the title, text and channel's name to post, or null to remove it. A failure goes to [log] (core's log). */
+    fun apply(context: Context, reply: JSONObject, log: (String, JSONObject) -> Unit) = guarded(log) {
+        val post = reply.optJSONObject("post")
+        if (post == null) PersistentCaptureNotifier.cancel(context)
+        else PersistentCaptureNotifier.post(context, post.getString("title"), post.getString("text"), post.getString("channelName"))
     }
 
     /** RN's restore: only while on, and only with the notification permission (it is never asked for here). */
-    fun restore(context: Context, runtime: CoreHost) {
-        runCatching {
-            val reply = runtime.menuRead("persistentCaptureNotification", "{}")
-            if (!reply.isNull("post") && ReminderAlarms.permissionGranted(context)) apply(context, reply)
-        }.onFailure {
-            Log.w(CoreHost.TAG, "Native Android persistent capture notification not restored", it)
-            // Settings › Diagnostics too: no screen shows a notification that was not posted again.
-            runtime.logLine("Native Android persistent capture notification not restored releaseCheck=v1.3.5/native-persistent-capture",
-                JSONObject().put("error", it.javaClass.simpleName))
+    fun restore(context: Context, runtime: CoreHost) = restoreWith(read = { runtime.menuRead("persistentCaptureNotification", "{}") },
+        granted = { ReminderAlarms.permissionGranted(context) }, apply = { reply -> apply(context, reply, runtime::logLine) }, log = runtime::logLine)
+
+    /** [restore] apart from Android (JVM-tested: PersistentCaptureTest). */
+    internal fun restoreWith(read: () -> JSONObject, granted: () -> Boolean, apply: (JSONObject) -> Unit, log: (String, JSONObject) -> Unit) = guarded(log) {
+        val reply = read()
+        if (!reply.isNull("post") && granted()) apply(reply)
+    }
+
+    /** [block], its failure in logcat and in Settings › Diagnostics too: no screen shows a notification that was not posted. */
+    private fun guarded(log: (String, JSONObject) -> Unit, block: () -> Unit) {
+        runCatching(block).onFailure {
+            Log.w(CoreHost.TAG, "Native Android persistent capture notification not applied releaseCheck=v1.3.5/native-persistent-capture", it)
+            runCatching { log(FAILED, JSONObject().put("error", it.javaClass.simpleName)) }
         }
     }
 }
