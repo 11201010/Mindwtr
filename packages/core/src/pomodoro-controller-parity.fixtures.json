@@ -1,0 +1,1098 @@
+{
+ "provenance": "React Native's apps/mobile/lib/pomodoro-controller.ts and pomodoro-session.ts at dba1097c7 (before they moved into core), run through apps/mobile/lib/pomodoro-controller.parity-scenarios.ts with the clock pinned at 2026-10-05T12:00:00Z",
+ "scenarios": {
+  "focus with a linked task, finished, credited": [
+   {
+    "steps": [
+     {
+      "step": "hydrate",
+      "result": null,
+      "isHydrating": false,
+      "updatedAtMs": 0,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "durations 1/1",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "link t1",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600001,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t1",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "start",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600002,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 60,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t1",
+       "phaseEndsAt": "2026-10-05T12:01:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "tick 30 s",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600002,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 30,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t1",
+       "phaseEndsAt": "2026-10-05T12:01:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "phase ends",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600002,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "selectedTaskId": "t1",
+       "lastEvent": "focus-finished",
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {
+         "t1": 1
+        },
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "idle tick",
+      "result": false,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600002,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "selectedTaskId": "t1",
+       "lastEvent": "focus-finished",
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {
+         "t1": 1
+        },
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "dismiss",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201662000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "selectedTaskId": "t1",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {
+         "t1": 1
+        },
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     }
+    ],
+    "writes": [
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 0
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201600000
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 0
+      },
+      "selectedTaskId": "t1",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201600001
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 60,
+       "isRunning": true,
+       "completedFocusSessions": 0
+      },
+      "selectedTaskId": "t1",
+      "phaseEndsAt": "2026-10-05T12:01:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201600002
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 1
+      },
+      "selectedTaskId": "t1",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {
+        "t1": 1
+       },
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201600002
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 1
+      },
+      "selectedTaskId": "t1",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {
+        "t1": 1
+       },
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201662000
+     }
+    ],
+    "credits": [
+     {
+      "id": "t1",
+      "updates": {
+       "timeSpentMinutes": 6
+      }
+     }
+    ]
+   }
+  ],
+  "auto-start breaks and focus": [
+   {
+    "steps": [
+     {
+      "step": "hydrate",
+      "result": null,
+      "isHydrating": false,
+      "updatedAtMs": 0,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "durations 1/1",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "start",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600001,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 60,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "phaseEndsAt": "2026-10-05T12:01:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "focus ends",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600001,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 59,
+        "isRunning": true,
+        "completedFocusSessions": 1
+       },
+       "phaseEndsAt": "2026-10-05T12:02:00.000Z",
+       "lastEvent": "focus-finished",
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "break ends",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600001,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 59,
+        "isRunning": true,
+        "completedFocusSessions": 1
+       },
+       "phaseEndsAt": "2026-10-05T12:03:00.000Z",
+       "lastEvent": "break-finished",
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "pause",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201721000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 59,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "switch",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201721001,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     },
+     {
+      "step": "reset",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201721002,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 1,
+        "breakMinutes": 1
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 60,
+        "isRunning": false,
+        "completedFocusSessions": 1
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 1,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 1
+       }
+      }
+     }
+    ],
+    "writes": [
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 0
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201600000
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 60,
+       "isRunning": true,
+       "completedFocusSessions": 0
+      },
+      "phaseEndsAt": "2026-10-05T12:01:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201600001
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 59,
+       "isRunning": true,
+       "completedFocusSessions": 1
+      },
+      "phaseEndsAt": "2026-10-05T12:02:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201600001
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 59,
+       "isRunning": true,
+       "completedFocusSessions": 1
+      },
+      "phaseEndsAt": "2026-10-05T12:03:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201600001
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 59,
+       "isRunning": false,
+       "completedFocusSessions": 1
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201721000
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 1
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201721001
+     },
+     {
+      "durations": {
+       "focusMinutes": 1,
+       "breakMinutes": 1
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 60,
+       "isRunning": false,
+       "completedFocusSessions": 1
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 1,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 1
+      },
+      "updatedAtMs": 1791201721002
+     }
+    ],
+    "credits": []
+   }
+  ],
+  "a stored running session whose phase ended while closed": [
+   {
+    "steps": [
+     {
+      "step": "hydrate",
+      "result": null,
+      "isHydrating": false,
+      "updatedAtMs": 1791200100000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 300,
+        "isRunning": false,
+        "completedFocusSessions": 3
+       },
+       "selectedTaskId": "t1",
+       "lastEvent": "focus-finished",
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 3,
+        "completedFocusSessionsByTaskId": {
+         "t1": 3
+        },
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 3
+       }
+      }
+     },
+     {
+      "step": "start",
+      "result": true,
+      "isHydrating": false,
+      "updatedAtMs": 1791201600000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "break",
+        "remainingSeconds": 300,
+        "isRunning": true,
+        "completedFocusSessions": 3
+       },
+       "selectedTaskId": "t1",
+       "phaseEndsAt": "2026-10-05T12:05:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 3,
+        "completedFocusSessionsByTaskId": {
+         "t1": 3
+        },
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 3
+       }
+      }
+     }
+    ],
+    "writes": [
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 300,
+       "isRunning": false,
+       "completedFocusSessions": 3
+      },
+      "selectedTaskId": "t1",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 3,
+       "completedFocusSessionsByTaskId": {
+        "t1": 3
+       },
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 3
+      },
+      "updatedAtMs": 1791200100000
+     },
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "break",
+       "remainingSeconds": 300,
+       "isRunning": true,
+       "completedFocusSessions": 3
+      },
+      "selectedTaskId": "t1",
+      "phaseEndsAt": "2026-10-05T12:05:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 3,
+       "completedFocusSessionsByTaskId": {
+        "t1": 3
+       },
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 3
+      },
+      "updatedAtMs": 1791201600000
+     }
+    ],
+    "credits": [
+     {
+      "id": "t1",
+      "updates": {
+       "timeSpentMinutes": 30
+      }
+     }
+    ]
+   }
+  ],
+  "Watch commands": [
+   {
+    "steps": [
+     {
+      "step": "hydrate",
+      "result": null,
+      "isHydrating": false,
+      "updatedAtMs": 0,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "start with t2",
+      "result": "applied",
+      "isHydrating": false,
+      "updatedAtMs": 1791201601000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t2",
+       "phaseEndsAt": "2026-10-05T12:25:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "replay",
+      "result": "already-applied",
+      "isHydrating": false,
+      "updatedAtMs": 1791201601000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t2",
+       "phaseEndsAt": "2026-10-05T12:25:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "stale pause",
+      "result": "stale",
+      "isHydrating": false,
+      "updatedAtMs": 1791201601000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t2",
+       "phaseEndsAt": "2026-10-05T12:25:00.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "pause",
+      "result": "applied",
+      "isHydrating": false,
+      "updatedAtMs": 1791201610000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1490,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "selectedTaskId": "t2",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "reset, link off",
+      "result": "applied",
+      "isHydrating": false,
+      "updatedAtMs": 1791201611000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": false,
+        "completedFocusSessions": 0
+       },
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     },
+     {
+      "step": "done task skipped",
+      "result": "applied",
+      "isHydrating": false,
+      "updatedAtMs": 1791201612000,
+      "snapshot": {
+       "durations": {
+        "focusMinutes": 25,
+        "breakMinutes": 5
+       },
+       "timerState": {
+        "phase": "focus",
+        "remainingSeconds": 1500,
+        "isRunning": true,
+        "completedFocusSessions": 0
+       },
+       "phaseEndsAt": "2026-10-05T12:25:12.000Z",
+       "lastEvent": null,
+       "sessionHistory": {
+        "totalCompletedFocusSessions": 0,
+        "completedFocusSessionsByTaskId": {},
+        "todayDayKey": "2026-10-05",
+        "completedTodayFocusSessions": 0
+       }
+      }
+     }
+    ],
+    "writes": [
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 1500,
+       "isRunning": true,
+       "completedFocusSessions": 0
+      },
+      "selectedTaskId": "t2",
+      "phaseEndsAt": "2026-10-05T12:25:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201601000
+     },
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 1500,
+       "isRunning": true,
+       "completedFocusSessions": 0
+      },
+      "selectedTaskId": "t2",
+      "phaseEndsAt": "2026-10-05T12:25:00.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201601000
+     },
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 1490,
+       "isRunning": false,
+       "completedFocusSessions": 0
+      },
+      "selectedTaskId": "t2",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201610000
+     },
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 1500,
+       "isRunning": false,
+       "completedFocusSessions": 0
+      },
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201611000
+     },
+     {
+      "durations": {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      "timerState": {
+       "phase": "focus",
+       "remainingSeconds": 1500,
+       "isRunning": true,
+       "completedFocusSessions": 0
+      },
+      "phaseEndsAt": "2026-10-05T12:25:12.000Z",
+      "sessionHistory": {
+       "totalCompletedFocusSessions": 0,
+       "completedFocusSessionsByTaskId": {},
+       "todayDayKey": "2026-10-05",
+       "completedTodayFocusSessions": 0
+      },
+      "updatedAtMs": 1791201612000
+     }
+    ],
+    "credits": []
+   }
+  ]
+ }
+}
