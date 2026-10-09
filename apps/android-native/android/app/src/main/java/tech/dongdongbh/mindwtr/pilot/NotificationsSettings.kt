@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 import org.json.JSONObject
 import tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureNotifier
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
@@ -126,9 +127,12 @@ private val ALLOW_BLUE = Color(0xFF2563EB)
 
 /** RN's Android time picker for [row] (core's hour and minute), in the device's 12/24-hour format; [picked] gets 'HH:MM'. */
 private fun pickTime(context: Context, row: JSONObject, picked: (String) -> Unit) {
-    TimePickerDialog(context, { _, hour, minute -> picked("%02d:%02d".format(hour, minute)) }, row.getInt("hour"), row.getInt("minute"),
+    TimePickerDialog(context, { _, hour, minute -> picked(coreTime(hour, minute)) }, row.getInt("hour"), row.getInt("minute"),
         DateFormat.is24HourFormat(context)).show()
 }
+
+/** Core's 'HH:MM' in ASCII digits whatever the device's language (Arabic and Persian format digits of their own). */
+internal fun coreTime(hour: Int, minute: Int): String = String.format(Locale.ROOT, "%02d:%02d", hour, minute)
 
 /**
  * RN's persistent capture notification (PersistentCaptureNotifier.kt, RN's own Kotlin): posted or removed as core says, and posted
@@ -149,6 +153,11 @@ internal object PersistentCapture {
         runCatching {
             val reply = runtime.menuRead("persistentCaptureNotification", "{}")
             if (!reply.isNull("post") && ReminderAlarms.permissionGranted(context)) apply(context, reply)
-        }.onFailure { Log.w(CoreHost.TAG, "Native Android persistent capture notification not restored", it) }
+        }.onFailure {
+            Log.w(CoreHost.TAG, "Native Android persistent capture notification not restored", it)
+            // Settings › Diagnostics too: no screen shows a notification that was not posted again.
+            runtime.logLine("Native Android persistent capture notification not restored",
+                JSONObject().put("releaseCheck", "v1.3.5/native-persistent-capture").put("error", it.javaClass.simpleName))
+        }
     }
 }
