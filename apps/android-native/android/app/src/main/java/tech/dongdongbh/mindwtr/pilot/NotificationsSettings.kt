@@ -156,8 +156,8 @@ internal object PersistentCapture {
         }.onFailure {
             Log.w(CoreHost.TAG, "Native Android persistent capture notification not restored", it)
             // Settings › Diagnostics too: no screen shows a notification that was not posted again.
-            runtime.logLine("Native Android persistent capture notification not restored",
-                JSONObject().put("releaseCheck", "v1.3.5/native-persistent-capture").put("error", it.javaClass.simpleName))
+            runtime.logLine("Native Android persistent capture notification not restored releaseCheck=v1.3.5/native-persistent-capture",
+                JSONObject().put("error", it.javaClass.simpleName))
         }
     }
 }
