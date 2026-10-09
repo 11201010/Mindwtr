@@ -164,6 +164,8 @@ describe('mobile pomodoro controller', () => {
     await controller.ensureHydrated();
     controller.reconcile();
     controller.reconcile();
+    // The credit goes to its task once the session that owes it is stored.
+    await controller.flushPersistence();
 
     expect(updateTask).toHaveBeenCalledTimes(1);
     expect(updateTask).toHaveBeenCalledWith(task.id, {

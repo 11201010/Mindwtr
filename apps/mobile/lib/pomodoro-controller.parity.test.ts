@@ -4,8 +4,11 @@
  * controller is now core's (packages/core/src/pomodoro-controller.ts) with RN's storage, task store and log, and the
  * native host runs the same core controller: each scripted step's snapshot, every session write and every task credit
  * must match what RN's own controller did.
+ *
+ * After a recorded React Native fix, MINDWTR_DUMP_POMODORO_CONTROLLER=<file> writes this run's scenarios, to replace only
+ * the ones the fix changes (see the fixture's provenance.recaptured).
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 
@@ -28,5 +31,6 @@ const fixture = JSON.parse(readFileSync(resolve(__dirname, '../../../packages/co
 
 it('replays RN\'s frozen controller sessions on core\'s controller', async () => {
   const out = await runControllerScenarios((options) => createMobilePomodoroController(options as never) as never, (ms) => vi.setSystemTime(ms));
+  if (process.env.MINDWTR_DUMP_POMODORO_CONTROLLER) writeFileSync(process.env.MINDWTR_DUMP_POMODORO_CONTROLLER, JSON.stringify(out));
   expect(out).toEqual(fixture.scenarios);
 });
