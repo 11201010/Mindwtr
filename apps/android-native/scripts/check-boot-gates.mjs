@@ -3842,6 +3842,7 @@ export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
 export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
 // The Pomodoro timer's and the persistent capture switch's keys (pass R2); the stand-in bridge has no AsyncStorage, so no timer.
 export const NATIVE_POMODORO_ALARM_STORAGE_KEY = 'mindwtr:native:pomodoro-alarm:v1';
+export const NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY = 'mindwtr:native:rn-unfired-alarms:v1';
 export const POMODORO_ALARM_STORAGE_KEY = 'mindwtr:local:pomodoro-alarm:v1';
 export const PERSISTENT_CAPTURE_STORAGE_KEY = 'mindwtr:persistentCaptureNotification';
 export function createMobilePomodoroController() { throw new Error('no Pomodoro timer on the stand-in bridge'); }
