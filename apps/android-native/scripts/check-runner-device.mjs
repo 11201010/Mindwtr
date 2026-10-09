@@ -11,8 +11,7 @@
 // a tap on it opens the app; (4) a forced job run: a capture queued with its job held back (debug property), the app killed,
 // more items written through run-as (a capture, a text item, a check-off, a defer, an audio item, a Pomodoro command and a damaged
 // file), then JobScheduler's `cmd jobscheduler run -f` runs CoreWork in a new process: each item stored once, the check-off and
-// the defer applied once and recorded in RKStorage, the Pomodoro command applied by the timer and removed (a Pause, so the
-// development data's timer does not start: pass R2), audio left untouched, the damaged file removed; (5) a process
+// the defer applied once and recorded in RKStorage, audio and Pomodoro left untouched, the damaged file removed; (5) a process
 // death between an item's store write and its file delete (debug property `queue_stop`), for a capture and for a check-off: the
 // next boot's journal replay stores nothing twice and removes the file; (6a) a check-off stored and saved whose RKStorage record
 // write fails (debug property `fail_kv_set`): the drain is owed, the file is removed anyway, and CoreWork's retry replays the entry
@@ -236,7 +235,7 @@ const setAutomationCapture = async (on) => {
 };
 
 const originalAccelerometer = sh('settings get system accelerometer_rotation');
-/** This run's queue items that no drain takes (audio; a Pomodoro command left by a failed drain), removed at the end whatever happens. */
+/** This run's queue items that no drain takes (audio, Pomodoro), removed at the end whatever happens. */
 const leftovers = [];
 const restore = async () => {
     for (const name of PROPS) { try { setProp(name, ''); } catch { /* device gone */ } }
@@ -374,7 +373,7 @@ try {
         const [done] = stored(title(4));
         const [deferred] = stored(title(5));
         await killApp();
-        // Items an earlier run left (audio ones can stay) are not this run's.
+        // Items an earlier run left (only audio or Pomodoro ones can stay) are not this run's.
         const earlier = queued();
         setProp('core_work_delay_ms', '3600000');
         try {
@@ -392,7 +391,7 @@ try {
         enqueue(ids.complete, JSON.stringify({ kind: 'complete', id: ids.complete, taskId: done.id, completedAt: iso(now - 5000), source: 'android-widget' }));
         enqueue(ids.defer, JSON.stringify({ kind: 'defer', id: ids.defer, taskId: deferred.id, startDate: '2026-12-01', createdAt: iso(now - 4000), source: 'apple-watch' }));
         enqueue(ids.audio, JSON.stringify({ kind: 'audio', id: ids.audio, audioPath: 'file:///nonexistent.wav', source: 'apple-watch' }));
-        enqueue(ids.pomodoro, JSON.stringify({ kind: 'pomodoro', id: ids.pomodoro, action: 'pause', source: 'apple-watch' }));
+        enqueue(ids.pomodoro, JSON.stringify({ kind: 'pomodoro', id: ids.pomodoro, action: 'start', source: 'apple-watch' }));
         enqueue(`damaged-${run}`, '{"id":');
         check(queued().length === earlier.length + 8, '(4) eight files wait: the held capture and the seven written through run-as');
         const jobIds = () => [...new Set([...sh('dumpsys jobscheduler').matchAll(new RegExp(`JOB #u\\d+a\\d+/(\\d+): \\w+ ${PKG.replace(/\./g, '\\.')}/androidx\\.work\\.impl\\.background\\.systemjob\\.SystemJobService`, 'g'))]
@@ -427,8 +426,8 @@ try {
         check(deferredAfter.startTime === '2026-12-01' && deferredAfter.rev === deferred.rev + 1, `(4) the defer applied once (rev ${deferred.rev} → ${deferredAfter.rev})`);
         const record = lastApplied();
         check(record[done.id]?.id === ids.complete && record[deferred.id]?.id === ids.defer, '(4) RKStorage records both commands under core\'s key');
-        check(JSON.stringify(queued()) === JSON.stringify([...earlier, `${ids.audio}.json`].sort()),
-            '(4) the audio item waits untouched; the Pomodoro command was applied and every other file is gone, the damaged one too');
+        check(JSON.stringify(queued()) === JSON.stringify([...earlier, `${ids.audio}.json`, `${ids.pomodoro}.json`].sort()),
+            '(4) the audio item and the Pomodoro command wait untouched; every other file is gone, the damaged one too');
         runAs(`rm -f ${QUEUE}/${ids.audio}.json ${QUEUE}/${ids.pomodoro}.json`);
     }
 

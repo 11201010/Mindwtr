@@ -819,7 +819,7 @@ assert.doesNotMatch(code(model.slice(model.indexOf('fun add()'), model.indexOf('
 // Freshness is per list (Inbox, Focus, Projects, the open project, the area filter): a faster single-list read never
 // makes a full read after an area change drop its other lists, and an older read never overwrites a newer one.
 assert.match(model, /internal fun fresh\(mine: Long, part: Part\) = \(mine > commandAt && mine > \(shownAt\[part\] \?: 0L\)\)\.also \{ if \(it\) shownAt\[part\] = mine \}/);
-assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog, Pomodoro \}/);
+assert.match(model, /internal enum class Part \{ Focus, Projects, Project, ProjectDetails, Areas, Editor, TaskView, Search, Menu, More, MenuDialog \}/);
 {
     const show = code(model.slice(model.indexOf('private fun showLists('), model.indexOf('internal fun readSucceeded(')));
     for (const part of ['Focus', 'Projects', 'Project', 'Areas']) assert.match(show, new RegExp(`if \\(fresh\\(mine, Part\\.${part}\\)\\)`), `a full read applies ${part} on its own`);
@@ -1243,8 +1243,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         'completeReminderTask', 'snoozeReminder',
         // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
         'runProjectEdit',
-        // Settings › Notifications' controls and the Pomodoro card's actions (pass R2): each the state it asks for, under its receipt.
-        'setNotificationsSetting', 'runPomodoroAction'];
+        // Settings › Notifications' controls (pass R2): each the state it asks for, under its receipt.
+        'setNotificationsSetting'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1302,9 +1302,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
     assert.match(hostEntry, /createNativeHostContract\(\{ reminderPlatform: globalThis\.__mindwtrHostPlatform === 'ios' \? 'ios' : 'android', get syncSettings\(\) \{ return nativeSync\?\.settingsHost \?\? iosManualSync\?\.settingsHost; \}, \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*calendar: iosCalendar,\s*get attachments\(\) \{\s*const selected = iosProjectAttachmentDownload \? iosSelfHostedProjectAttachments\?\.contractHost \?\? iosManualSync\?\.attachmentsHost : attachmentsHost;\s*if \(!iosRelocatedProjectAvailability \|\| !selected\) return selected \?\? undefined;/);
     assert.match(hostEntry, /const result = await \(iosSelfHostedProjectAttachments \?\? iosManualSync\)\?\.prepareAttachmentAvailableDetailed\?\.\(attachment\);/);
-    assert.match(hostEntry, /\.\.\.\(pomodoroHost \? \{ pomodoro: pomodoroHost \} : \{\}\), \.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
-    // The Pomodoro session and the persistent capture switch on RN's AsyncStorage keys, on the host with RN's AsyncStorage (pass R2).
-    assert.match(hostEntry, /const pomodoroHost = nativeSync \? \(\(\) => \{/);
+    assert.match(hostEntry, /\.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
+    // The persistent capture switch on RN's AsyncStorage key, on the host with RN's AsyncStorage (pass R2).
     assert.match(hostEntry, /const persistentCapture = nativeSync \? \{\s+read: \(\) => \(JSON\.parse\(checked\(native\(\)\.kvGet\(PERSISTENT_CAPTURE_STORAGE_KEY\)\)\) as \[string \| null\]\)\[0\] === 'true',/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
@@ -1695,7 +1694,7 @@ assert.match(rowUi, /val label = blocked \?: t\(if \(task\.isFocusedToday\) "age
 // A stale Load more reads Focus again from offset 0; it is never shown as an error.
 assert.match(model, /if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure[\s\S]{0,200}?readFocus\(runtime, null, depth, state\)/);
 // Time-aware refresh: on resume and each minute, only while the Focus list is composed and resumed.
-assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*model\.pomodoro\.read\(\)\s*delay\(60_000\)/);
+assert.match(focusUi, /LaunchedEffect\(owner\) \{\s*owner\.repeatOnLifecycle\(Lifecycle\.State\.RESUMED\) \{\s*while \(true\) \{\s*model\.refreshFocus\(\)\s*delay\(60_000\)/);
 assert.equal(code([activity, model, focusUi].join('\n')).match(/(?<!fun )refreshFocus\(\)/g).length, 3, 'the lifecycle loop, and the boot\'s deferred read (first content, or the tab chosen while the boot ran)');
 assert.match(activity, /Screen\.Focus -> FocusList\(model, Modifier\.fillMaxSize\(\)\)/);
 // Commands from Focus and a project use the Inbox's command path and its exact-retry lock.
@@ -2120,8 +2119,7 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
 {
     // Settings' commands (pass 10) join the Menu tab's: MENU_KINDS is its own set plus SettingsModel.kt's SETTINGS_KINDS.
     // Pass 11's commands (Bulk organize's create, Mind Sweep's Add, a saved search's Delete) close the set.
-    // Pass R2's Pomodoro card actions close it now.
-    assert.match(menuModel, /"savedSearchDelete", "pomodoroAction"\) \+ SETTINGS_KINDS/);
+    assert.match(menuModel, /"savedSearchDelete"\) \+ SETTINGS_KINDS/);
     const kinds = [...[...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind),
         ...[...new RegExp('val SETTINGS_KINDS = setOf\\(([^)]*)\\)').exec(source('SettingsModel.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind)];
     const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \((input)?\) => contract\.\w+\(\2\),$/gm)].map(([, kind]) => kind);
@@ -2668,7 +2666,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(settingsModel), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, 'SettingsModel writes only through MenuModel.command or create');
     // Core's device writes are stored under RN's keys before the command counts as done; a new language reloads core's words, a theme its colors.
     assert.match(menuModel, /if \(action\.kind in SETTINGS_KINDS\) settings\.applied\(runtime, reply\)\s+shell\.acknowledged\(action\)/);
-    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+(?:\/\/[^\n]*\s+)*reply\.optJSONObject\("persistentCapture"\)\?\.let \{ PersistentCapture\.apply\(shell\.getApplication<Application>\(\), it\) \}\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
+    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+(?:\/\/[^\n]*\s+)*reply\.optJSONObject\("persistentCapture"\)\?\.let \{ PersistentCapture\.apply\(shell\.getApplication<Application>\(\), it, runtime::logLine\) \}\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
     // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
     // write's journal entry settles; the Settings screen only reloads the language and theme after.
     assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
@@ -3840,13 +3838,8 @@ export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-capture
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
 export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
 export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
-// The Pomodoro timer's and the persistent capture switch's keys (pass R2); the stand-in bridge has no AsyncStorage, so no timer.
-export const NATIVE_POMODORO_ALARM_STORAGE_KEY = 'mindwtr:native:pomodoro-alarm:v1';
-export const NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY = 'mindwtr:native:rn-unfired-alarms:v1';
-export const POMODORO_ALARM_STORAGE_KEY = 'mindwtr:local:pomodoro-alarm:v1';
+// The persistent capture switch's key (pass R2).
 export const PERSISTENT_CAPTURE_STORAGE_KEY = 'mindwtr:persistentCaptureNotification';
-export function createMobilePomodoroController() { throw new Error('no Pomodoro timer on the stand-in bridge'); }
-export function getPomodoroAutoStartOptions() { return { autoStartBreaks: false, autoStartFocus: false }; }
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }

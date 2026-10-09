@@ -173,22 +173,15 @@ internal class ReminderLedger(private val read: () -> Map<Int, String>, private 
  * the row's `alarmId`. Their order makes a process death safe anywhere: every alarm is cancelled (RN's, and this app's own from
  * before an RN build ran), then RN's delivered reminders lose
  * their buttons (Done, Snooze and Dismiss target RN's receiver, which is gone; a tap still opens the app), then RN's alarm map goes (core
- * plans every alarm afresh; RN's Pomodoro record stays for core's Pomodoro plan, beside the ids of RN's alarms that never fired), then
- * the table. Until the table is gone each start runs it again, and cancelling twice is harmless; no plan runs before it finished.
+ * plans every alarm afresh; RN's Pomodoro record stays for the Pomodoro pass), then the table. Until the table is gone each
+ * start runs it again, and cancelling twice is harmless; no plan runs before it finished.
  */
 internal object RnAlarmCleanup {
     /**
      * RN's RKStorage keys the cleanup removes: its alarm map only (core plans every alarm afresh). RN's Pomodoro record stays as RN
-     * left it (core's Pomodoro plan removes it); its alarm is cancelled with the others.
+     * left it (the Pomodoro pass, R2, owns it); its alarm is cancelled with the others.
      */
     val FORGOTTEN_KEYS = listOf(ReminderPlan.MAP_KEY)
-    /** RN's Pomodoro record (core's POMODORO_ALARM_STORAGE_KEY). */
-    const val RN_POMODORO_KEY = "mindwtr:local:pomodoro-alarm:v1"
-    /**
-     * The ids of RN's alarms that never fired, kept for core's Pomodoro plan before the table goes (core's
-     * NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY): RN's Pomodoro alert whose time came after the update never showed, and is owed.
-     */
-    const val UNFIRED_KEY = "mindwtr:native:rn-unfired-alarms:v1"
 
     /** [rows]: each RN alarm's request code, null when RN left no table. The number cancelled. */
     /** [rows]: each RN alarm row's candidate request codes, null when RN left no table. The number of RN alarms. */
@@ -341,12 +334,8 @@ internal class ReminderAlarms(
     override fun cleanupRn(): Int = RnAlarmCleanup.run(rows = ::rnAlarmIds, cancel = ::cancelRn, cancelNative = ::cancelEveryNative,
         stripButtons = ::stripRnButtons,
         // Only maps that exist: an RN user who never had reminders keeps RKStorage untouched.
-        forgetMaps = {
-            rememberUnfiredRn()
-            keyValue.multiGet(RnAlarmCleanup.FORGOTTEN_KEYS).filterValues { it != null }.keys.toList()
-                .takeIf { it.isNotEmpty() }?.let { keys -> beforeWrite(); keyValue.multiRemove(keys) }
-            Unit
-        },
+        forgetMaps = { keyValue.multiGet(RnAlarmCleanup.FORGOTTEN_KEYS).filterValues { it != null }.keys.toList()
+            .takeIf { it.isNotEmpty() }?.let { keys -> beforeWrite(); keyValue.multiRemove(keys) }; Unit },
         deleteTable = { check(context.deleteDatabase(RN_DATABASE) || !context.getDatabasePath(RN_DATABASE).exists()) { "Cannot delete $RN_DATABASE" } })
 
     override fun store(entries: Map<String, String>) {
@@ -379,28 +368,6 @@ internal class ReminderAlarms(
         for (shown in notifications.activeNotifications) {
             if (NotificationCompat.getChannelId(shown.notification) == CoreNotifications.REMINDER_CHANNEL) notifications.cancel(shown.tag, shown.id)
         }
-    }
-
-    /**
-     * While RN's Pomodoro record is stored: the ids (the table's `id`, RN's alarm id) of RN's alarms still active, that is never
-     * fired (RN's library marks a fired one-shot inactive), stored for core's Pomodoro plan. Before the table goes, so a process
-     * death after it keeps the list; written again by a cleanup that runs again.
-     */
-    private fun rememberUnfiredRn() {
-        if (keyValue.multiGet(listOf(RnAlarmCleanup.RN_POMODORO_KEY))[RnAlarmCleanup.RN_POMODORO_KEY] == null) return
-        val file = context.getDatabasePath(RN_DATABASE)
-        if (!file.exists()) return
-        val ids = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { database ->
-            val cursor = try {
-                database.rawQuery("SELECT id FROM alarmtbl WHERE active = 1", null)
-            } catch (failure: Exception) {
-                if (RnAlarmCleanup.isMissingTable(failure)) return
-                throw failure
-            }
-            cursor.use { rows -> buildList { while (rows.moveToNext()) add(rows.getInt(0)) } }
-        }
-        beforeWrite()
-        keyValue.multiSet(listOf(RnAlarmCleanup.UNFIRED_KEY to JSONArray(ids).toString()))
     }
 
     /** Each RN alarm's request code (its row's `alarmId`); null when RN left no alarm database. */

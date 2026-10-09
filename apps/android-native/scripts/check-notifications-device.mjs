@@ -1,35 +1,23 @@
-// Settings › Notifications, the persistent capture notification and the Pomodoro card's completion alarm (pass R2) on the
-// isolated native Android development app.
+// Settings › Notifications and the persistent capture notification (pass R2a) on the isolated native Android development app.
 //
 //   node apps/android-native/scripts/check-notifications-device.mjs <adb-serial> [apk]
 //
 // Installs the debug APK with `install -r` (existing development data stays). Through the app's own screens only, it first sets a
-// known start (task reminders, the weekly review, the morning digest and the capture switch off; Settings › GTD: the Pomodoro feature
-// on, its focus and break minutes 1 and 1, its completion alert on, no auto-start, no task link), then checks:
+// known start (task reminders, the weekly review, the morning digest and the capture switch off), then checks:
 // (1) Settings › Notifications shows core's rows; Task reminders, Weekly review, its day (Wednesday, from RN's day picker), the
 //     morning digest and its time (07:45, from Android's time picker) are each stored in the database through the app (no
 //     journal entry left), and after a process death and a new start the screen shows each stored value again;
 // (2) Quick capture in notification bar: on posts RN's notification (id 41120, channel `mindwtr-persistent-capture`) and stores
 //     RN's AsyncStorage key; after a process death the start posts it again; a tap on it opens RN's quick capture dialog; off
-//     removes it and the key;
-// (3) the Pomodoro card on Focus: the 1/1 preset sets 01:00; Start makes one completion alarm (core's native record names its
-//     time); with the process killed, the alarm fires once at that time: one "Pomodoro Timer" notification with core's words,
-//     and no second one; the next start shows RN's finished-phase line and keeps no Pomodoro alarm; a tap on the notification
-//     opens the app;
-// (4) a Start journaled and the process killed before core saw it (debug `journal_stop=before:pomodoroAction`): the next start
-//     replays it on the stored session (its 1/1 minutes kept, not a default session's 25/5), the card shows it running, one
-//     alarm is armed and the journal is empty; Pause cancels the alarm;
-// (5) with Auto-start breaks on and the app open, the focus phase ends: the break starts and the focus alert still shows once,
-//     and the break's alarm is armed under the other Pomodoro id; Pause cancels it.
-// Every switch, the day, the time and the Pomodoro settings it changed are put back through the app at the end, on failure too
-// (custom minutes never set before stay at the fields' 25 and 5). It reads the app's database and RKStorage from copies only. It grants the development app the notification permission (kept). It never launches over another
+//     removes it and the key.
+// Every switch, the day and the time it changed are put back through the app at the end, on failure too. It reads the app's database and RKStorage from copies only. It grants the development app the notification permission (kept). It never launches over another
 // app and leaves the device on its home screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { check, connect, evidenced, fail, inEditor, Stopped, switchOn, tab, tabSelected, tagged, withDescription } from './device.mjs';
+import { check, connect, evidenced, fail, inEditor, Stopped, switchOn, tab, tagged, withDescription } from './device.mjs';
 
 const [serial, apkArg] = process.argv.slice(2);
 if (!serial) {
@@ -47,14 +35,11 @@ if (apkPackage !== PKG) {
     process.exit(2);
 }
 const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
-const FIRE = 'tech.dongdongbh.mindwtr.reminder.FIRE';
 const UI_FILE = '/data/local/tmp/mindwtr-native-dev-notifications-ui.xml';
 const DB = 'mindwtr-native-dev.db';
 const CAPTURE_ID = 41120;
 const CAPTURE_CHANNEL = 'mindwtr-persistent-capture';
-const POMODORO_ID = 2 ** 31 - 1;
-const KEYS = { capture: 'mindwtr:persistentCaptureNotification', alarm: 'mindwtr:native:pomodoro-alarm:v1', session: '@mindwtr_pomodoro_state' };
-const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
+const KEYS = { capture: 'mindwtr:persistentCaptureNotification' };
 const work = resolve(app, 'android/build/notifications-check');
 const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
 
@@ -99,11 +84,6 @@ const notifications = () => sh('dumpsys notification --noredact').split(/\n(?=\s
         title: /android\.title=\w+ \((.*)\)/.exec(block)?.[1] ?? '',
         text: /android\.text=\w+ \((.*)\)/.exec(block)?.[1] ?? '',
     }));
-const pomodoroAlarms = () => sh('dumpsys alarm').split(/\n(?=\s*(?:RTC_WAKEUP|RTC|ELAPSED_WAKEUP|ELAPSED) #\d+: Alarm\{)/)
-    .filter((block) => block.includes(`*walarm*:${FIRE}`) && block.includes(PKG))
-    .map((block) => ({ at: Number(/origWhen[= ](\d+)/.exec(block)?.[1] ?? NaN), block }))
-    // Pending RTC alarms only: a block that ends dumpsys's pending list can carry the delivery history's lines (as in the R1 check).
-    .filter((alarm) => alarm.at > 1e12);
 const closeShade = () => sh('cmd statusbar collapse');
 const tapInShade = async (text) => {
     sh('cmd statusbar expand-notifications');
@@ -207,69 +187,10 @@ const setDay = async (day) => {
     await tapExpecting(withDescription(nodes, day) ?? fail(`no ${day}`), (current) => !tagged(current, 'settings-picker'), 'the picker to close');
 };
 
-// ---- Settings › GTD › Pomodoro, through the app ----
-const GTD_ROW = `${en['settings.gtd']}. ${en['settings.menuDesc.gtd']}`;
-const POMODORO = { feature: en['settings.featurePomodoro'], link: en['settings.pomodoroSettings'], focus: en['settings.pomodoroFocusMinutes'],
-    break: en['settings.pomodoroBreakMinutes'], linkTask: en['settings.pomodoroLinkTask'], autoBreaks: en['settings.pomodoroAutoStartBreaks'],
-    autoFocus: en['settings.pomodoroAutoStartFocus'], alert: en['settings.pomodoroCompletionAlert'] };
-/** The text field labelled [label]: the EditText around its labelled node (Compose puts the label on a child of the field). */
-const field = (nodes, label) => {
-    const labelled = withDescription(nodes, label);
-    if (!labelled) return undefined;
-    const [x1, y1, x2, y2] = labelled.bounds.match(/\d+/g).map(Number);
-    const [cx, cy] = [(x1 + x2) / 2, (y1 + y2) / 2];
-    return nodes.find((node) => {
-        if (node.class !== 'android.widget.EditText') return false;
-        const [l, t, r, b] = node.bounds.match(/\d+/g).map(Number);
-        return l <= cx && cx <= r && t <= cy && cy <= b;
-    });
-};
-/** Settings › GTD from the tabs, the Pomodoro feature set to [feature], and (while on) its settings screen. */
-const openGtd = async (feature) => {
-    let nodes = await toTabs();
-    nodes = await tapExpecting(tab(nodes, en['tab.menu']), (current) => Boolean(tagged(current, 'more-sheet')), 'the More sheet');
-    nodes = await device.settle(nodes);
-    nodes = await tapExpecting(withDescription(nodes, en['nav.settings']) ?? fail('no Settings tile'), (current) => Boolean(tagged(current, 'settings-main')), 'Settings');
-    nodes = await tapExpecting(withDescription(nodes, GTD_ROW) ?? fail('no GTD row'), (current) => Boolean(withDescription(current, POMODORO.feature)), 'Settings › GTD');
-    if (switchOn(nodes, POMODORO.feature) !== feature) {
-        nodes = await tapExpecting(withDescription(nodes, POMODORO.feature), (current) => switchOn(current, POMODORO.feature) === feature, 'the Pomodoro feature');
-        await waitUntil('the Pomodoro feature stored', async () => (settings().features?.pomodoro === true) === feature, 20_000);
-    }
-    if (!feature) return nodes;
-    nodes = await waitFor('the Pomodoro settings link', (current) => Boolean(withDescription(current, POMODORO.link)), 15_000);
-    return tapExpecting(withDescription(nodes, POMODORO.link), (current) => Boolean(field(current, POMODORO.focus)), 'Settings › GTD › Pomodoro');
-};
-/** GTD › Pomodoro's minute fields typed ([focus], [brk]) and committed with the keyboard's Done (RN commits both on blur). */
-const setMinutes = async (focus, brk) => {
-    let nodes = await screen();
-    if (field(nodes, POMODORO.focus)?.text === focus && field(nodes, POMODORO.break)?.text === brk) return;
-    for (const [label, text] of [[POMODORO.focus, focus], [POMODORO.break, brk]]) {
-        await tap(field(nodes, label) ?? fail(`no ${label} field`));
-        sh('input keyevent KEYCODE_MOVE_END');
-        for (let i = 0; i < 4; i += 1) sh('input keyevent KEYCODE_DEL');
-        sh(`input text ${text}`);
-        nodes = await screen();
-    }
-    sh('input keyevent KEYCODE_ENTER');
-    await waitUntil(`the minutes ${focus}/${brk} stored`, async () => {
-        const durations = settings().gtd?.pomodoro?.customDurations;
-        return String(durations?.focusMinutes) === focus && String(durations?.breakMinutes) === brk;
-    }, 20_000);
-};
-/** A GTD › Pomodoro switch set to [on]. */
-const setPomodoroSwitch = async (label, on) => {
-    let nodes = await screen();
-    for (let step = 0; step < 4 && !visible(withDescription(nodes, label)); step += 1) nodes = await device.swipe(nodes, 'down');
-    if (switchOn(nodes, label) === on) return;
-    await tapExpecting(withDescription(nodes, label), (current) => switchOn(current, label) === on, label);
-    await waitUntil('the journal to empty', async () => journal().length === 0, 20_000);
-};
-
 /** The start as found (each control's shown state), to put back at the end. */
 let found = null;
 const restore = async () => {
     try { closeShade(); } catch { /* device gone */ }
-    try { setProp('journal_stop', ''); } catch { /* device gone */ }
     try {
         if (found) {
             if (!front().includes(`${PKG}/`)) await launch();
@@ -283,10 +204,6 @@ const restore = async () => {
             await setTime(en['settings.dailyDigestMorningTime'], found.morningTime);
             await setSwitch(en['settings.dailyDigestMorning'], found.morning, () => true);
             await setSwitch(en['settings.persistentCaptureLabel'], found.capture, () => true);
-            await openGtd(true);
-            if (found.focus !== null) await setMinutes(found.focus, found.brk);
-            for (const [label, on] of found.switches) await setPomodoroSwitch(label, on);
-            if (!found.feature) await openGtd(false);
             await toTabs();
         }
     } catch (error) { console.error(`RESTORE FAILED: the development settings are not as they were (${error.message}); put them back by hand`); process.exitCode = 1; }
@@ -313,18 +230,7 @@ try {
         day: await at(en['settings.weeklyReviewDay']), weeklyTime: await at(en['settings.weeklyReviewTime']), morning: await shown(en['settings.dailyDigestMorning']),
         morningTime: await at(en['settings.dailyDigestMorningTime']), capture: await shown(en['settings.persistentCaptureLabel']) };
     // Kept before anything changes, so a failure from here on still puts back what it changed.
-    found = { ...start, feature: settings().features?.pomodoro === true, focus: null, brk: null, switches: [] };
-    nodes = await openGtd(true);
-    found.focus = field(nodes, POMODORO.focus)?.text ?? '25';
-    found.brk = field(nodes, POMODORO.break)?.text ?? '5';
-    for (const label of [POMODORO.linkTask, POMODORO.autoBreaks, POMODORO.autoFocus, POMODORO.alert]) {
-        let current = await screen();
-        for (let step = 0; step < 4 && !visible(withDescription(current, label)); step += 1) current = await device.swipe(current, 'down');
-        found.switches.push([label, switchOn(current, label)]);
-    }
-    await setMinutes('1', '1');
-    for (const [label, on] of [[POMODORO.linkTask, false], [POMODORO.autoBreaks, false], [POMODORO.autoFocus, false], [POMODORO.alert, true]]) await setPomodoroSwitch(label, on);
-    await toTabs();
+    found = start;
     nodes = await openNotifications();
     await setSwitch(en['settings.notificationsEnable'], false, (stored) => stored.notificationsEnabled === false);
     await setSwitch(en['settings.weeklyReview'], true, (stored) => stored.weeklyReviewEnabled === true);
@@ -389,90 +295,6 @@ try {
     await flip(en['settings.persistentCaptureLabel'], () => kv([KEYS.capture])[KEYS.capture] === null, '(2) off removes RN\'s key');
     await waitUntil('the capture notification to go', () => capture().length === 0, 15_000);
     check(true, '(2) off removes the notification');
-
-    // (3) The Pomodoro card and its completion alarm.
-    nodes = await toTabs();
-    if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
-    nodes = await waitFor('the Pomodoro card', (current) => Boolean(tagged(current, 'pomodoro-card')) && !current.some((node) => node.text === en['common.loading']), 30_000);
-    nodes = await tapExpecting(tagged(nodes, 'pomodoro-preset-custom') ?? fail('no 1/1 preset'),
-        (current) => current.some((node) => node.text === '01:00'), 'the 1/1 preset');
-    check(true, '(3) the 1/1 preset sets the clock to 01:00');
-    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => Boolean(withDescription(current, en['common.pause'])), 'Start');
-    const entry = await waitUntil('core\'s Pomodoro alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; return raw && JSON.parse(raw); }, 15_000);
-    await waitUntil('one Pomodoro alarm', () => pomodoroAlarms().filter((alarm) => alarm.at === entry.fireAtMs).length === 1, 15_000);
-    check(entry.id === POMODORO_ID && entry.phase === 'focus-complete', `(3) Start makes one completion alarm at ${new Date(entry.fireAtMs).toISOString()} under the Pomodoro id`);
-    await killApp();
-    const pomodoro = () => notifications().filter((item) => item.title === en['pomodoro.mobileTitle']);
-    await waitUntil('the completion alert', () => pomodoro().length === 1, Math.max(0, entry.fireAtMs - Date.now()) + 60_000);
-    check(pomodoro()[0].text === en['pomodoro.focusComplete'] && Date.now() >= entry.fireAtMs - 2000,
-        '(3) with the app closed, the alarm fires once at the phase end with core\'s words');
-    await sleep(20_000);
-    // Reminder alarms of the development data share the receiver: only one at the Pomodoro's time counts.
-    const pomodoroLeft = () => pomodoroAlarms().filter((alarm) => alarm.at === entry.fireAtMs).length;
-    check(pomodoro().length === 1 && pomodoroLeft() === 0, `(3) no second alert, and no alarm left (alerts ${pomodoro().length})`);
-    await launch();
-    nodes = await toTabs();
-    if (!tabSelected(nodes, en['tab.next'])) await tap(tab(nodes, en['tab.next']));
-    await waitFor('the finished-phase line', (current) => current.some((node) => node.text === en['pomodoro.focusComplete']), 30_000);
-    await sleep(3000);
-    check(pomodoroLeft() === 0 && pomodoro().length === 1, '(3) the next start shows RN\'s finished-phase line, makes no alarm, and keeps the alert');
-    sh('input keyevent KEYCODE_HOME');
-    await sleep(1000);
-    await tapInShade(en['pomodoro.mobileTitle']);
-    await waitUntil('the app in front', () => front().includes(`${PKG}/`), 20_000);
-    check(pomodoro().length === 0, '(3) a tap on the alert opens the app, and the alert goes');
-    await toTabs();
-
-    // (4) A journaled Start replayed by the next start, before the Pomodoro loads.
-    const toCard = async () => {
-        const current = await toTabs();
-        if (!tabSelected(current, en['tab.next'])) await tap(tab(current, en['tab.next']));
-        return waitFor('the Pomodoro card', (shown) => Boolean(tagged(shown, 'pomodoro-card')) && !shown.some((node) => node.text === en['common.loading']), 30_000);
-    };
-    nodes = await toCard();
-    nodes = await tapExpecting(tagged(nodes, 'pomodoro-preset-custom') ?? fail('no 1/1 preset'), (current) => current.some((node) => node.text === '01:00'), 'the 1/1 preset');
-    setProp('journal_stop', 'before:pomodoroAction');
-    await tap(tagged(nodes, 'pomodoro-primary'));
-    await waitUntil('the process to stop at the journaled Start', () => !pid(), 20_000);
-    setProp('journal_stop', '');
-    check(journal().length === 1, '(4) the Start is in the journal and core never saw it');
-    await launch();
-    nodes = await toCard();
-    await waitFor('the replayed Start', (current) => Boolean(withDescription(current, en['common.pause'])), 30_000);
-    const replayed = JSON.parse(kv([KEYS.session])[KEYS.session] ?? '{}');
-    check(replayed.timerState?.isRunning === true && replayed.durations?.focusMinutes === 1 && replayed.durations?.breakMinutes === 1,
-        '(4) the replay ran on the stored session: running, its 1/1 minutes kept');
-    const replayEntry = await waitUntil('core\'s Pomodoro alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; return raw && JSON.parse(raw); }, 15_000);
-    await waitUntil('the journal to empty', () => journal().length === 0, 20_000);
-    check(pomodoroAlarms().filter((alarm) => alarm.at === replayEntry.fireAtMs).length === 1, '(4) one alarm is armed and the journal is empty');
-    nodes = await screen();
-    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => Boolean(withDescription(current, en['common.start'])), 'Pause');
-    await waitUntil('the alarm to go', () => pomodoroAlarms().filter((alarm) => alarm.at === replayEntry.fireAtMs).length === 0, 15_000);
-    check(true, '(4) Pause cancels it');
-
-    // (5) Auto-start breaks: the focus alert still shows when the break starts at once.
-    await openGtd(true);
-    await setPomodoroSwitch(POMODORO.autoBreaks, true);
-    nodes = await toCard();
-    if (withDescription(nodes, en['pomodoro.switchToFocus'])) {
-        nodes = await tapExpecting(withDescription(nodes, en['pomodoro.switchToFocus']), (current) => Boolean(withDescription(current, en['pomodoro.switchToBreak'])), 'Switch to Focus');
-    }
-    nodes = await tapExpecting(tagged(nodes, 'pomodoro-preset-custom') ?? fail('no 1/1 preset'), (current) => current.some((node) => node.text === '01:00'), 'the 1/1 preset');
-    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => Boolean(withDescription(current, en['common.pause'])), 'Start');
-    const focusEntry = await waitUntil('the focus alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; const entry = raw && JSON.parse(raw); return entry?.phase === 'focus-complete' && entry; }, 15_000);
-    // The app stays open on Focus, so its one-second reconcile starts the break right at the phase end.
-    const breakEntry = await waitUntil('the break alarm record', () => { const raw = kv([KEYS.alarm])[KEYS.alarm]; const entry = raw && JSON.parse(raw); return entry?.phase === 'break-complete' && entry; },
-        Math.max(0, focusEntry.fireAtMs - Date.now()) + 30_000, 2000);
-    await waitUntil('the focus alert', () => pomodoro().some((item) => item.text === en['pomodoro.focusComplete']), 30_000);
-    await sleep(3000);
-    check(pomodoro().filter((item) => item.text === en['pomodoro.focusComplete']).length === 1, '(5) the break starts and the focus alert still shows, once');
-    check(breakEntry.id !== focusEntry.id && pomodoroAlarms().filter((alarm) => alarm.at === breakEntry.fireAtMs).length === 1,
-        `(5) the break's alarm is armed under the other Pomodoro id (${breakEntry.id}, the focus alarm's ${focusEntry.id})`);
-    nodes = await toCard();
-    await tapExpecting(tagged(nodes, 'pomodoro-primary'), (current) => Boolean(withDescription(current, en['common.start'])), 'Pause');
-    await waitUntil('the break alarm to go', () => pomodoroAlarms().filter((alarm) => alarm.at === breakEntry.fireAtMs).length === 0, 15_000);
-    check(true, '(5) Pause cancels the break\'s alarm');
-    closeShade();
 
     console.log('Notifications device check passed');
 } catch (error) {

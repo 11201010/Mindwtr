@@ -353,18 +353,6 @@ export { NATIVE_AI_UNJOURNALED_COMMANDS, type NativeAIHost } from './native-host
 import { createTaskViewMethods, isNativeJsonWithinBytes, readChecklist, sameChecklist, toChecklist } from './native-host-contract-task-view';
 import { createSavedSearchMethods } from './native-host-contract-saved-search';
 import { createCaptureIngestMethods } from './native-host-contract-capture-ingest';
-import { createPomodoroMethods, type NativePomodoroHost } from './native-host-contract-pomodoro';
-export {
-    NATIVE_POMODORO_ALARM_ID,
-    NATIVE_POMODORO_ALARM_IDS,
-    NATIVE_POMODORO_ALARM_STORAGE_KEY,
-    NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY,
-    type NativePomodoroAlarmPlan,
-    type NativePomodoroController,
-    type NativePomodoroHost,
-    type NativePomodoroPanel,
-} from './native-host-contract-pomodoro';
-import { getPomodoroPickerTasks } from './pomodoro-panel-model';
 import { createReminderMethods } from './native-host-contract-reminders';
 export { NATIVE_REMINDER_STATE_STORAGE_KEY } from './native-host-contract-reminders';
 import { createAttachmentMethods, readNativeAttachments, type NativeAttachmentsHost } from './native-host-contract-attachments';
@@ -979,8 +967,6 @@ export function createNativeHostContract(options: {
     replayTokens?: NativeReplayTokens;
     /** Android's persistent capture switch in RN's device store (Settings › Notifications). */
     persistentCapture?: NativePersistentCaptureHost;
-    /** The Pomodoro timer: core's controller on RN's device store (native-host-contract-pomodoro.ts). */
-    pomodoro?: NativePomodoroHost;
 } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
     startNativeRequestSession();
@@ -1616,20 +1602,6 @@ export function createNativeHostContract(options: {
         },
     });
 
-    // Built before the contract object: the queue drain applies a queued Pomodoro command through it.
-    const pomodoroMethods = createPomodoroMethods({
-        readiness,
-        save,
-        t: () => translate,
-        requestIdPattern: CAPTURE_ID_PATTERN,
-        host: () => options.pomodoro ?? null,
-        pickerTasks: (controls) => {
-            const now = new Date();
-            const read = readFocusControls(controls === undefined ? {} : { controls }, now);
-            return read ? getPomodoroPickerTasks(focusModel(read.controls, now).model.lists) : null;
-        },
-    });
-
     // Built before the contract object: Process Inbox's Clarify reads the current step's draft.
     const inboxProcessingMethods = createInboxProcessingMethods({
         readiness, save, t: () => translate, formatDate: () => createDateFormatter(dateFormatting()),
@@ -1836,10 +1808,7 @@ export function createNativeHostContract(options: {
         // The Mind Sweep screen: native-host-contract-mind-sweep.ts.
         ...createMindSweepMethods({ readiness, save, t: () => translate, revision: (now) => `${revision()}:${displayRevision(now)}` }),
         // The pending-captures queue and context automation: native-host-contract-capture-ingest.ts.
-        ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN,
-            pomodoroCommand: () => pomodoroMethods.pomodoroQueueCommand() }),
-        // The Focus screen's Pomodoro timer and its completion alarm: native-host-contract-pomodoro.ts.
-        ...pomodoroMethods,
+        ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN }),
         // Reminder alarms and notification taps: native-host-contract-reminders.ts.
         ...createReminderMethods({ readiness, save, language: () => language, requestIdPattern: CAPTURE_ID_PATTERN,
             reminderPlatform: options.reminderPlatform ?? 'android' }),

@@ -36,7 +36,7 @@ private const val WINDOW = 100
 /** The Menu tab's commands (host-entry.ts MENU_COMMANDS); core can refuse each before writing. */
 val MENU_KINDS = setOf("activateProject", "somedayMove", "somedayUndo", "somedayTask", "somedaySection", "taskListSort", "archiveAction",
     "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction", "boardCreate",
-    "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd", "savedSearchDelete", "pomodoroAction") + SETTINGS_KINDS
+    "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd", "savedSearchDelete") + SETTINGS_KINDS
 /**
  * The creates whose exact request waits on disk until core answers: Someday's, the Weekly Review's project Add task, the
  * Calendar composer's Save, the Board's Duplicate, a saved Focus filter, Settings › Manage's editor Save (a new area or person),
@@ -1301,8 +1301,8 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         "bulkCreate", "mindSweepAdd", "savedSearchDelete" -> JSONObject(action.title).put("requestId", action.id)
         // Settings: core's whole input and the request UUID; Manage's Someday section writes are target-state and take none.
         "generalSetting", "gtdSetting", "manageEditor", "manageDelete", "dataSetting", "syncPreference", "setAISetting" -> JSONObject(action.title).put("requestId", action.id)
-        // Settings › Notifications' edit, and the Pomodoro card's action ({ action }), as core gave them.
-        "notificationsSetting", "pomodoroAction" -> JSONObject(action.title).put("requestId", action.id)
+        // Settings › Notifications' edit, as core gave it.
+        "notificationsSetting" -> JSONObject(action.title).put("requestId", action.id)
         "somedayRename", "somedayReorder", "somedayDelete" -> JSONObject(action.title)
         else -> JSONObject().put("requestId", action.id).put("action", JSONObject(action.title))
     }.toString()
@@ -1361,7 +1361,6 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
     /** Core's answer on screen: a refusal's words, the dialog closing, and RN's toasts with core's Undo. */
     private fun finish(action: FailedAction, reply: JSONObject) {
         when (action.kind) {
-            "pomodoroAction" -> shell.pomodoro.applied(reply)
             "somedayMove" -> {
                 val refused = reply.optJSONObject("refused")
                 if (refused != null) { shell.showToast(refused.text("title"), refused.getString("message"), "error"); return }

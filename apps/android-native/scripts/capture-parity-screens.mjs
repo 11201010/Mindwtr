@@ -10,8 +10,8 @@
 // database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
 // capture popup (empty, with text and core's preview, and with the contexts picker open),
-// (PARITY_ONLY=r2 shoots only pass R2's screens, with the Pomodoro feature and Link task on in the fixture: Focus with the
-// Pomodoro card, its task picker, Settings › Notifications from its top and its end, and its day picker.)
+// (PARITY_ONLY=r2 shoots only pass R2's screens, with the weekly review on in the fixture: Settings › Notifications from its
+// top and its end, and its day picker.)
 // RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
@@ -151,9 +151,8 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
     await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
         gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
-    // Pass R2's shots: the Pomodoro card on Focus, its Link task row, and the weekly review on (its day picker opens).
-    if (process.env.FIXTURE_POMODORO === '1') await store().updateSettings({ features: { ...(store().settings.features ?? {}), pomodoro: true },
-        gtd: { ...(store().settings.gtd ?? {}), pomodoro: { linkTask: true } }, weeklyReviewEnabled: true });
+    // Pass R2's shots: the weekly review on (its day picker opens).
+    if (process.env.FIXTURE_R2 === '1') await store().updateSettings({ weeklyReviewEnabled: true });
     await flushPendingSave();
     if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -161,7 +160,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     console.log(store()._allTasks.filter((task) => !task.deletedAt).length);
     process.exit(0);
 `], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED,
-    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length), FIXTURE_POMODORO: R2_ONLY ? '1' : '' } }).trim().split('\n').pop();
+    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length), FIXTURE_R2: R2_ONLY ? '1' : '' } }).trim().split('\n').pop();
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
@@ -558,21 +557,13 @@ const shootProjectDetails = async (prefix, suffix, rn) => {
     for (let step = 0; step < 4 && !tab(await screen(), 'Inbox'); step += 1) await back();
     if (!rn) { const nodes = await screen(); if (button(nodes, 'Back')) await back(); }
 };
-/** Pass R2: Focus with the Pomodoro card and its task picker, Settings › Notifications (top, end) and its day picker. */
+/** Pass R2: Settings › Notifications (top, end) and its day picker. */
 const shootR2 = async (prefix, suffix, rn) => {
     if (rn) openLink('focus');
     else {
         const tabs = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Focus')), 60_000);
         if (!tabSelected(tabs, 'Focus')) await tap(tab(tabs, 'Focus'));
     }
-    const card = (current) => hasText(current, en['pomodoro.mobileTitle']) && hasText(current, '25:00');
-    await shoot(`${prefix}-focus-pomodoro-${suffix}`, card);
-    const link = await waitFor('the Timer task button', (current) => Boolean(withDescription(current, en['pomodoro.selectedTask'])), 30_000);
-    await tap(withDescription(link, en['pomodoro.selectedTask']));
-    await shoot(`${prefix}-pomodoro-picker-${suffix}`, (current) => hasText(current, T.outline) && hasText(current, en['pomodoro.timerOnly']));
-    requireAppFront();
-    sh('input keyevent KEYCODE_BACK');
-    await sleep(1000);
     const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
     await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
     const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);

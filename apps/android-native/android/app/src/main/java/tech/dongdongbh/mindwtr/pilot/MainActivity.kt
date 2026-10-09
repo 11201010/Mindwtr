@@ -191,8 +191,6 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 }
-                // The Pomodoro card's task picker over the whole screen, as RN's Modal (its scrim dims the bars too).
-                if (writable && screen == Screen.Focus && listed == null && open == null) PomodoroPicker(model)
                 // The attachments' alert, link sheet, image preview and audio player (the editor's and the project card's), over the screen.
                 if (writable) AttachmentOverlays(model)
                 // The open project's pickers, section manager and help, over the whole screen as RN's modals.

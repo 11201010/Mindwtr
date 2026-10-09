@@ -112,9 +112,6 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'scheduled', 'cancelled',
     // PR1348 native reminder replacement fields.
     'tagged', 'replaced', 'taggedRemoved',
-    // native-pomodoro-alarm reuses releaseCheck, outcome, reason and error: whether RN's record went, how many alarms were made.
-    // pomodoro-credit-once reuses releaseCheck and outcome.
-    'forgotRn', 'alarms',
     'releaseCheck', 'backend', 'statusPublished', 'lastSyncAt', 'lastSyncStatus',
     'artifact', 'cloudProvider', 'scheme', 'host', 'delivery', 'deduped',
     // UpNote handoff diagnostics contain only the surface, scheme and outcome.

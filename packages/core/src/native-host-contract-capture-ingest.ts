@@ -23,7 +23,6 @@ import {
     drainPendingCaptureQueue,
     type PendingCaptureLog,
     type PendingCaptureQueuePort,
-    type PendingCaptureStoreDeps,
     type PendingCaptureRecordPort,
 } from './pending-captures';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
@@ -34,8 +33,6 @@ type CaptureIngestDeps = {
     save: () => Promise<NativeHostResult<null>>;
     t: () => TranslateFn;
     requestIdPattern: RegExp;
-    /** The host's Pomodoro timer applying a queued Watch command; null without one (its items stay queued). */
-    pomodoroCommand?: () => PendingCaptureStoreDeps['applyPomodoroCommand'] | null;
 };
 
 // React Native's app log shape onto core's logger.
@@ -87,8 +84,8 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
          * reads and writes the device's record of the last queued command applied to
          * each task, React Native's RKStorage value under
          * PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY; a write resolves once durable. Captures,
-         * check-offs and defers are stored, and `pomodoro` items go to the host's timer as RN's drain sends them
-         * (they stay queued on a host without one); `audio` items stay in the queue untouched. A file is deleted only after its write is durable.
+         * check-offs and defers are stored; `audio` and `pomodoro` items stay in the
+         * queue untouched. A file is deleted only after its write is durable.
          * `ingested` counts the items stored and removed. A capture, check-off or
          * defer a failure keeps queued fails the call, so the caller drains again:
          * SAVE_FAILED once its store write landed but its save, its lastApplied
@@ -118,7 +115,6 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
             const unfinished = { owed: 0, queued: 0 };
             const run = drainChain.then(async () => {
                 if (isSandboxMode() || isWorkspaceTransitionActive()) return 0;
-                const applyPomodoroCommand = deps.pomodoroCommand?.() ?? null;
                 const { addTask, updateTask, addProject, projects, areas, tasks, people, settings } = useTaskStore.getState();
                 return drainPendingCaptureQueue({
                     addTask,
@@ -132,7 +128,6 @@ export function createCaptureIngestMethods(deps: CaptureIngestDeps) {
                     getTasks: () => useTaskStore.getState()._allTasks,
                     getProjects: () => useTaskStore.getState()._allProjects,
                     flushPendingSave: flushDurably,
-                    ...(applyPomodoroCommand ? { applyPomodoroCommand } : {}),
                     queue,
                     lastApplied,
                     log,

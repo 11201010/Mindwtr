@@ -1,17 +1,5 @@
 {
- "provenance": {
-  "captured": "React Native's apps/mobile/lib/pomodoro-controller.ts and pomodoro-session.ts at dba1097c7 (before they moved into core), run through apps/mobile/lib/pomodoro-controller.parity-scenarios.ts with the clock pinned at 2026-10-05T12:00:00Z",
-  "recaptured": [
-   {
-    "fix": "fix(mobile): a finished focus session credits its task once across a restart (core controller): the session is stored with the credit it owes before the task is written, then stored without it",
-    "scenarios": [
-     "a stored running session whose phase ended while closed",
-     "focus with a linked task, finished, credited"
-    ],
-    "parts": "writes only"
-   }
-  ]
- },
+ "provenance": "React Native's apps/mobile/lib/pomodoro-controller.ts and pomodoro-session.ts at dba1097c7 (before they moved into core), run through apps/mobile/lib/pomodoro-controller.parity-scenarios.ts with the clock pinned at 2026-10-05T12:00:00Z",
  "scenarios": {
   "focus with a linked task, finished, credited": [
    {
@@ -291,35 +279,6 @@
        "completedTodayFocusSessions": 0
       },
       "updatedAtMs": 1791201600002
-     },
-     {
-      "durations": {
-       "focusMinutes": 1,
-       "breakMinutes": 1
-      },
-      "timerState": {
-       "phase": "break",
-       "remainingSeconds": 60,
-       "isRunning": false,
-       "completedFocusSessions": 1
-      },
-      "selectedTaskId": "t1",
-      "sessionHistory": {
-       "totalCompletedFocusSessions": 1,
-       "completedFocusSessionsByTaskId": {
-        "t1": 1
-       },
-       "todayDayKey": "2026-10-05",
-       "completedTodayFocusSessions": 1
-      },
-      "updatedAtMs": 1791201600002,
-      "pendingCredits": [
-       {
-        "taskId": "t1",
-        "from": 5,
-        "to": 6
-       }
-      ]
      },
      {
       "durations": {
@@ -786,35 +745,6 @@
      }
     ],
     "writes": [
-     {
-      "durations": {
-       "focusMinutes": 25,
-       "breakMinutes": 5
-      },
-      "timerState": {
-       "phase": "break",
-       "remainingSeconds": 300,
-       "isRunning": false,
-       "completedFocusSessions": 3
-      },
-      "selectedTaskId": "t1",
-      "sessionHistory": {
-       "totalCompletedFocusSessions": 3,
-       "completedFocusSessionsByTaskId": {
-        "t1": 3
-       },
-       "todayDayKey": "2026-10-05",
-       "completedTodayFocusSessions": 3
-      },
-      "updatedAtMs": 1791200100000,
-      "pendingCredits": [
-       {
-        "taskId": "t1",
-        "from": 5,
-        "to": 30
-       }
-      ]
-     },
      {
       "durations": {
        "focusMinutes": 25,

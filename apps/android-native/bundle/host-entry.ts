@@ -8,11 +8,8 @@ import {
     CLOUD_PROVIDER_KEY,
     SYNC_BACKEND_KEY,
     generateUUID,
-    NATIVE_POMODORO_ALARM_STORAGE_KEY,
-    NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY,
     NATIVE_REMINDER_STATE_STORAGE_KEY,
     PERSISTENT_CAPTURE_STORAGE_KEY,
-    POMODORO_ALARM_STORAGE_KEY,
     REMINDER_ALARM_MAP_STORAGE_KEY,
     REMINDER_NOTIFICATION_CHANNEL_NAME,
     REMINDER_STORE_RESCHEDULE_DELAY_MS,
@@ -33,7 +30,6 @@ import {
     getBreadcrumbs,
     sanitizeSavedFeedbackLog,
     buildFeedbackDiagnosticsSnapshot,
-    createMobilePomodoroController,
     buildImmediateNotificationDetails,
     buildShortcutsSnapshot,
     buildNativeBackupDocumentResult,
@@ -134,7 +130,6 @@ import { createNativeLocalAttachmentsForHost, nativeFileChannels, prepareNativeT
 import { PROJECT_SQLITE_COLUMNS } from '../../../packages/core/src/project-sync-schema';
 import { createPreparedProjectAvailabilityMethods, createProjectAvailabilityMethods } from '../../../packages/core/src/native-host-contract-project-availability';
 import { SYNC_ENCRYPTION_STATE_KEY } from '../../../packages/core/src/sync-storage-keys';
-import { createNativePomodoro } from './host-pomodoro';
 import { createNativeReminders } from './host-reminders';
 import { createIosReminderMethods, createIosReminderSnoozeMethods } from './host-ios-reminders';
 import { createNativeSync, createHostSyncCrypto, isNativeIosSelfHostedProvider, type NativeSync, type NativeSyncBindings } from './host-sync';
@@ -519,21 +514,6 @@ if (calendarPushAvailable && iosCalendar) {
     iosCalendar.bindPushLifecycle = (lifecycle) => { iosCalendarPushLifecycle = lifecycle; };
 }
 
-/**
- * The Pomodoro session on RN's AsyncStorage keys (RN's workspaceSessionStorage: in sandbox mode the session lives in memory and
- * never touches the personal one), on the same host as sync. None on the iOS host or the gates' bridge.
- */
-const sandboxSession = new Map<string, string>();
-const pomodoroHost = nativeSync ? (() => {
-    const storage = {
-        getItem: async (key: string) => (isSandboxMode() ? sandboxSession.get(key) ?? null : keyValue.get(key)),
-        setItem: async (key: string, value: string) => {
-            if (isSandboxMode()) sandboxSession.set(key, value);
-            else await keyValue.set(key, value);
-        },
-    };
-    return { controller: createMobilePomodoroController({ storage }), storage };
-})() : null;
 /** Settings › Notifications' persistent capture switch under RN's AsyncStorage key ('true' while on, removed when off). */
 const persistentCapture = nativeSync ? {
     read: () => (JSON.parse(checked(native().kvGet(PERSISTENT_CAPTURE_STORAGE_KEY))) as [string | null])[0] === 'true',
@@ -555,7 +535,7 @@ const contract = createNativeHostContract({ reminderPlatform: globalThis.__mindw
         } };
     },
     ...(nativeAbout ? { about: nativeAbout } : {}),
-    ...(pomodoroHost ? { pomodoro: pomodoroHost } : {}), ...(persistentCapture ? { persistentCapture } : {}) });
+    ...(persistentCapture ? { persistentCapture } : {}) });
 
 const projectAvailabilityDeps = (projectId: string): Parameters<typeof createPreparedProjectAvailabilityMethods>[0] => ({
     readiness: () => {
@@ -594,37 +574,6 @@ const reminders = typeof (globalThis.__mindwtrNative as { alarmApply?: unknown }
         ledger: () => JSON.parse(String(checked(native().reminderLedger!()))) as { fired: number[]; shown: number[] },
     })
     : null;
-/** The Pomodoro timer's engine side (host-pomodoro.ts): its session's load and tick, and its completion alarm through the alarm bridges. */
-const pomodoro = reminders && pomodoroHost
-    ? createNativePomodoro({
-        controller: pomodoroHost.controller,
-        start: () => contract.startPomodoro(),
-        plan: (input) => contract.planPomodoroAlarm(input),
-        readStored: async () => {
-            const [entry, rnEntry, unfired] = (await keyValue.multiGet([NATIVE_POMODORO_ALARM_STORAGE_KEY, POMODORO_ALARM_STORAGE_KEY,
-                NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY])).map(([, stored]) => stored);
-            // An unreadable list names no owed alert; it goes with RN's record.
-            let rnUnfired: number[] | null = null;
-            try {
-                if (unfired !== null) rnUnfired = (JSON.parse(unfired) as unknown[]).filter(Number.isInteger) as number[];
-            } catch {
-                rnUnfired = [];
-            }
-            return { entry, rnEntry, rnUnfired };
-        },
-        storeEntry: async (entry) => {
-            if (entry === null) await keyValue.remove(NATIVE_POMODORO_ALARM_STORAGE_KEY);
-            else await keyValue.set(NATIVE_POMODORO_ALARM_STORAGE_KEY, entry);
-        },
-        forgetRn: () => keyValue.multiRemove([POMODORO_ALARM_STORAGE_KEY, NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY]),
-        permissionGranted: () => checked(native().notificationsAllowed!()) === true,
-        apply: (planJson) => { checked(native().alarmApply!(planJson)); },
-    })
-    : null;
-const pomodoroLog = (error: unknown) => {
-    try { logWarn('[Local Notifications] Native Android pomodoro start failed', { scope: 'pomodoro', context: { error: error instanceof Error ? error.message : String(error) } }); }
-    catch { /* a diagnostic line must never fail its caller */ }
-};
 const requireReminders = () => {
     if (!reminders) throw new Error('Reminder alarms are not available on this host');
     return reminders;
@@ -675,7 +624,7 @@ const projectAttachmentInput = (json: string, withAttachmentId = false): { proje
     return input as { projectId: string; attachmentId?: string };
 };
 type MenuCommand = 'activateProject' | 'somedayMove' | 'somedayUndo' | 'somedayTask' | 'somedaySection' | 'taskListSort' | 'archiveAction' | 'contextsAction' | 'trashAction' | 'reviewAction' | 'reviewTask' | 'calendarAction' | 'calendarCreate' | 'boardAction' | 'boardCreate'
-    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete' | 'pomodoroAction'
+    | 'bulkAction' | 'focusGroup' | 'focusSave' | 'focusCriterion' | 'focusDelete' | 'focusReorder' | 'bulkCreate' | 'mindSweepAdd' | 'savedSearchDelete'
     | 'generalSetting' | 'gtdSetting' | 'manageEditor' | 'manageDelete' | 'somedayRename' | 'somedayReorder' | 'somedayDelete' | 'dataSetting'
     | 'syncPreference' | 'setAISetting' | 'notificationsSetting' | SyncScreenCommand | AIScreenCommand | AttachmentCommand | ProjectDetailCommand;
 /** Settings › Sync's screen commands: never journaled (core's NATIVE_UNJOURNALED_COMMANDS), sent by CoreHost.syncCommand. */
@@ -1095,9 +1044,6 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // Settings › Notifications, and the persistent capture notification to post again at start and on every resume.
     notificationsSettings: () => contract.getNotificationsSettings(),
     persistentCaptureNotification: () => contract.getPersistentCaptureNotification(),
-    // The Focus screen's Pomodoro card (read each second while its timer runs) and its task picker.
-    pomodoroPanel: () => contract.getPomodoroPanel(),
-    pomodoroTaskPicker: (input) => contract.getPomodoroTaskPicker(input),
     dataBackup: () => contract.getDataBackup(),
     dataCsvExport: () => contract.getDataBackup('csv'),
     dataTaskNotesExport: () => contract.getDataBackup('tasknotes'),
@@ -1226,8 +1172,6 @@ const MENU_COMMANDS: Record<MenuCommand, (input: never) => Reply | Promise<Reply
     dataSetting: (input) => contract.setDataSetting(input),
     // Settings › Notifications' controls (a synced setting, or the persistent capture switch on the device).
     notificationsSetting: (input) => contract.setNotificationsSetting(input),
-    // The Focus screen's Pomodoro card: each control's action (the state it asks for).
-    pomodoroAction: (input) => contract.runPomodoroAction(input),
     // Settings › Sync: a sync option (journaled), and the screen's commands (never journaled: CoreHost.syncCommand).
     syncPreference: (input) => contract.setSyncPreference(input),
     openSyncSettings: () => contract.openSyncSettings(),
@@ -4257,25 +4201,14 @@ globalThis.MindwtrHost = {
      * once, the first plan applied, core's timers armed. `ask`: RN would ask for the notification permission now.
      */
     remindersStart(): string {
-        return submit(async () => {
-            const reply = await requireReminders().start();
-            // After the reminders' start, which cancels RN's alarms; a Pomodoro failure never fails the reminders.
-            await pomodoro?.start().catch(pomodoroLog);
-            return reply;
-        });
+        return submit(async () => requireReminders().start());
     },
     /**
      * One plan applied now: `mode` "rebuild" remakes every alarm (a reboot dropped them, exact alarms were just allowed), "fired" makes
      * the daily or weekly alarm `key` that fired again at its next time, else "cycle".
      */
     remindersCycle(mode: string, key: string): string {
-        return submit(async () => {
-            if (mode === 'fired' && key) return requireReminders().fired(key);
-            const reply = await requireReminders().cycle(mode === 'rebuild');
-            // A resume plans the Pomodoro alarm again too (the permission may have changed); a rebuild makes it again.
-            await pomodoro?.cycle(mode === 'rebuild').catch(pomodoroLog);
-            return reply;
-        });
+        return submit(async () => (mode === 'fired' && key ? requireReminders().fired(key) : requireReminders().cycle(mode === 'rebuild')));
     },
     /** A reminder's Done (core's completeReminderTask): a journaled write under the request UUID its notification was posted with. */
     reminderDone(requestId: string, taskId: string): string {
