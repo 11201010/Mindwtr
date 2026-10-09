@@ -27,6 +27,16 @@ class PersistentCaptureTest {
         assertEquals(0, lines.size)
     }
 
+    /** Core answers ACTION_FAILED for a switch it cannot read (menuRead throws): nothing is posted or removed, one line is logged. */
+    @Test fun anUnreadableSwitchKeepsTheNotificationAndIsLogged() {
+        val applied = mutableListOf<JSONObject>()
+        val lines = mutableListOf<String>()
+        PersistentCapture.restoreWith(read = { throw IllegalStateException("ACTION_FAILED: The persistent capture switch could not be read") },
+            granted = { true }, apply = { applied += it }, log = { m, _ -> lines += m })
+        assertEquals(0, applied.size)
+        assertEquals(listOf(PersistentCapture.FAILED), lines)
+    }
+
     /** Off stored, then the process died before the notifier's mirror was cleared: the next start re-pins, the boot removes it. */
     @Test fun anInterruptedOffIsUndoneAtTheNextStart() {
         var mirror = true

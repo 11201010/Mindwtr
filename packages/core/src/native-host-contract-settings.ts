@@ -1078,12 +1078,22 @@ export function createSettingsMethods(deps: SettingsDeps) {
             });
         },
 
-        /** The persistent capture notification to post again (at start and on every resume, with the permission), or null. */
+        /**
+         * The persistent capture notification to post again (at start and on every resume, with the permission), or null to
+         * remove it. A switch that cannot be read is ACTION_FAILED, never null: the host keeps what it shows.
+         */
         getPersistentCaptureNotification(): NativeHostResult<NativePersistentCaptureNotification> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
             const capture = deps.persistentCapture?.() ?? null;
-            return { ok: true, value: { post: capture && persistentCaptureOn(capture) ? notificationsModel(null).persistentCaptureNotification : null } };
+            if (!capture) return { ok: true, value: { post: null } };
+            let on: boolean;
+            try {
+                on = capture.read();
+            } catch {
+                return fail('ACTION_FAILED', 'The persistent capture switch could not be read');
+            }
+            return { ok: true, value: { post: on ? notificationsModel(null).persistentCaptureNotification : null } };
         },
 
         /**

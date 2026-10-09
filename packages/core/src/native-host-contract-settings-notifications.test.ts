@@ -157,9 +157,11 @@ describe('native host contract: Settings › Notifications', () => {
         expect(saves).toBe(0);
     });
 
-    it('reads an unreadable persistent capture store as off', async () => {
+    it('shows an unreadable persistent capture store as off, and never tells the host to remove the notification', async () => {
         const { host } = await openHost({}, { capture: { stored: true, failRead: true } });
         expect(value(host.getNotificationsSettings()).reminders.persistentCapture?.value).toBe(false);
-        expect(value(host.getPersistentCaptureNotification())).toEqual({ post: null });
+        // Only a store read as off removes it: an unreadable one is a failure, and the host keeps what it shows.
+        const restore = host.getPersistentCaptureNotification();
+        expect(restore.ok ? null : restore.error.code).toBe('ACTION_FAILED');
     });
 });
