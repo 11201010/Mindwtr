@@ -8,8 +8,10 @@
 //     morning digest and its time (07:45, from Android's time picker) are each stored in the database through the app (no
 //     journal entry left), and after a process death and a new start the screen shows each stored value again;
 // (2) Quick capture in notification bar: on posts RN's notification (id 41120, channel `mindwtr-persistent-capture`) and stores
-//     RN's AsyncStorage key; after a process death the start posts it again; a tap on it opens RN's quick capture dialog; off
-//     removes it and the key.
+//     RN's AsyncStorage key; removed as an OEM's kill removes it (debug broadcast, the notifier's mirror kept), a process death
+//     and a start post it again, and so does a resume from the background; a tap on it opens RN's quick capture dialog; off with
+//     the process killed between storing it and removing the notification (debug `journal_stop=after:notificationsSetting`):
+//     the next start removes it, the switch shows off, and a later start pins nothing.
 // Every switch, the day and the time it changed are put back through the app at the end, on failure too. It reads the app's database and RKStorage from copies only. It grants the development app the notification permission (kept). It never launches over another
 // app and leaves the device on its home screen. Exit 0 = pass, 1 = fail, 2 = refused before touching the device, 3 = stopped.
 import { execFileSync } from 'node:child_process';
@@ -40,6 +42,9 @@ const DB = 'mindwtr-native-dev.db';
 const CAPTURE_ID = 41120;
 const CAPTURE_CHANNEL = 'mindwtr-persistent-capture';
 const KEYS = { capture: 'mindwtr:persistentCaptureNotification' };
+const RESCHEDULE = `${PKG}/tech.dongdongbh.mindwtr.pilot.ReminderRescheduleReceiver`;
+const DEBUG_RESCHEDULE = 'tech.dongdongbh.mindwtr.debug.RESCHEDULE_REMINDERS';
+const setProp = (name, value) => sh(`setprop debug.mindwtr.native.${name} '${value}'`);
 const work = resolve(app, 'android/build/notifications-check');
 const { en } = await import(resolve(app, '../../packages/core/src/i18n/locales/en.ts'));
 
@@ -191,6 +196,7 @@ const setDay = async (day) => {
 let found = null;
 const restore = async () => {
     try { closeShade(); } catch { /* device gone */ }
+    try { setProp('journal_stop', ''); } catch { /* device gone */ }
     try {
         if (found) {
             if (!front().includes(`${PKG}/`)) await launch();
@@ -278,10 +284,23 @@ try {
     await waitUntil('the capture notification', () => capture().length === 1, 15_000);
     check(capture()[0].title === en['captureNotification.title'] && capture()[0].text === en['captureNotification.text'],
         `(2) RN's notification is posted (id ${CAPTURE_ID}, channel ${CAPTURE_CHANNEL}) with core's words`);
+    // Removed as an OEM's kill removes it (the notifier's mirror kept; debug broadcast), so only a restore can bring it back.
+    const removeCapture = async () => {
+        sh(`am broadcast -f 0x20 -n ${RESCHEDULE} -a ${DEBUG_RESCHEDULE} --ez cancelCaptureNotification true`);
+        await waitUntil('the capture notification removed', () => capture().length === 0, 10_000);
+    };
+    await removeCapture();
     await killApp();
     await launch();
     await waitUntil('the capture notification after a restart', () => capture().length === 1, 20_000);
-    check(true, '(2) after a process death the start shows it');
+    check(true, '(2) removed, then a process death: the next start shows it again');
+    sh('input keyevent KEYCODE_HOME');
+    await sleep(1500);
+    check(Boolean(pid()), '(2) the app is in the background, its process alive');
+    await removeCapture();
+    await launch();
+    await waitUntil('the capture notification after a resume', () => capture().length === 1, 20_000);
+    check(true, '(2) removed while in the background: the resume shows it again');
     await toTabs();
     sh('input keyevent KEYCODE_HOME');
     await sleep(1000);
@@ -292,9 +311,25 @@ try {
     await sleep(1500);
     if (!front().includes(`${PKG}/`)) await launch();
     await openNotifications();
-    await flip(en['settings.persistentCaptureLabel'], () => kv([KEYS.capture])[KEYS.capture] === null, '(2) off removes RN\'s key');
-    await waitUntil('the capture notification to go', () => capture().length === 0, 15_000);
-    check(true, '(2) off removes the notification');
+    // Off with the process killed after core stored it and before the notification went (debug `journal_stop=after:notificationsSetting`):
+    // the notifier's mirror still says on, so the next process start pins it again, and the boot removes it.
+    setProp('journal_stop', 'after:notificationsSetting');
+    let current = await reveal((shown) => visible(withDescription(shown, en['settings.persistentCaptureLabel'])));
+    await tap(withDescription(current, en['settings.persistentCaptureLabel']));
+    await waitUntil('the process to stop after the off was stored', () => !pid(), 20_000);
+    setProp('journal_stop', '');
+    check(kv([KEYS.capture])[KEYS.capture] === null && capture().length === 1, '(2) the off is stored and the notification is still pinned');
+    await launch();
+    await waitUntil('the capture notification to go after the restart', () => capture().length === 0, 30_000);
+    await sleep(3000);
+    check(capture().length === 0 && kv([KEYS.capture])[KEYS.capture] === null, '(2) the next start removes it, and it stays off');
+    await openNotifications();
+    current = await reveal((shown) => visible(withDescription(shown, en['settings.persistentCaptureLabel'])));
+    check(!switchOn(current, en['settings.persistentCaptureLabel']), '(2) Settings › Notifications shows the switch off');
+    await killApp();
+    await launch();
+    await sleep(3000);
+    check(capture().length === 0, '(2) a later start pins nothing');
 
     console.log('Notifications device check passed');
 } catch (error) {

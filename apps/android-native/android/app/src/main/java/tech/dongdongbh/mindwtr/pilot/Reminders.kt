@@ -18,6 +18,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureNotifier
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
@@ -500,6 +501,12 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action !in ACTIONS && !(action == DEBUG_RESCHEDULE && BuildConfig.DEBUG)) return
+        // Device check only (check-notifications-device.mjs): the persistent capture notification removed as an OEM's kill removes it,
+        // its mirror kept, so the check proves that a start or a resume posts it again.
+        if (action == DEBUG_RESCHEDULE && BuildConfig.DEBUG && intent.getBooleanExtra("cancelCaptureNotification", false)) {
+            context.getSystemService(NotificationManager::class.java).cancel(PersistentCaptureNotifier.NOTIFICATION_ID)
+            return
+        }
         // Device check only: cancellation after another alarm replaced the old alarm's task slot.
         if (action == DEBUG_RESCHEDULE && BuildConfig.DEBUG && intent.hasExtra("cancelReminderId")) {
             intent.getStringExtra("replacementAlarm")?.let { CoreNotifications.postReminder(context, JSONObject(it)) }

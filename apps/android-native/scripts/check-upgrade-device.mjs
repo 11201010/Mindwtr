@@ -1228,9 +1228,18 @@ const scenarioPomodoro = async () => {
     device.launch(RN_ACTIVITY);
     await until('RN recovery\'s Focus', () => asyncStorage('9-rn154').get(POMODORO_KEYS.session) !== undefined, 60_000);
     await sleep(10_000);
-    const recovery = asyncStorage('9-recovery');
-    check(!packageAlarms().some((alarm) => alarm.native) && recovery.get(POMODORO_KEYS.session) === rnState.get(POMODORO_KEYS.session),
-        '(9) RN recovery over the native app: no native alarm of any kind, and RN\'s session as RN left it');
+    // RN's controller recomputes the remaining time on hydration and stores it (1500 s -> 1470 s after 30 s): the same session,
+    // only nearer its end.
+    const recovered = JSON.parse(asyncStorage('9-recovery').get(POMODORO_KEYS.session) ?? '{}');
+    // Computed at RN's hydration, before now: at least what is left now, and no more than RN stored.
+    const leftNow = Math.floor((Date.parse(session.phaseEndsAt) - Date.now()) / 1000) - 2;
+    const same = (path) => JSON.stringify(path(recovered)) === JSON.stringify(path(session));
+    check(!packageAlarms().some((alarm) => alarm.native), '(9) RN recovery over the native app: no native alarm of any kind');
+    check(same((x) => x.durations) && same((x) => x.timerState?.phase) && same((x) => x.timerState?.isRunning) && same((x) => x.phaseEndsAt)
+        && same((x) => x.selectedTaskId) && same((x) => x.sessionHistory?.totalCompletedFocusSessions) && same((x) => x.timerState?.completedFocusSessions)
+        && recovered.timerState.remainingSeconds <= session.timerState.remainingSeconds
+        && recovered.timerState.remainingSeconds >= leftNow,
+        `(9) RN recovery keeps RN's session: same phase, durations, phase end, task and totals; remaining ${session.timerState.remainingSeconds} s -> ${recovered.timerState?.remainingSeconds} s (at least ${leftNow} s left now)`);
     console.log(`info - RN recovery's Pomodoro alarms at the phase end: ${packageAlarms().filter(rnAt).length} (its record still names the cancelled one; pass R2b)`);
     await killWithoutStop();
 };
