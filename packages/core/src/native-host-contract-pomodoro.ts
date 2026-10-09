@@ -32,7 +32,7 @@ import type { NativeReminderAlarm } from './native-host-contract-reminders';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import type { PendingPomodoro } from './pending-captures';
 import type { createMobilePomodoroController } from './pomodoro-controller';
-import { buildPomodoroPanelModel, isPomodoroLinkedTaskGone, type PomodoroPanelAction, type PomodoroPanelModel } from './pomodoro-panel-model';
+import { buildPomodoroPanelModel, getPomodoroAutoStartOptions, isPomodoroLinkedTaskGone, type PomodoroPanelAction, type PomodoroPanelModel } from './pomodoro-panel-model';
 import { POMODORO_COLLAPSED_STORAGE_KEY } from './pomodoro-session';
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { useTaskStore } from './store';
@@ -100,10 +100,7 @@ type PomodoroDeps = {
     pickerTasks: (controls: unknown) => Task[] | null;
 };
 
-const autoStartOf = (): PomodoroAutoStartOptions => {
-    const pomodoro = useTaskStore.getState().settings.gtd?.pomodoro;
-    return { autoStartBreaks: pomodoro?.autoStartBreaks === true, autoStartFocus: pomodoro?.autoStartFocus === true };
-};
+const autoStartOf = (): PomodoroAutoStartOptions => getPomodoroAutoStartOptions(useTaskStore.getState().settings);
 
 const TASK_ID_LIMIT = 500;
 

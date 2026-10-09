@@ -14,6 +14,7 @@
  */
 import {
     REMINDER_NOTIFICATION_CHANNEL_NAME,
+    getPomodoroAutoStartOptions,
     isSandboxMode,
     logInfo,
     logWarn,
@@ -52,10 +53,7 @@ const log = (message: string, context: Record<string, unknown>, warn = false) =>
     } catch { /* a diagnostic line must never fail its caller */ }
 };
 
-const autoStart = () => {
-    const pomodoro = useTaskStore.getState().settings.gtd?.pomodoro;
-    return { autoStartBreaks: pomodoro?.autoStartBreaks === true, autoStartFocus: pomodoro?.autoStartFocus === true };
-};
+const autoStart = () => getPomodoroAutoStartOptions(useTaskStore.getState().settings);
 
 export const createNativePomodoro = (bindings: NativePomodoroBindings) => {
     let started = false;

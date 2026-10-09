@@ -3846,6 +3846,7 @@ export const NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY = 'mindwtr:native:rn-unfired-a
 export const POMODORO_ALARM_STORAGE_KEY = 'mindwtr:local:pomodoro-alarm:v1';
 export const PERSISTENT_CAPTURE_STORAGE_KEY = 'mindwtr:persistentCaptureNotification';
 export function createMobilePomodoroController() { throw new Error('no Pomodoro timer on the stand-in bridge'); }
+export function getPomodoroAutoStartOptions() { return { autoStartBreaks: false, autoStartFocus: false }; }
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
