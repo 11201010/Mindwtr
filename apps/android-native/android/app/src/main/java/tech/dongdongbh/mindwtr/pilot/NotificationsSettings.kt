@@ -162,8 +162,8 @@ internal object PersistentCapture {
     /** [block], its failure in logcat and in Settings › Diagnostics too: no screen shows a notification that was not posted. */
     private fun guarded(log: (String, JSONObject) -> Unit, block: () -> Unit) {
         runCatching(block).onFailure {
-            Log.w(CoreHost.TAG, "Native Android persistent capture notification not applied releaseCheck=v1.3.5/native-persistent-capture", it)
             runCatching { log(FAILED, JSONObject().put("error", it.javaClass.simpleName)) }
+            runCatching { Log.w(CoreHost.TAG, "Native Android persistent capture notification not applied releaseCheck=v1.3.5/native-persistent-capture", it) }
         }
     }
 }
