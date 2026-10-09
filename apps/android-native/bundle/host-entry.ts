@@ -9,6 +9,7 @@ import {
     SYNC_BACKEND_KEY,
     generateUUID,
     NATIVE_POMODORO_ALARM_STORAGE_KEY,
+    NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY,
     NATIVE_REMINDER_STATE_STORAGE_KEY,
     PERSISTENT_CAPTURE_STORAGE_KEY,
     POMODORO_ALARM_STORAGE_KEY,
@@ -599,12 +600,23 @@ const pomodoro = reminders && pomodoroHost
         controller: pomodoroHost.controller,
         start: () => contract.startPomodoro(),
         plan: (input) => contract.planPomodoroAlarm(input),
-        readStored: async () => ({ entry: await keyValue.get(NATIVE_POMODORO_ALARM_STORAGE_KEY), rnEntry: await keyValue.get(POMODORO_ALARM_STORAGE_KEY) }),
+        readStored: async () => {
+            const [entry, rnEntry, unfired] = (await keyValue.multiGet([NATIVE_POMODORO_ALARM_STORAGE_KEY, POMODORO_ALARM_STORAGE_KEY,
+                NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY])).map(([, stored]) => stored);
+            // An unreadable list names no owed alert; it goes with RN's record.
+            let rnUnfired: number[] | null = null;
+            try {
+                if (unfired !== null) rnUnfired = (JSON.parse(unfired) as unknown[]).filter(Number.isInteger) as number[];
+            } catch {
+                rnUnfired = [];
+            }
+            return { entry, rnEntry, rnUnfired };
+        },
         storeEntry: async (entry) => {
             if (entry === null) await keyValue.remove(NATIVE_POMODORO_ALARM_STORAGE_KEY);
             else await keyValue.set(NATIVE_POMODORO_ALARM_STORAGE_KEY, entry);
         },
-        forgetRn: () => keyValue.remove(POMODORO_ALARM_STORAGE_KEY),
+        forgetRn: () => keyValue.multiRemove([POMODORO_ALARM_STORAGE_KEY, NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY]),
         permissionGranted: () => checked(native().notificationsAllowed!()) === true,
         apply: (planJson) => { checked(native().alarmApply!(planJson)); },
     })

@@ -356,7 +356,9 @@ import { createCaptureIngestMethods } from './native-host-contract-capture-inges
 import { createPomodoroMethods, type NativePomodoroHost } from './native-host-contract-pomodoro';
 export {
     NATIVE_POMODORO_ALARM_ID,
+    NATIVE_POMODORO_ALARM_IDS,
     NATIVE_POMODORO_ALARM_STORAGE_KEY,
+    NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY,
     type NativePomodoroAlarmPlan,
     type NativePomodoroController,
     type NativePomodoroHost,

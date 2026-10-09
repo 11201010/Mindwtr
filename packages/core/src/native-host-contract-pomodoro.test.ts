@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getTranslator } from './i18n';
 import { createNativeHostContract, type NativeHostResult } from './native-host-contract';
-import { NATIVE_POMODORO_ALARM_ID } from './native-host-contract-pomodoro';
+import { NATIVE_POMODORO_ALARM_ID, NATIVE_POMODORO_ALARM_IDS } from './native-host-contract-pomodoro';
 import { createMobilePomodoroController } from './pomodoro-controller';
 import { POMODORO_COLLAPSED_STORAGE_KEY, POMODORO_SESSION_STORAGE_KEY } from './pomodoro-session';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
@@ -51,8 +51,10 @@ const POMODORO_ON = { features: { pomodoro: true } } as AppSettings;
 const action = (host: Awaited<ReturnType<typeof openHost>>['host'], next: unknown, requestId = generateUUID()) => (
     host.runPomodoroAction({ requestId, action: next as never })
 );
-const plan = (host: Awaited<ReturnType<typeof openHost>>['host'], storedEntry: string | null, options: { permissionGranted?: boolean; remake?: boolean; rnEntryStored?: boolean } = {}) => (
-    value(host.planPomodoroAlarm({ storedEntry, rnEntryStored: options.rnEntryStored ?? false, permissionGranted: options.permissionGranted ?? true, remake: options.remake ?? false }))
+const plan = (host: Awaited<ReturnType<typeof openHost>>['host'], storedEntry: string | null,
+    options: { permissionGranted?: boolean; remake?: boolean; rnEntry?: string | null; rnUnfired?: number[] | null } = {}) => (
+    value(host.planPomodoroAlarm({ storedEntry, rnEntry: options.rnEntry ?? null, rnUnfired: options.rnUnfired ?? null,
+        permissionGranted: options.permissionGranted ?? true, remake: options.remake ?? false }))
 );
 
 describe('native host contract: the Pomodoro card', () => {
@@ -228,7 +230,7 @@ describe('native host contract: the Pomodoro completion alarm', () => {
         const { host } = await openHost(POMODORO_ON);
         expect(plan(host, null)).toMatchObject({ outcome: 'loading', schedule: [], cancel: [], forgetRn: false });
         value(await host.startPomodoro());
-        expect(plan(host, null, { rnEntryStored: true })).toMatchObject({ outcome: 'none', reason: 'timer-not-running', forgetRn: true });
+        expect(plan(host, null, { rnEntry: JSON.stringify({ id: 4, fireAtMs: NOW + 60_000 }) })).toMatchObject({ outcome: 'none', reason: 'timer-not-running', forgetRn: true });
         value(await action(host, { type: 'run', value: true }));
         const t = getTranslator('en');
         const armed = plan(host, null);
@@ -242,7 +244,76 @@ describe('native host contract: the Pomodoro completion alarm', () => {
         expect(plan(host, armed.entryAhead, { remake: true }).schedule).toHaveLength(1);
         // Without the notification permission the alarm and what it showed go.
         expect(plan(host, armed.entryAhead, { permissionGranted: false })).toMatchObject({ outcome: 'cancelled', reason: 'notification-permission-denied',
-            cancel: [{ key: 'pomodoro', id: NATIVE_POMODORO_ALARM_ID, reason: 'withdrawn' }], clearEntry: true });
+            cancel: [{ key: 'pomodoro', id: NATIVE_POMODORO_ALARM_ID, reason: 'withdrawn' }, { key: 'pomodoro', id: NATIVE_POMODORO_ALARM_IDS[1], reason: 'expired' }],
+            clearEntry: true });
+    });
+
+    it('arms the next phase under the other id while the alarm before it is due, as RN keeps a due alarm', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const { host } = await openHost({ ...POMODORO_ON, gtd: { pomodoro: { autoStartBreaks: true, autoStartFocus: true } } } as AppSettings);
+        value(await host.startPomodoro());
+        value(await action(host, { type: 'preset', focusMinutes: 15, breakMinutes: 3 }));
+        value(await action(host, { type: 'run', value: true }));
+        const focus = plan(host, null);
+        expect(focus.schedule.map((alarm) => alarm.id)).toEqual([NATIVE_POMODORO_ALARM_IDS[0]]);
+        // The engine's reconcile starts the break before Android delivered the focus alarm.
+        vi.setSystemTime(NOW + 15 * 60_000 + 300);
+        expect(value(host.getPomodoroPanel())).toMatchObject({ phase: 'break', running: true });
+        const rest = plan(host, focus.entryAhead);
+        expect(rest).toMatchObject({ outcome: 'scheduled', cancel: [] });
+        expect(rest.schedule.map((alarm) => [alarm.id, alarm.fireAtMs, alarm.details.message])).toEqual([
+            [NATIVE_POMODORO_ALARM_IDS[1], NOW + 18 * 60_000 + 300, getTranslator('en')('pomodoro.breakComplete')]]);
+        // The break ends the same way: the focus alarm takes the first id again.
+        vi.setSystemTime(NOW + 18 * 60_000 + 600);
+        value(host.getPomodoroPanel());
+        expect(plan(host, rest.entryAhead).schedule.map((alarm) => alarm.id)).toEqual([NATIVE_POMODORO_ALARM_IDS[0]]);
+        // A change before the alarm's time replaces it under its own id.
+        const next = plan(host, rest.entryAhead);
+        value(await action(host, { type: 'phase', value: 'break' }));
+        value(await action(host, { type: 'run', value: true }));
+        const replaced = plan(host, next.entryAhead);
+        expect(replaced).toMatchObject({ cancel: [] });
+        expect(replaced.schedule.map((alarm) => alarm.id)).toEqual([NATIVE_POMODORO_ALARM_IDS[0]]);
+    });
+
+    it('gives RN\'s due alert that never fired once (the app was updated before its time came)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const device = new Map([[POMODORO_SESSION_STORAGE_KEY, JSON.stringify({
+            durations: { focusMinutes: 25, breakMinutes: 5 }, timerState: { phase: 'focus', remainingSeconds: 300, isRunning: true },
+            phaseEndsAt: new Date(NOW - 60_000).toISOString(), updatedAtMs: NOW - 1_000_000 })]]);
+        const { host } = await openHost(POMODORO_ON, { device });
+        value(await host.startPomodoro());
+        expect(value(host.getPomodoroPanel())).toMatchObject({ running: false, phase: 'break' });
+        const rnEntry = JSON.stringify({ id: 12, fireAtMs: NOW - 60_000, phase: 'focus-complete' });
+        const owed = plan(host, null, { rnEntry, rnUnfired: [3, 12] });
+        expect(owed).toMatchObject({ outcome: 'scheduled', reason: 'timer-not-running', forgetRn: true, clearEntry: false, cancel: [],
+            entryAhead: JSON.stringify({ rnTakenAtMs: NOW - 60_000 }) });
+        expect(owed.schedule.map((alarm) => [alarm.id, alarm.fireAtMs, alarm.details.message])).toEqual([
+            [NATIVE_POMODORO_ALARM_IDS[0], NOW - 60_000, getTranslator('en')('pomodoro.focusComplete')]]);
+        // A plan after a process death before RN's record went: taken already, so never made again.
+        expect(plan(host, owed.entryAhead, { rnEntry, rnUnfired: [3, 12] })).toMatchObject({ outcome: 'none', schedule: [], forgetRn: true });
+        // RN fired it itself (its row no longer active), or it is not due yet, or RN showed it at once: nothing owed.
+        expect(plan(host, null, { rnEntry, rnUnfired: [3] }).schedule).toEqual([]);
+        expect(plan(host, null, { rnEntry: JSON.stringify({ id: 12, fireAtMs: NOW + 60_000 }), rnUnfired: [12] }).schedule).toEqual([]);
+        expect(plan(host, null, { rnEntry: JSON.stringify({ fireAtMs: NOW - 60_000, notifiedImmediately: true }), rnUnfired: [12] }).schedule).toEqual([]);
+        expect(plan(host, null, { rnEntry, rnUnfired: [12], permissionGranted: false }).schedule).toEqual([]);
+    });
+
+    it('gives RN\'s owed alert beside the next phase\'s alarm when the timer went on', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        const device = new Map([[POMODORO_SESSION_STORAGE_KEY, JSON.stringify({
+            durations: { focusMinutes: 25, breakMinutes: 5 }, timerState: { phase: 'focus', remainingSeconds: 300, isRunning: true },
+            phaseEndsAt: new Date(NOW - 60_000).toISOString(), updatedAtMs: NOW - 1_000_000 })]]);
+        const { host } = await openHost({ ...POMODORO_ON, gtd: { pomodoro: { autoStartBreaks: true } } } as AppSettings, { device });
+        value(await host.startPomodoro());
+        const owed = plan(host, null, { rnEntry: JSON.stringify({ id: 12, fireAtMs: NOW - 60_000, phase: 'focus-complete' }), rnUnfired: [12] });
+        expect(owed.schedule.map((alarm) => [alarm.id, alarm.fireAtMs])).toEqual([
+            [NATIVE_POMODORO_ALARM_IDS[0], NOW + 4 * 60_000], [NATIVE_POMODORO_ALARM_IDS[1], NOW - 60_000]]);
+        expect(JSON.parse(owed.entryAhead!)).toEqual({ id: NATIVE_POMODORO_ALARM_IDS[0], fireAtMs: NOW + 4 * 60_000, phase: 'break-complete', rnTakenAtMs: NOW - 60_000 });
+        expect(plan(host, owed.entryAhead)).toMatchObject({ outcome: 'unchanged' });
     });
 
     it('alerts whether or not task reminders are on (RN\'s #528)', async () => {
@@ -275,7 +346,8 @@ describe('native host contract: the Pomodoro completion alarm', () => {
         value(await action(host, { type: 'run', value: true }));
         const breakEntry = plan(host, null).entryAhead;
         useTaskStore.setState({ settings: { ...useTaskStore.getState().settings, gtd: { pomodoro: { completionAlert: false } } } } as never);
-        expect(plan(host, breakEntry)).toMatchObject({ outcome: 'cancelled', reason: 'completion-alert-off', cancel: [{ reason: 'withdrawn' }] });
+        expect(plan(host, breakEntry)).toMatchObject({ outcome: 'cancelled', reason: 'completion-alert-off',
+            cancel: [{ id: NATIVE_POMODORO_ALARM_IDS[0], reason: 'withdrawn' }, { id: NATIVE_POMODORO_ALARM_IDS[1], reason: 'expired' }] });
     });
 
     it('applies a queued Watch command through the drain and removes its file', async () => {

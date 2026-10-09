@@ -16,8 +16,8 @@
  * The completion alarm (planPomodoroAlarm) follows RN's root-layout effect: while the alert is on and the timer runs it
  * fires when the phase ends; it goes when the alert is turned off, the phase end is gone, or notifications are not
  * allowed (what it delivered goes too), or when the timer stops on its own (what it delivered stays, and an alarm whose
- * time already came is kept, as RN keeps a due one). The native host holds one Pomodoro alarm under
- * NATIVE_POMODORO_ALARM_ID, a request code no reminder takes, and keeps its record under
+ * time already came is kept, as RN keeps a due one). The native host holds its Pomodoro alarm under one of
+ * NATIVE_POMODORO_ALARM_IDS, request codes no reminder takes, and keeps its record under
  * NATIVE_POMODORO_ALARM_STORAGE_KEY, which RN never reads; RN's own record (POMODORO_ALARM_STORAGE_KEY) is removed, its
  * alarm having been cancelled with RN's others, so an RN build installed later makes its alarm again.
  *
@@ -41,10 +41,20 @@ import type { Task } from './types';
 
 type Translate = (key: string) => string;
 
-/** The request code of the native host's one Pomodoro alarm: reminders take [1, 2^31 - 1), so this one is never theirs. */
+/** The request code of the native host's Pomodoro alarm: reminders take [1, 2^31 - 1), so this one is never theirs. */
 export const NATIVE_POMODORO_ALARM_ID = 2 ** 31 - 1;
+/**
+ * The Pomodoro alarm's two request codes: the next phase's alarm takes the other one while the alarm before it is due and
+ * may not have fired yet (RN's library gives each alarm its own id), so it never replaces that one.
+ */
+export const NATIVE_POMODORO_ALARM_IDS = [NATIVE_POMODORO_ALARM_ID, -NATIVE_POMODORO_ALARM_ID] as const;
 /** RKStorage key of the native host's Pomodoro alarm record (core's PomodoroAlarmEntry); React Native never reads it. */
 export const NATIVE_POMODORO_ALARM_STORAGE_KEY = 'mindwtr:native:pomodoro-alarm:v1';
+/**
+ * RKStorage key of the ids of React Native's alarms that never fired (a JSON array), which Kotlin's RN cleanup keeps before
+ * it removes RN's alarm table: RN's Pomodoro alert among them was owed when the app was updated before its time.
+ */
+export const NATIVE_RN_UNFIRED_ALARMS_STORAGE_KEY = 'mindwtr:native:rn-unfired-alarms:v1';
 const ALARM_KEY = 'pomodoro';
 
 export type NativePomodoroController = ReturnType<typeof createMobilePomodoroController>;
@@ -62,14 +72,17 @@ export type NativePomodoroPanel = PomodoroPanelModel & {
 
 /** The completion alarm's changes, applied in this order: `entryAhead` stored, the plan applied, `clearEntry`, `forgetRn`. */
 export type NativePomodoroAlarmPlan = {
-    /** The record to store before the alarm is made, so a process death after making it still names it. */
+    /**
+     * The record to store before the alarm is made, so a process death after making it still names it. `rnTakenAtMs` says
+     * RN's owed alert at that time was made, so it is never made twice.
+     */
     entryAhead: string | null;
     /** `withdrawn`: what the alarm delivered goes too. `expired`: it stays. */
     cancel: { key: string; id: number; reason: 'withdrawn' | 'expired' }[];
     schedule: NativeReminderAlarm[];
     /** Remove the native record once the plan is applied. */
     clearEntry: boolean;
-    /** Remove RN's record (its alarm was cancelled with RN's others). */
+    /** Remove RN's record and the list of RN's alarms that never fired (its alarm was cancelled with RN's others). */
     forgetRn: boolean;
     /** What happened, for the log: scheduled, unchanged, preserved, cancelled, none or loading. */
     outcome: 'scheduled' | 'unchanged' | 'preserved' | 'cancelled' | 'none' | 'loading';
@@ -118,13 +131,13 @@ const readAction = (value: unknown): PomodoroPanelAction | null => {
 export function createPomodoroMethods(deps: PomodoroDeps) {
     // A session write that failed is an owed save (SAVE_FAILED: the journal keeps the request): its retry stores the session again.
     const receipts = createNativeRequestReceipts({
-        save: async (requestId) => {
+        save: async () => {
             try {
                 await deps.host()?.controller.retryPersistence();
             } catch {
                 return fail('SAVE_FAILED', 'The Pomodoro session was not stored');
             }
-            return deps.save(requestId);
+            return deps.save();
         },
     });
     /** The card's fold as stored (RN reads it once when the card mounts; it starts expanded). */
@@ -287,28 +300,63 @@ export function createPomodoroMethods(deps: PomodoroDeps) {
 
         /**
          * The completion alarm's changes now (RN's useRootLayoutPomodoro and its alarm service). `storedEntry` is the native
-         * record as stored, `rnEntryStored` whether RN's record is still there, `remake` true for a process's first plan or a
-         * rebuild (Android dropped every alarm on a reboot, a force-stop or revoked exact-alarm access): the alarm is made again
-         * even when its record already names it.
+         * record as stored, `rnEntry` RN's record and `rnUnfired` the ids of RN's alarms that never fired (Kotlin's RN cleanup
+         * keeps them; null when it kept none), `remake` true for a process's first plan or a rebuild (Android dropped every
+         * alarm on a reboot, a force-stop or revoked exact-alarm access): the alarm is made again even when its record already
+         * names it.
+         *
+         * As RN, an alarm whose time came is never replaced by the next phase's: that one takes the other of the two ids. And
+         * an RN alarm that was due but never fired (the app was updated to this one before its time, so RN's receiver was gone)
+         * fires now, once: the record says it was taken before it is made.
          */
-        planPomodoroAlarm(input: { storedEntry: string | null; rnEntryStored: boolean; permissionGranted: boolean; remake: boolean }): NativeHostResult<NativePomodoroAlarmPlan> {
+        planPomodoroAlarm(input: { storedEntry: string | null; rnEntry: string | null; rnUnfired: number[] | null; permissionGranted: boolean;
+            remake: boolean }): NativeHostResult<NativePomodoroAlarmPlan> {
             const host = requireHost();
             if (!host.ok) return host;
             if (!isObjectRecord(input) || (input.storedEntry !== null && typeof input.storedEntry !== 'string')
-                || typeof input.rnEntryStored !== 'boolean' || typeof input.permissionGranted !== 'boolean' || typeof input.remake !== 'boolean') {
+                || (input.rnEntry !== null && typeof input.rnEntry !== 'string')
+                || (input.rnUnfired !== null && !(Array.isArray(input.rnUnfired) && input.rnUnfired.every(Number.isInteger)))
+                || typeof input.permissionGranted !== 'boolean' || typeof input.remake !== 'boolean') {
                 return fail('INVALID_INPUT', 'The stored records, the permission and remake are required');
             }
-            const base = { entryAhead: null, cancel: [], schedule: [], clearEntry: false, forgetRn: input.rnEntryStored, reason: null };
+            const forgetRn = input.rnEntry !== null || input.rnUnfired !== null;
+            const base = { entryAhead: null, cancel: [], schedule: [], clearEntry: false, forgetRn, reason: null };
             const snapshot = host.value.controller.getSnapshot();
             if (snapshot.isHydrating) return { ok: true, value: { ...base, forgetRn: false, outcome: 'loading' } };
             let entry: PomodoroAlarmEntry | null;
+            let rnTakenAtMs: number | undefined;
             try {
                 entry = readPomodoroAlarmEntry(input.storedEntry);
+                const taken = input.storedEntry ? (JSON.parse(input.storedEntry) as { rnTakenAtMs?: unknown }).rnTakenAtMs : undefined;
+                if (typeof taken === 'number') rnTakenAtMs = taken;
             } catch {
                 // An unreadable record may still name an armed alarm: it is cancelled or replaced.
                 entry = { id: NATIVE_POMODORO_ALARM_ID };
             }
+            const ownId = (id: number | undefined) => NATIVE_POMODORO_ALARM_IDS.find((own) => own === id);
+            const otherId = (id: number) => (id === NATIVE_POMODORO_ALARM_IDS[0] ? NATIVE_POMODORO_ALARM_IDS[1] : NATIVE_POMODORO_ALARM_IDS[0]);
             const nowMs = Date.now();
+            const t = deps.t();
+            const alarmOf = (id: number, fireAtMs: number, phase: string): NativeReminderAlarm => ({
+                key: ALARM_KEY, id, fireAtMs, repeat: 'once', replacing: null,
+                details: buildPomodoroAlarmDetails(tFallback(t, 'pomodoro.mobileTitle', 'Pomodoro Timer'), phase === 'break-complete'
+                    ? tFallback(t, 'pomodoro.breakComplete', 'Break complete. Ready for the next focus session.')
+                    : tFallback(t, 'pomodoro.focusComplete', 'Focus session complete. Take a short break.'), { phase }),
+            });
+
+            // RN's alert that was due and never fired, not taken before.
+            let rnOwed: { fireAtMs: number; phase: string } | null = null;
+            try {
+                const rn = readPomodoroAlarmEntry(input.rnEntry);
+                if (rn?.id !== undefined && rn.fireAtMs !== undefined && rn.fireAtMs <= nowMs && !rn.notifiedImmediately
+                    && input.rnUnfired?.includes(rn.id) && rnTakenAtMs !== rn.fireAtMs && input.permissionGranted
+                    && useTaskStore.getState().settings.gtd?.pomodoro?.completionAlert !== false) {
+                    rnOwed = { fireAtMs: rn.fireAtMs, phase: rn.phase === 'break-complete' ? 'break-complete' : 'focus-complete' };
+                }
+            } catch {
+                // RN's record cannot be read: it names no alert to give.
+            }
+
             const completionAlert = useTaskStore.getState().settings.gtd?.pomodoro?.completionAlert !== false;
             const reason = !completionAlert ? 'completion-alert-off'
                 : !snapshot.timerState.isRunning ? 'timer-not-running'
@@ -316,31 +364,43 @@ export function createPomodoroMethods(deps: PomodoroDeps) {
                         : !input.permissionGranted ? 'notification-permission-denied' : null;
             if (reason !== null) {
                 // A timer that stopped on its own keeps an alarm whose time came: its alert is (about to be) shown.
-                if (!isExplicitPomodoroAlarmCancellation(reason) && isPomodoroAlarmDue(entry, nowMs)) {
-                    return { ok: true, value: { ...base, outcome: 'preserved', reason } };
+                const preserve = !isExplicitPomodoroAlarmCancellation(reason) && isPomodoroAlarmDue(entry, nowMs);
+                const cancel: NativePomodoroAlarmPlan['cancel'] = [];
+                if (!preserve && entry) {
+                    const id = entry.id ?? NATIVE_POMODORO_ALARM_ID;
+                    const removeFired = reason === 'notification-permission-denied'
+                        || shouldRemoveFiredPomodoroAlarm({ reason, entry, id, requestedAtMs: nowMs });
+                    cancel.push({ key: ALARM_KEY, id, reason: removeFired ? 'withdrawn' : 'expired' });
+                    // RN cancels every Pomodoro alarm it still holds on an explicit cancellation: a due one the next phase did
+                    // not replace too (what that one showed stays, as RN's fired alarm is no longer listed).
+                    if (isExplicitPomodoroAlarmCancellation(reason) && ownId(id) !== undefined) cancel.push({ key: ALARM_KEY, id: otherId(id), reason: 'expired' });
                 }
+                if (rnOwed) {
+                    const id = preserve ? otherId(ownId(entry?.id) ?? NATIVE_POMODORO_ALARM_ID) : NATIVE_POMODORO_ALARM_IDS[0];
+                    return { ok: true, value: { ...base, cancel, schedule: [alarmOf(id, rnOwed.fireAtMs, rnOwed.phase)],
+                        entryAhead: JSON.stringify({ ...(preserve ? entry : {}), rnTakenAtMs: rnOwed.fireAtMs }), outcome: 'scheduled', reason } };
+                }
+                if (preserve) return { ok: true, value: { ...base, outcome: 'preserved', reason } };
                 if (!entry) return { ok: true, value: { ...base, outcome: 'none', reason } };
-                const id = entry.id ?? NATIVE_POMODORO_ALARM_ID;
-                const removeFired = reason === 'notification-permission-denied'
-                    || shouldRemoveFiredPomodoroAlarm({ reason, entry, id, requestedAtMs: nowMs });
-                return { ok: true, value: { ...base, cancel: [{ key: ALARM_KEY, id, reason: removeFired ? 'withdrawn' : 'expired' }], clearEntry: true,
-                    outcome: 'cancelled', reason } };
+                return { ok: true, value: { ...base, cancel, clearEntry: true, outcome: 'cancelled', reason } };
             }
             const fireAtMs = new Date(snapshot.phaseEndsAt!).getTime();
             const phase = snapshot.timerState.phase === 'focus' ? 'focus-complete' : 'break-complete';
-            if (!input.remake && entry?.id === NATIVE_POMODORO_ALARM_ID && isPomodoroAlarmUnchanged(entry, fireAtMs, phase)) {
+            const heldId = ownId(entry?.id);
+            if (!input.remake && !rnOwed && heldId !== undefined && isPomodoroAlarmUnchanged(entry, fireAtMs, phase)) {
                 return { ok: true, value: { ...base, outcome: 'unchanged' } };
             }
-            const t = deps.t();
-            const title = tFallback(t, 'pomodoro.mobileTitle', 'Pomodoro Timer');
-            const message = snapshot.timerState.phase === 'focus'
-                ? tFallback(t, 'pomodoro.focusComplete', 'Focus session complete. Take a short break.')
-                : tFallback(t, 'pomodoro.breakComplete', 'Break complete. Ready for the next focus session.');
-            const alarm: NativeReminderAlarm = {
-                key: ALARM_KEY, id: NATIVE_POMODORO_ALARM_ID, fireAtMs, repeat: 'once', details: buildPomodoroAlarmDetails(title, message, { phase }), replacing: null,
-            };
-            const next: PomodoroAlarmEntry = { id: NATIVE_POMODORO_ALARM_ID, fireAtMs, phase };
-            return { ok: true, value: { ...base, entryAhead: JSON.stringify(next), schedule: [alarm], outcome: 'scheduled' } };
+            // The next phase's alarm never replaces one whose time came (RN keeps it: 'phase-replaced').
+            const keepDue = heldId !== undefined && isPomodoroAlarmDue(entry, nowMs) && !isPomodoroAlarmUnchanged(entry, fireAtMs, phase);
+            const id = heldId === undefined ? NATIVE_POMODORO_ALARM_IDS[0] : keepDue ? otherId(heldId) : heldId;
+            const schedule = [alarmOf(id, fireAtMs, phase)];
+            if (rnOwed) schedule.push(alarmOf(otherId(id), rnOwed.fireAtMs, rnOwed.phase));
+            // An alarm under another id that is not due goes, with what it showed (RN cancels the previous one).
+            const cancel: NativePomodoroAlarmPlan['cancel'] = entry && !keepDue && entry.id !== id
+                && !(rnOwed && entry.id === otherId(id)) ? [{ key: ALARM_KEY, id: entry.id ?? NATIVE_POMODORO_ALARM_ID, reason: 'withdrawn' }] : [];
+            const next: PomodoroAlarmEntry & { rnTakenAtMs?: number } = { id, fireAtMs, phase,
+                ...(rnOwed ? { rnTakenAtMs: rnOwed.fireAtMs } : rnTakenAtMs === undefined ? {} : { rnTakenAtMs }) };
+            return { ok: true, value: { ...base, entryAhead: JSON.stringify(next), cancel, schedule, outcome: 'scheduled' } };
         },
     };
 }

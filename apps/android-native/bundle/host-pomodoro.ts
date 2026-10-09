@@ -6,8 +6,8 @@
  * as it applies a reminder plan (Reminders.kt). Every rule is core's (native-host-contract-pomodoro.ts):
  *
  * - the native record goes to RKStorage before the alarm is made, and goes after it is cancelled, so a process death leaves
- *   no alarm without its record; the process's first plan, and a rebuild, makes the alarm again (Android drops alarms on a
- *   reboot, a force-stop or revoked exact-alarm access);
+ *   no alarm without its record; the process's first plan, a rebuild, and the plan after one that failed make the alarm
+ *   again (Android drops alarms on a reboot, a force-stop or revoked exact-alarm access);
  * - React Native's record goes once its alarm was cancelled with RN's others (Kotlin's RnAlarmCleanup, before the first
  *   reminder plan), so an RN build installed later makes its alarm again;
  * - none of this runs in sandbox mode, as RN's hook does not.
@@ -28,12 +28,13 @@ export type NativePomodoroBindings = {
     controller: NativePomodoroController;
     /** Core's startPomodoro: the stored session and the card's fold loaded. */
     start: () => Promise<NativeHostResult<{ hydrated: boolean }>>;
-    plan: (input: { storedEntry: string | null; rnEntryStored: boolean; permissionGranted: boolean; remake: boolean }) => NativeHostResult<NativePomodoroAlarmPlan>;
-    /** The native record and RN's record, as stored (RKStorage). */
-    readStored: () => Promise<{ entry: string | null; rnEntry: string | null }>;
+    plan: (input: { storedEntry: string | null; rnEntry: string | null; rnUnfired: number[] | null; permissionGranted: boolean;
+        remake: boolean }) => NativeHostResult<NativePomodoroAlarmPlan>;
+    /** The native record, RN's record and the ids of RN's alarms that never fired (Kotlin's RN cleanup kept them), as stored. */
+    readStored: () => Promise<{ entry: string | null; rnEntry: string | null; rnUnfired: number[] | null }>;
     /** The native record stored (null removes it), on disk when it resolves. */
     storeEntry: (entry: string | null) => Promise<void>;
-    /** RN's record removed. */
+    /** RN's record and the list of its unfired alarms removed. */
     forgetRn: () => Promise<void>;
     /** Kotlin: the notification permission, as RN reads it. */
     permissionGranted: () => boolean;
@@ -42,10 +43,12 @@ export type NativePomodoroBindings = {
 };
 
 const TICK_MS = 1_000;
+/** Settings › Diagnostics: the alarm's outcomes, which no screen shows (docs/release-notes/diagnostics-ledger.md). */
+const RELEASE_CHECK = 'v1.3.5/native-pomodoro-alarm';
 
 const log = (message: string, context: Record<string, unknown>, warn = false) => {
     try {
-        (warn ? logWarn : logInfo)(`[Local Notifications] ${message}`, { scope: 'pomodoro', context });
+        (warn ? logWarn : logInfo)(`[Local Notifications] ${message}`, { scope: 'pomodoro', context: { ...context, releaseCheck: RELEASE_CHECK } });
     } catch { /* a diagnostic line must never fail its caller */ }
 };
 
@@ -70,11 +73,13 @@ export const createNativePomodoro = (bindings: NativePomodoroBindings) => {
 
     const runCycle = async (remake: boolean) => {
         const stored = await bindings.readStored();
-        const result = bindings.plan({ storedEntry: stored.entry, rnEntryStored: stored.rnEntry !== null,
+        const result = bindings.plan({ storedEntry: stored.entry, rnEntry: stored.rnEntry, rnUnfired: stored.rnUnfired,
             permissionGranted: bindings.permissionGranted(), remake: remake || !remade });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         const plan = result.value;
         if (plan.outcome === 'loading') return plan.outcome;
+        // Set again once this plan is applied: the record may name an alarm a failed apply never made, so the next plan makes it.
+        remade = false;
         if (plan.entryAhead !== null) await bindings.storeEntry(plan.entryAhead);
         if (plan.cancel.length > 0 || plan.schedule.length > 0) {
             bindings.apply(JSON.stringify({ mode: 'active', cancel: plan.cancel, schedule: plan.schedule, writeAhead: null, stateAhead: null,
@@ -84,7 +89,8 @@ export const createNativePomodoro = (bindings: NativePomodoroBindings) => {
         if (plan.forgetRn) await bindings.forgetRn();
         remade = true;
         if (plan.outcome !== 'unchanged' && plan.outcome !== 'none') {
-            log('Native Android pomodoro alarm', { outcome: plan.outcome, reason: plan.reason ?? '', forgotRn: String(plan.forgetRn) });
+            log('Native Android pomodoro alarm', { outcome: plan.outcome, reason: plan.reason ?? '', forgotRn: String(plan.forgetRn),
+                alarms: String(plan.schedule.length) });
         }
         return plan.outcome;
     };
