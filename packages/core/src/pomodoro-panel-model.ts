@@ -6,7 +6,7 @@
  */
 import { tFallback } from './i18n';
 import type { MobilePomodoroControllerState } from './pomodoro-controller';
-import { formatPomodoroClock, getPomodoroFocusSessionsCompletedToday, getPomodoroPresetOptions } from './pomodoro';
+import { formatPomodoroClock, getPomodoroFocusSessionsCompletedToday, getPomodoroPresetOptions, type PomodoroAutoStartOptions } from './pomodoro';
 import type { AppSettings, Task } from './types';
 
 type Translate = (key: string) => string;
@@ -61,6 +61,12 @@ export type PomodoroPanelInput = {
     collapsed: boolean;
     t: Translate;
 };
+
+/** The controller's auto-start options, from Settings › GTD › Pomodoro (RN's card passes them with every control). */
+export const getPomodoroAutoStartOptions = (settings: AppSettings): PomodoroAutoStartOptions => ({
+    autoStartBreaks: settings.gtd?.pomodoro?.autoStartBreaks === true,
+    autoStartFocus: settings.gtd?.pomodoro?.autoStartFocus === true,
+});
 
 /** The task the timer is linked to, as RN's card finds it: only while Link task is on, and only a visible task. */
 export const getPomodoroLinkedTask = (session: MobilePomodoroControllerState, settings: AppSettings, tasks: readonly Task[]): Task | undefined => (

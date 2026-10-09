@@ -1,0 +1,8351 @@
+{
+ "provenance": {
+  "command": "cd apps/mobile && MINDWTR_CAPTURE_POMODORO_PANEL=1 TZ=UTC bunx vitest run components/pomodoro-panel.parity.test.tsx",
+  "capturedAt": "dba1097c723eb374022e539ddeb067faf4929ddc",
+  "sourceState": "Every file under apps/mobile and packages/core was at dba1097c7 except this harness: the card and React Native's own session controller still held their policy, and core had neither a panel model nor a controller.",
+  "device": "AsyncStorage is the scenario's device: its stored session and fold switch, and a session read held until \"release\" when the scenario says hold. The clock is pinned to now."
+ },
+ "now": "2026-10-05T12:00:00.000Z",
+ "timeZone": "UTC",
+ "tasks": [
+  {
+   "id": "a",
+   "title": "Write the report",
+   "status": "next",
+   "tags": [],
+   "contexts": [],
+   "createdAt": "2026-10-01T00:00:00.000Z",
+   "updatedAt": "2026-10-01T00:00:00.000Z",
+   "timeSpentMinutes": 30
+  },
+  {
+   "id": "b",
+   "title": "Call Sam",
+   "status": "next",
+   "tags": [],
+   "contexts": [],
+   "createdAt": "2026-10-01T00:00:00.000Z",
+   "updatedAt": "2026-10-01T00:00:00.000Z"
+  }
+ ],
+ "settings": {
+  "base": {},
+  "link": {
+   "gtd": {
+    "pomodoro": {
+     "linkTask": true
+    }
+   }
+  },
+  "custom": {
+   "gtd": {
+    "pomodoro": {
+     "linkTask": true,
+     "customDurations": {
+      "focusMinutes": 40,
+      "breakMinutes": 8
+     }
+    }
+   }
+  },
+  "autoStart": {
+   "gtd": {
+    "pomodoro": {
+     "autoStartBreaks": true,
+     "autoStartFocus": true
+    }
+   }
+  }
+ },
+ "sessions": {
+  "running": {
+   "durations": {
+    "focusMinutes": 25,
+    "breakMinutes": 5
+   },
+   "timerState": {
+    "phase": "focus",
+    "remainingSeconds": 1500,
+    "isRunning": true,
+    "completedFocusSessions": 2
+   },
+   "phaseEndsAt": "2026-10-05T12:10:00.000Z",
+   "sessionHistory": {
+    "totalCompletedFocusSessions": 5,
+    "todayDayKey": "2026-10-05",
+    "completedTodayFocusSessions": 2,
+    "completedFocusSessionsByTaskId": {
+     "a": 2
+    }
+   },
+   "updatedAtMs": 1791201540000
+  },
+  "runningLinked": {
+   "durations": {
+    "focusMinutes": 40,
+    "breakMinutes": 8
+   },
+   "timerState": {
+    "phase": "focus",
+    "remainingSeconds": 2400,
+    "isRunning": true,
+    "completedFocusSessions": 0
+   },
+   "phaseEndsAt": "2026-10-05T12:20:00.000Z",
+   "selectedTaskId": "a",
+   "updatedAtMs": 1791201540000
+  },
+  "pausedBreak": {
+   "durations": {
+    "focusMinutes": 50,
+    "breakMinutes": 10
+   },
+   "timerState": {
+    "phase": "break",
+    "remainingSeconds": 125,
+    "isRunning": false,
+    "completedFocusSessions": 1
+   },
+   "selectedTaskId": "b",
+   "sessionHistory": {
+    "totalCompletedFocusSessions": 5,
+    "todayDayKey": "2026-10-05",
+    "completedTodayFocusSessions": 2,
+    "completedFocusSessionsByTaskId": {
+     "a": 2
+    }
+   },
+   "updatedAtMs": 1791201540000
+  },
+  "focusFinished": {
+   "durations": {
+    "focusMinutes": 25,
+    "breakMinutes": 5
+   },
+   "timerState": {
+    "phase": "focus",
+    "remainingSeconds": 10,
+    "isRunning": true,
+    "completedFocusSessions": 0
+   },
+   "phaseEndsAt": "2026-10-05T11:59:59.000Z",
+   "selectedTaskId": "a",
+   "updatedAtMs": 1791201540000
+  },
+  "breakFinished": {
+   "durations": {
+    "focusMinutes": 25,
+    "breakMinutes": 5
+   },
+   "timerState": {
+    "phase": "break",
+    "remainingSeconds": 10,
+    "isRunning": true,
+    "completedFocusSessions": 1
+   },
+   "phaseEndsAt": "2026-10-05T11:59:59.000Z",
+   "updatedAtMs": 1791201540000
+  },
+  "gone": {
+   "durations": {
+    "focusMinutes": 25,
+    "breakMinutes": 5
+   },
+   "timerState": {
+    "phase": "focus",
+    "remainingSeconds": 1500,
+    "isRunning": false,
+    "completedFocusSessions": 0
+   },
+   "selectedTaskId": "deleted-task",
+   "updatedAtMs": 1791201540000
+  }
+ },
+ "scenarios": [
+  {
+   "name": "loading, then idle",
+   "settings": "base",
+   "device": {
+    "hold": true
+   },
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:common.start"
+    ],
+    [
+     "press",
+     "50/10"
+    ],
+    [
+     "release"
+    ]
+   ]
+  },
+  {
+   "name": "idle: start, pause, reset, switch, presets",
+   "settings": "base",
+   "device": {},
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:common.start"
+    ],
+    [
+     "press",
+     "k:common.pause"
+    ],
+    [
+     "press",
+     "k:common.reset"
+    ],
+    [
+     "press",
+     "k:pomodoro.switchToBreak"
+    ],
+    [
+     "press",
+     "k:common.start"
+    ],
+    [
+     "press",
+     "k:pomodoro.switchToFocus"
+    ],
+    [
+     "press",
+     "50/10"
+    ],
+    [
+     "press",
+     "15/3"
+    ],
+    [
+     "press",
+     "25/5"
+    ]
+   ]
+  },
+  {
+   "name": "running focus with history",
+   "settings": "base",
+   "device": {
+    "session": "running"
+   },
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:common.pause"
+    ],
+    [
+     "press",
+     "k:common.start"
+    ]
+   ]
+  },
+  {
+   "name": "paused break, link off",
+   "settings": "base",
+   "device": {
+    "session": "pausedBreak"
+   },
+   "pickerTasks": [
+    "a",
+    "b"
+   ],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.switchToFocus"
+    ]
+   ]
+  },
+  {
+   "name": "finished focus: the line until reset",
+   "settings": "base",
+   "device": {
+    "session": "focusFinished"
+   },
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:common.start"
+    ],
+    [
+     "press",
+     "k:common.reset"
+    ],
+    [
+     "press",
+     "k:common.start"
+    ]
+   ]
+  },
+  {
+   "name": "finished break",
+   "settings": "base",
+   "device": {
+    "session": "breakFinished"
+   },
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.switchToBreak"
+    ]
+   ]
+  },
+  {
+   "name": "finished break, auto-start on",
+   "settings": "autoStart",
+   "device": {
+    "session": "breakFinished"
+   },
+   "pickerTasks": [],
+   "actions": []
+  },
+  {
+   "name": "finished focus, linked task: Task done clears the line",
+   "settings": "link",
+   "device": {
+    "session": "focusFinished"
+   },
+   "pickerTasks": [
+    "a",
+    "b"
+   ],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.markTaskDone"
+    ]
+   ]
+  },
+  {
+   "name": "link on: pick a task, mark it done, unlink",
+   "settings": "link",
+   "device": {},
+   "pickerTasks": [
+    "a",
+    "b"
+   ],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "dismiss"
+    ],
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "pickTask",
+     "b"
+    ],
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "pickTask",
+     "a"
+    ],
+    [
+     "press",
+     "k:pomodoro.markTaskDone"
+    ],
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "modalPress",
+     "k:pomodoro.timerOnly"
+    ]
+   ]
+  },
+  {
+   "name": "link on: no task to pick",
+   "settings": "link",
+   "device": {},
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "modalPress",
+     "k:pomodoro.timerOnly"
+    ]
+   ]
+  },
+  {
+   "name": "link on: the linked task is gone",
+   "settings": "link",
+   "device": {
+    "session": "gone"
+   },
+   "pickerTasks": [
+    "a"
+   ],
+   "actions": []
+  },
+  {
+   "name": "link off keeps a stored link hidden",
+   "settings": "base",
+   "device": {
+    "session": "runningLinked"
+   },
+   "pickerTasks": [
+    "a"
+   ],
+   "actions": []
+  },
+  {
+   "name": "custom durations, running and linked",
+   "settings": "custom",
+   "device": {
+    "session": "runningLinked",
+    "collapsed": "false"
+   },
+   "pickerTasks": [
+    "a",
+    "b"
+   ],
+   "actions": [
+    [
+     "press",
+     "25/5"
+    ],
+    [
+     "press",
+     "40/8"
+    ]
+   ]
+  },
+  {
+   "name": "collapsed while running",
+   "settings": "base",
+   "device": {
+    "session": "running",
+    "collapsed": "true"
+   },
+   "pickerTasks": [],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.expand"
+    ],
+    [
+     "press",
+     "k:pomodoro.collapse"
+    ]
+   ]
+  },
+  {
+   "name": "collapsed while paused",
+   "settings": "base",
+   "device": {
+    "session": "pausedBreak",
+    "collapsed": "true"
+   },
+   "pickerTasks": [],
+   "actions": []
+  },
+  {
+   "name": "in German, linked and paused",
+   "settings": "link",
+   "device": {
+    "language": "de",
+    "session": "pausedBreak"
+   },
+   "pickerTasks": [
+    "a",
+    "b"
+   ],
+   "actions": [
+    [
+     "press",
+     "k:pomodoro.selectedTask"
+    ],
+    [
+     "dismiss"
+    ],
+    [
+     "press",
+     "k:pomodoro.collapse"
+    ]
+   ]
+  }
+ ],
+ "observations": {
+  "loading, then idle": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "Loading...",
+      "#64748b"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      true,
+      0.6,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      true,
+      0.5,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 1,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": true,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "Loading...",
+      "#64748b"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      true,
+      0.6,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      true,
+      0.5,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 1,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": true,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "Loading...",
+      "#64748b"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      true,
+      0.6,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      true,
+      0.6,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      true,
+      0.5,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      true,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 1,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": true,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "idle: start, pause, reset, switch, presets": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": true,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "reset",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "switchPhase",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": true,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "switchPhase",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "50:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setDurations",
+      {
+       "focusMinutes": 50,
+       "breakMinutes": 10
+      },
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 3000,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#fff"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "15:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setDurations",
+      {
+       "focusMinutes": 15,
+       "breakMinutes": 3
+      },
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 15,
+      "breakMinutes": 3
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 900,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setDurations",
+      {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "running focus with history": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": true,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": true,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   }
+  ],
+  "paused break, link off": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "50:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "switchPhase",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 3000,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   }
+  ],
+  "finished focus: the line until reset": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ],
+     [
+      "Focus session complete. Take a short break.",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": "focus-finished",
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": true,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "reset",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "toggle",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": true,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   }
+  ],
+  "finished break": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ],
+     [
+      "Break complete. Ready for the next focus session.",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": "break-finished",
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "switchPhase",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "finished break, auto-start on": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "24:59",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ],
+     [
+      "Break complete. Ready for the next focus session.",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": true,
+       "autoStartFocus": true
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1499,
+      "isRunning": true,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": "break-finished",
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "finished focus, linked task: Task done clears the line": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ],
+     [
+      "Focus session complete. Take a short break.",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": "focus-finished",
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Break",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "05:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 1",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Focus",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Focus",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "clearLastEvent"
+     ]
+    ],
+    "device": [],
+    "markedDone": [
+     "a"
+    ],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 300,
+      "isRunning": false,
+      "completedFocusSessions": 1
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 1,
+      "completedFocusSessionsByTaskId": {
+       "a": 1
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 1
+     }
+    }
+   }
+  ],
+  "link on: pick a task, mark it done, unlink": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer task",
+       "#0f172a"
+      ],
+      [
+       "Timer only",
+       "#3b82f6"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Timer only",
+       false,
+       1,
+       "#3b82f618",
+       true
+      ]
+     ],
+     "list": {
+      "empty": null,
+      "rows": [
+       {
+        "texts": [
+         [
+          "Write the report",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Write the report",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       },
+       {
+        "texts": [
+         [
+          "Call Sam",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Call Sam",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer task",
+       "#0f172a"
+      ],
+      [
+       "Timer only",
+       "#3b82f6"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Timer only",
+       false,
+       1,
+       "#3b82f618",
+       true
+      ]
+     ],
+     "list": {
+      "empty": null,
+      "rows": [
+       {
+        "texts": [
+         [
+          "Write the report",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Write the report",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       },
+       {
+        "texts": [
+         [
+          "Call Sam",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Call Sam",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Call Sam",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setSelectedTaskId",
+      "b"
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Call Sam",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer task",
+       "#0f172a"
+      ],
+      [
+       "Timer only",
+       "#0f172a"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Timer only",
+       false,
+       1,
+       "#f1f5f9",
+       false
+      ]
+     ],
+     "list": {
+      "empty": null,
+      "rows": [
+       {
+        "texts": [
+         [
+          "Write the report",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Write the report",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       },
+       {
+        "texts": [
+         [
+          "Call Sam",
+          "#3b82f6"
+         ]
+        ],
+        "buttons": [
+         [
+          "Call Sam",
+          false,
+          1,
+          "#3b82f618",
+          true
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setSelectedTaskId",
+      "a"
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "clearLastEvent"
+     ]
+    ],
+    "device": [],
+    "markedDone": [
+     "a"
+    ],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer task",
+       "#0f172a"
+      ],
+      [
+       "Timer only",
+       "#0f172a"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Timer only",
+       false,
+       1,
+       "#f1f5f9",
+       false
+      ]
+     ],
+     "list": {
+      "empty": null,
+      "rows": [
+       {
+        "texts": [
+         [
+          "Write the report",
+          "#3b82f6"
+         ]
+        ],
+        "buttons": [
+         [
+          "Write the report",
+          false,
+          1,
+          "#3b82f618",
+          true
+         ]
+        ]
+       },
+       {
+        "texts": [
+         [
+          "Call Sam",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Call Sam",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setSelectedTaskId",
+      "<undefined>"
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "link on: no task to pick": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer task",
+       "#0f172a"
+      ],
+      [
+       "Timer only",
+       "#3b82f6"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Timer only",
+       false,
+       1,
+       "#3b82f618",
+       true
+      ]
+     ],
+     "list": {
+      "empty": {
+       "texts": [
+        [
+         "No available focus task",
+         "#64748b"
+        ]
+       ],
+       "buttons": []
+      },
+      "rows": []
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setSelectedTaskId",
+      "<undefined>"
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "link on: the linked task is gone": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Timer only",
+      "#0f172a"
+     ],
+     [
+      "Link task",
+      "#3b82f6"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ],
+     [
+      "setSelectedTaskId",
+      "<undefined>"
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "link off keeps a stored link hidden": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "20:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 40,
+      "breakMinutes": 8
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1200,
+      "isRunning": true,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "custom durations, running and linked": [
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "40/8",
+      "#fff"
+     ],
+     [
+      "20:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "40/8",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 40,
+      "breakMinutes": 8
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1200,
+      "isRunning": true,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "40/8",
+      "#64748b"
+     ],
+     [
+      "25:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "40/8",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setDurations",
+      {
+       "focusMinutes": 25,
+       "breakMinutes": 5
+      },
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 1500,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "40/8",
+      "#fff"
+     ],
+     [
+      "40:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 0",
+      "#64748b"
+     ],
+     [
+      "Timer task",
+      "#64748b"
+     ],
+     [
+      "Write the report",
+      "#0f172a"
+     ],
+     [
+      "Change",
+      "#3b82f6"
+     ],
+     [
+      "Task done",
+      "#10b981"
+     ],
+     [
+      "Start",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "40/8",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Timer task",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Mark task done",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Start",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "setDurations",
+      {
+       "focusMinutes": 40,
+       "breakMinutes": 8
+      },
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 40,
+      "breakMinutes": 8
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 2400,
+      "isRunning": false,
+      "completedFocusSessions": 0
+     },
+     "selectedTaskId": "a",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 0,
+      "completedFocusSessionsByTaskId": {},
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 0
+     }
+    }
+   }
+  ],
+  "collapsed while running": [
+   {
+    "texts": [
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus · Running",
+      "#3b82f6"
+     ]
+    ],
+    "buttons": [
+     [
+      "Expand timer",
+      false,
+      1,
+      null,
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronDown"
+    ],
+    "spinners": 0,
+    "runningDot": true,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": true,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro Timer",
+      "#0f172a"
+     ],
+     [
+      "Focus",
+      "#3b82f6"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#fff"
+     ],
+     [
+      "50/10",
+      "#64748b"
+     ],
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus sessions completed: 2",
+      "#64748b"
+     ],
+     [
+      "Pause",
+      "#fff"
+     ],
+     [
+      "Reset",
+      "#64748b"
+     ],
+     [
+      "Switch to Break",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Collapse timer",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Pause",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Reset",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Switch to Break",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [
+     [
+      "setItem",
+      "@mindwtr_pomodoro_collapsed",
+      "false"
+     ]
+    ],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": true,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "10:00",
+      "#0f172a"
+     ],
+     [
+      "Focus · Running",
+      "#3b82f6"
+     ]
+    ],
+    "buttons": [
+     [
+      "Expand timer",
+      false,
+      1,
+      null,
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronDown"
+    ],
+    "spinners": 0,
+    "runningDot": true,
+    "modal": null,
+    "controller": [],
+    "device": [
+     [
+      "setItem",
+      "@mindwtr_pomodoro_collapsed",
+      "true"
+     ]
+    ],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 25,
+      "breakMinutes": 5
+     },
+     "timerState": {
+      "phase": "focus",
+      "remainingSeconds": 600,
+      "isRunning": true,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "<undefined>",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   }
+  ],
+  "collapsed while paused": [
+   {
+    "texts": [
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Break · Paused",
+      "#10b981"
+     ]
+    ],
+    "buttons": [
+     [
+      "Expand timer",
+      false,
+      1,
+      null,
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronDown"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   }
+  ],
+  "in German, linked and paused": [
+   {
+    "texts": [
+     [
+      "Pomodoro-Timer",
+      "#0f172a"
+     ],
+     [
+      "Pause",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Abgeschlossene Fokus-Sitzungen: 2",
+      "#64748b"
+     ],
+     [
+      "Timer-Aufgabe",
+      "#64748b"
+     ],
+     [
+      "Call Sam",
+      "#0f172a"
+     ],
+     [
+      "Ändern",
+      "#3b82f6"
+     ],
+     [
+      "Aufgabe erledigt",
+      "#10b981"
+     ],
+     [
+      "Starten",
+      "#fff"
+     ],
+     [
+      "Zurücksetzen",
+      "#64748b"
+     ],
+     [
+      "Zu Fokus wechseln",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Timer einklappen",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Timer-Aufgabe",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Aufgabe als erledigt markieren",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Starten",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Zurücksetzen",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Zu Fokus wechseln",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [
+     [
+      "ensureHydrated",
+      {
+       "autoStartBreaks": false,
+       "autoStartFocus": false
+      }
+     ]
+    ],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro-Timer",
+      "#0f172a"
+     ],
+     [
+      "Pause",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Abgeschlossene Fokus-Sitzungen: 2",
+      "#64748b"
+     ],
+     [
+      "Timer-Aufgabe",
+      "#64748b"
+     ],
+     [
+      "Call Sam",
+      "#0f172a"
+     ],
+     [
+      "Ändern",
+      "#3b82f6"
+     ],
+     [
+      "Aufgabe erledigt",
+      "#10b981"
+     ],
+     [
+      "Starten",
+      "#fff"
+     ],
+     [
+      "Zurücksetzen",
+      "#64748b"
+     ],
+     [
+      "Zu Fokus wechseln",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Timer einklappen",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Timer-Aufgabe",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Aufgabe als erledigt markieren",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Starten",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Zurücksetzen",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Zu Fokus wechseln",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": {
+     "texts": [
+      [
+       "Timer-Aufgabe",
+       "#0f172a"
+      ],
+      [
+       "Nur Timer",
+       "#0f172a"
+      ]
+     ],
+     "buttons": [
+      [
+       "",
+       false,
+       1,
+       "#00000099",
+       null
+      ],
+      [
+       "Nur Timer",
+       false,
+       1,
+       "#f1f5f9",
+       false
+      ]
+     ],
+     "list": {
+      "empty": null,
+      "rows": [
+       {
+        "texts": [
+         [
+          "Write the report",
+          "#0f172a"
+         ]
+        ],
+        "buttons": [
+         [
+          "Write the report",
+          false,
+          1,
+          "#f1f5f9",
+          false
+         ]
+        ]
+       },
+       {
+        "texts": [
+         [
+          "Call Sam",
+          "#3b82f6"
+         ]
+        ],
+        "buttons": [
+         [
+          "Call Sam",
+          false,
+          1,
+          "#3b82f618",
+          true
+         ]
+        ]
+       }
+      ]
+     }
+    },
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "Pomodoro-Timer",
+      "#0f172a"
+     ],
+     [
+      "Pause",
+      "#10b981"
+     ],
+     [
+      "15/3",
+      "#64748b"
+     ],
+     [
+      "25/5",
+      "#64748b"
+     ],
+     [
+      "50/10",
+      "#fff"
+     ],
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Abgeschlossene Fokus-Sitzungen: 2",
+      "#64748b"
+     ],
+     [
+      "Timer-Aufgabe",
+      "#64748b"
+     ],
+     [
+      "Call Sam",
+      "#0f172a"
+     ],
+     [
+      "Ändern",
+      "#3b82f6"
+     ],
+     [
+      "Aufgabe erledigt",
+      "#10b981"
+     ],
+     [
+      "Starten",
+      "#fff"
+     ],
+     [
+      "Zurücksetzen",
+      "#64748b"
+     ],
+     [
+      "Zu Fokus wechseln",
+      "#64748b"
+     ]
+    ],
+    "buttons": [
+     [
+      "Timer einklappen",
+      false,
+      1,
+      null,
+      null
+     ],
+     [
+      "15/3",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "25/5",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "50/10",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Timer-Aufgabe",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Aufgabe als erledigt markieren",
+      false,
+      1,
+      "#10b98118",
+      null
+     ],
+     [
+      "Starten",
+      false,
+      1,
+      "#3b82f6",
+      null
+     ],
+     [
+      "Zurücksetzen",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ],
+     [
+      "Zu Fokus wechseln",
+      false,
+      1,
+      "#f1f5f9",
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronUp"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   },
+   {
+    "texts": [
+     [
+      "02:05",
+      "#0f172a"
+     ],
+     [
+      "Pause · Pausiert",
+      "#10b981"
+     ]
+    ],
+    "buttons": [
+     [
+      "Timer ausklappen",
+      false,
+      1,
+      null,
+      null
+     ]
+    ],
+    "icons": [
+     "Icon:ChevronDown"
+    ],
+    "spinners": 0,
+    "runningDot": false,
+    "modal": null,
+    "controller": [],
+    "device": [
+     [
+      "setItem",
+      "@mindwtr_pomodoro_collapsed",
+      "true"
+     ]
+    ],
+    "markedDone": [],
+    "session": {
+     "isHydrating": false,
+     "durations": {
+      "focusMinutes": 50,
+      "breakMinutes": 10
+     },
+     "timerState": {
+      "phase": "break",
+      "remainingSeconds": 125,
+      "isRunning": false,
+      "completedFocusSessions": 5
+     },
+     "selectedTaskId": "b",
+     "lastEvent": null,
+     "sessionHistory": {
+      "totalCompletedFocusSessions": 5,
+      "completedFocusSessionsByTaskId": {
+       "a": 2
+      },
+      "todayDayKey": "2026-10-05",
+      "completedTodayFocusSessions": 2
+     }
+    }
+   }
+  ]
+ }
+}
