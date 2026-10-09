@@ -4,11 +4,11 @@ import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { workspaceSessionStorage as AsyncStorage } from '@/lib/workspace-session-storage';
 import {
   type Task,
-  formatPomodoroClock,
-  getPomodoroFocusSessionsCompletedToday,
-  getPomodoroPresetOptions,
+  buildPomodoroPanelModel,
+  getPomodoroAutoStartOptions,
+  isPomodoroLinkedTaskGone,
   type PomodoroAutoStartOptions,
-  tFallback,
+  type PomodoroPanelAction,
   useTaskStore,
 } from '@mindwtr/core';
 
@@ -19,6 +19,7 @@ import { logWarn } from '../lib/app-log';
 import { POMODORO_COLLAPSED_STORAGE_KEY } from '../lib/pomodoro-session';
 import { mobilePomodoroController, useMobilePomodoroControllerState } from '../lib/pomodoro-controller';
 
+/** The Focus screen's Pomodoro card, drawn from core's model (packages/core/src/pomodoro-panel-model.ts), which the native app draws too. */
 export function PomodoroPanel({
   tasks,
   onMarkDone,
@@ -29,24 +30,27 @@ export function PomodoroPanel({
   const { t } = useLanguage();
   const tc = useThemeColors();
   const filledButton = useFilledButtonColors();
-  const customDurations = useTaskStore((state) => state.settings.gtd?.pomodoro?.customDurations);
-  const linkTaskEnabled = useTaskStore((state) => state.settings.gtd?.pomodoro?.linkTask === true);
+  const settings = useTaskStore((state) => state.settings);
   const liveTasks = useTaskStore((state) => state.tasks);
-  const autoStartBreaks = useTaskStore((state) => state.settings.gtd?.pomodoro?.autoStartBreaks === true);
-  const autoStartFocus = useTaskStore((state) => state.settings.gtd?.pomodoro?.autoStartFocus === true);
+  const { autoStartBreaks, autoStartFocus } = getPomodoroAutoStartOptions(settings);
   const autoStartOptions = useMemo<PomodoroAutoStartOptions>(
     () => ({ autoStartBreaks, autoStartFocus }),
     [autoStartBreaks, autoStartFocus]
   );
   const pomodoro = useMobilePomodoroControllerState();
-  const { durations, timerState, selectedTaskId, lastEvent, sessionHistory } = pomodoro;
   // Presentation only, and deliberately device-local: a phone folding the card
   // away should not fold it away on the desktop too, so this lives in
   // AsyncStorage rather than synced settings (#946, matching desktop's #875).
   // Starts expanded so an update never hides a timer someone was already using.
   const [collapsed, setCollapsed] = useState(false);
-  const isHydratingSession = pomodoro.isHydrating;
   const [isTaskPickerOpen, setIsTaskPickerOpen] = useState(false);
+  const model = useMemo(
+    () => buildPomodoroPanelModel({ session: pomodoro, settings, tasks: liveTasks, collapsed, t }),
+    [collapsed, liveTasks, pomodoro, settings, t]
+  );
+  const isHydratingSession = model.loading !== null;
+  const linkTaskEnabled = model.link !== null;
+  const linkedTaskGone = isPomodoroLinkedTaskGone(pomodoro, settings, liveTasks);
 
   useEffect(() => {
     void mobilePomodoroController.ensureHydrated(autoStartOptions);
@@ -57,42 +61,8 @@ export function PomodoroPanel({
       setIsTaskPickerOpen(false);
       return;
     }
-    if (!selectedTaskId) return;
-    if (liveTasks.some((task) => task.id === selectedTaskId)) return;
-    mobilePomodoroController.setSelectedTaskId(undefined);
-  }, [linkTaskEnabled, liveTasks, selectedTaskId]);
-
-  const selectedTask = useMemo(
-    () => (linkTaskEnabled && selectedTaskId ? liveTasks.find((task) => task.id === selectedTaskId) : undefined),
-    [linkTaskEnabled, liveTasks, selectedTaskId]
-  );
-  const presetOptions = useMemo(() => getPomodoroPresetOptions(customDurations), [customDurations]);
-
-  const cardTitle = tFallback(t, 'pomodoro.mobileTitle', 'Pomodoro Timer');
-  const focusDoneLabel = tFallback(t, 'pomodoro.focusComplete', 'Focus session complete. Take a short break.');
-  const breakDoneLabel = tFallback(t, 'pomodoro.breakComplete', 'Break complete. Ready for the next focus session.');
-  const phaseLabel = timerState.phase === 'focus'
-    ? tFallback(t, 'pomodoro.phaseFocusShort', 'Focus')
-    : tFallback(t, 'pomodoro.phaseBreakShort', 'Break');
-  const noTaskLabel = tFallback(t, 'pomodoro.noTask', 'No available focus task');
-  const loadingLabel = tFallback(t, 'common.loading', 'Loading...');
-  const sessionsDoneLabel = tFallback(t, 'pomodoro.sessionsDone', 'Focus sessions completed');
-  const pauseLabel = tFallback(t, 'common.pause', 'Pause');
-  const startLabel = tFallback(t, 'common.start', 'Start');
-  const resetLabel = tFallback(t, 'common.reset', 'Reset');
-  const switchLabel = timerState.phase === 'focus'
-    ? tFallback(t, 'pomodoro.switchToBreak', 'Switch to Break')
-    : tFallback(t, 'pomodoro.switchToFocus', 'Switch to Focus');
-  const markDoneLabel = tFallback(t, 'pomodoro.markTaskDone', 'Mark task done');
-  const selectedTaskLabel = tFallback(t, 'pomodoro.selectedTask', 'Timer task');
-  const timerOnlyLabel = tFallback(t, 'pomodoro.timerOnly', 'Timer only');
-  const changeTaskLabel = selectedTask ? tFallback(t, 'common.change', 'Change') : tFallback(t, 'pomodoro.linkTask', 'Link task');
-  const taskDoneShortLabel = tFallback(t, 'pomodoro.taskDoneShort', 'Task done');
-  const runningLabel = tFallback(t, 'pomodoro.running', 'Running');
-  const pausedLabel = tFallback(t, 'pomodoro.paused', 'Paused');
-  const handleApplyPreset = (focusMinutes: number, breakMinutes: number) => {
-    mobilePomodoroController.setDurations({ focusMinutes, breakMinutes }, autoStartOptions);
-  };
+    if (linkedTaskGone) mobilePomodoroController.setSelectedTaskId(undefined);
+  }, [linkTaskEnabled, linkedTaskGone]);
 
   useEffect(() => {
     let active = true;
@@ -109,62 +79,65 @@ export function PomodoroPanel({
     };
   }, []);
 
-  const toggleCollapsed = (next: boolean) => {
-    setCollapsed(next);
-    void AsyncStorage.setItem(POMODORO_COLLAPSED_STORAGE_KEY, String(next)).catch((error) => {
-      logWarn('Failed to save pomodoro collapse preference', { scope: 'pomodoro', extra: { error: String(error) } });
-    });
+  const runAction = (action: PomodoroPanelAction) => {
+    switch (action.type) {
+      case 'run':
+        mobilePomodoroController.toggle(autoStartOptions);
+        return;
+      case 'reset':
+        mobilePomodoroController.reset(autoStartOptions);
+        return;
+      case 'phase':
+        mobilePomodoroController.switchPhase(autoStartOptions);
+        return;
+      case 'preset':
+        mobilePomodoroController.setDurations({ focusMinutes: action.focusMinutes, breakMinutes: action.breakMinutes }, autoStartOptions);
+        return;
+      case 'selectTask':
+        mobilePomodoroController.setSelectedTaskId(action.taskId ?? undefined);
+        return;
+      case 'markDone':
+        onMarkDone(action.taskId);
+        mobilePomodoroController.clearLastEvent();
+        return;
+      case 'collapse':
+        setCollapsed(action.value);
+        void AsyncStorage.setItem(POMODORO_COLLAPSED_STORAGE_KEY, String(action.value)).catch((error) => {
+          logWarn('Failed to save pomodoro collapse preference', { scope: 'pomodoro', extra: { error: String(error) } });
+        });
+        return;
+    }
   };
 
-  const handleToggleRun = () => {
-    mobilePomodoroController.toggle(autoStartOptions);
-  };
-
-  const handleReset = () => {
-    mobilePomodoroController.reset(autoStartOptions);
-  };
-
-  const handleSwitchPhase = () => {
-    mobilePomodoroController.switchPhase(autoStartOptions);
-  };
-
-  const handleMarkDone = () => {
-    if (!selectedTask) return;
-    onMarkDone(selectedTask.id);
-    mobilePomodoroController.clearLastEvent();
-  };
-
-  const collapseLabel = tFallback(t, 'pomodoro.collapse', 'Collapse timer');
-  const expandLabel = tFallback(t, 'pomodoro.expand', 'Expand timer');
-  const phaseColor = timerState.phase === 'focus' ? tc.tint : tc.success;
+  const phaseColor = model.phase === 'focus' ? tc.tint : tc.success;
 
   const collapseToggle = (
     <Pressable
-      accessibilityLabel={collapsed ? expandLabel : collapseLabel}
+      accessibilityLabel={model.collapseToggle.label}
       accessibilityRole="button"
       hitSlop={8}
-      onPress={() => toggleCollapsed(!collapsed)}
+      onPress={() => runAction(model.collapseToggle.action)}
       style={styles.collapseToggle}
     >
-      {collapsed
+      {model.collapsed
         ? <ChevronDown size={18} color={tc.secondaryText} />
         : <ChevronUp size={18} color={tc.secondaryText} />}
     </Pressable>
   );
 
-  if (collapsed) {
+  if (model.collapsed) {
     // The session state and its timers live above this branch, so folding the
     // card away never stops the run — the clock here is the same one.
     return (
       <View style={[styles.card, styles.collapsedCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
         <View style={styles.collapsedRow}>
           <Text style={[styles.collapsedClock, { color: tc.text }]}>
-            {formatPomodoroClock(timerState.remainingSeconds)}
+            {model.clock}
           </Text>
           <Text style={[styles.phaseStatusText, { color: phaseColor }]} numberOfLines={1}>
-            {`${phaseLabel} · ${timerState.isRunning ? runningLabel : pausedLabel}`}
+            {model.status}
           </Text>
-          {timerState.isRunning && (
+          {model.running && (
             <View
               accessible={false}
               accessibilityElementsHidden
@@ -179,90 +152,89 @@ export function PomodoroPanel({
     );
   }
 
+  const { link, picker } = model;
+
   return (
     <View style={[styles.card, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
-          <Text style={[styles.title, { color: tc.text }]}>{cardTitle}</Text>
+          <Text style={[styles.title, { color: tc.text }]}>{model.title}</Text>
         </View>
         <View style={styles.phaseStatus}>
           <Text style={[styles.phaseStatusText, { color: phaseColor }]}>
-            {phaseLabel}
+            {model.phaseLabel}
           </Text>
         </View>
         {collapseToggle}
       </View>
 
-      {isHydratingSession && (
+      {model.loading !== null && (
         <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color={tc.tint} />
-          <Text style={[styles.loadingText, { color: tc.secondaryText }]}>{loadingLabel}</Text>
+          <Text style={[styles.loadingText, { color: tc.secondaryText }]}>{model.loading}</Text>
         </View>
       )}
 
       <View style={styles.presetRow}>
-        {presetOptions.map((preset) => {
-          const active = durations.focusMinutes === preset.focusMinutes && durations.breakMinutes === preset.breakMinutes;
-          return (
-            <Pressable
-              key={preset.id}
-              onPress={() => handleApplyPreset(preset.focusMinutes, preset.breakMinutes)}
-              disabled={isHydratingSession}
-              style={[
-                styles.presetChip,
-                {
-                  opacity: isHydratingSession ? 0.6 : 1,
-                  borderColor: active ? tc.tint : tc.border,
-                  backgroundColor: active ? tc.tint : tc.filterBg,
-                },
-              ]}
-            >
-              <Text style={[styles.presetText, { color: active ? tc.onTint : tc.secondaryText }]}>{preset.label}</Text>
-            </Pressable>
-          );
-        })}
+        {model.presets.map((preset) => (
+          <Pressable
+            key={preset.id}
+            onPress={() => runAction(preset.action)}
+            disabled={isHydratingSession}
+            style={[
+              styles.presetChip,
+              {
+                opacity: isHydratingSession ? 0.6 : 1,
+                borderColor: preset.active ? tc.tint : tc.border,
+                backgroundColor: preset.active ? tc.tint : tc.filterBg,
+              },
+            ]}
+          >
+            <Text style={[styles.presetText, { color: preset.active ? tc.onTint : tc.secondaryText }]}>{preset.label}</Text>
+          </Pressable>
+        ))}
       </View>
 
       <View style={styles.timerBox}>
-        <Text style={[styles.timerText, { color: tc.text }]}>{formatPomodoroClock(timerState.remainingSeconds)}</Text>
+        <Text style={[styles.timerText, { color: tc.text }]}>{model.clock}</Text>
         <Text style={[styles.sessionText, { color: tc.secondaryText }]}>
-          {`${sessionsDoneLabel}: ${getPomodoroFocusSessionsCompletedToday(sessionHistory)}`}
+          {model.sessions}
         </Text>
       </View>
 
-      {linkTaskEnabled && (
+      {link && (
         <View style={styles.taskLinkRow}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={selectedTaskLabel}
+            accessibilityLabel={link.label}
             onPress={() => setIsTaskPickerOpen(true)}
             style={[styles.taskPickerButton, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
           >
             <View style={styles.taskPickerTextBlock}>
-              <Text style={[styles.taskPickerLabel, { color: tc.secondaryText }]}>{selectedTaskLabel}</Text>
+              <Text style={[styles.taskPickerLabel, { color: tc.secondaryText }]}>{link.label}</Text>
               <Text style={[styles.taskPickerValue, { color: tc.text }]} numberOfLines={1}>
-                {selectedTask?.title ?? timerOnlyLabel}
+                {link.value}
               </Text>
             </View>
-            <Text style={[styles.taskPickerAction, { color: tc.tint }]}>{changeTaskLabel}</Text>
+            <Text style={[styles.taskPickerAction, { color: tc.tint }]}>{link.changeLabel}</Text>
           </Pressable>
-          {selectedTask && (
+          {link.markDone && (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={markDoneLabel}
-              onPress={handleMarkDone}
-              disabled={!selectedTask || isHydratingSession}
+              accessibilityLabel={link.markDone.accessibilityLabel}
+              onPress={() => runAction(link.markDone!.action)}
+              disabled={isHydratingSession}
               style={[
                 styles.actionDone,
                 {
-                  opacity: selectedTask && !isHydratingSession ? 1 : 0.5,
+                  opacity: !isHydratingSession ? 1 : 0.5,
                   borderColor: tc.success,
                   backgroundColor: `${tc.success}18`,
                 },
               ]}
             >
               <Text style={[styles.actionDoneText, { color: tc.success }]}>
-                {taskDoneShortLabel}
+                {link.markDone.label}
               </Text>
             </Pressable>
           )}
@@ -271,7 +243,7 @@ export function PomodoroPanel({
 
       <View style={styles.timerActionRow}>
         <Pressable
-          onPress={handleToggleRun}
+          onPress={() => runAction(model.primary.action)}
           disabled={isHydratingSession}
           style={[
             styles.actionPrimary,
@@ -283,38 +255,38 @@ export function PomodoroPanel({
           ]}
         >
           <Text style={[styles.actionPrimaryText, { color: filledButton.textColor ?? tc.onTint }]}>
-            {timerState.isRunning ? pauseLabel : startLabel}
+            {model.primary.label}
           </Text>
         </Pressable>
         <Pressable
-          onPress={handleReset}
+          onPress={() => runAction(model.reset.action)}
           disabled={isHydratingSession}
           style={[styles.actionSecondary, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
         >
           <Text style={[styles.actionSecondaryText, { color: tc.secondaryText }]}>
-            {resetLabel}
+            {model.reset.label}
           </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={switchLabel}
-          onPress={handleSwitchPhase}
+          accessibilityLabel={model.switchPhase.label}
+          onPress={() => runAction(model.switchPhase.action)}
           disabled={isHydratingSession}
           style={[styles.actionSecondary, { borderColor: tc.border, backgroundColor: tc.filterBg }]}
         >
           <Text style={[styles.actionSecondaryText, { color: tc.secondaryText }]}>
-            {switchLabel}
+            {model.switchPhase.label}
           </Text>
         </Pressable>
       </View>
 
-      {lastEvent && (
+      {model.event && (
         <Text style={[styles.eventText, { color: tc.secondaryText }]}>
-          {lastEvent === 'focus-finished' ? focusDoneLabel : breakDoneLabel}
+          {model.event}
         </Text>
       )}
 
-      {linkTaskEnabled && (
+      {link && (
         <Modal
           visible={isTaskPickerOpen}
           transparent
@@ -324,36 +296,36 @@ export function PomodoroPanel({
           <View style={styles.modalRoot}>
             <Pressable style={styles.modalScrim} onPress={() => setIsTaskPickerOpen(false)} />
             <View style={[styles.taskPickerSheet, { backgroundColor: tc.cardBg, borderColor: tc.border }]}>
-              <Text style={[styles.taskPickerSheetTitle, { color: tc.text }]}>{selectedTaskLabel}</Text>
+              <Text style={[styles.taskPickerSheetTitle, { color: tc.text }]}>{picker.title}</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ selected: !selectedTaskId }}
+                accessibilityState={{ selected: picker.timerOnly.selected }}
                 onPress={() => {
-                  mobilePomodoroController.setSelectedTaskId(undefined);
+                  runAction(picker.timerOnly.action);
                   setIsTaskPickerOpen(false);
                 }}
                 style={[
                   styles.taskPickerOption,
                   {
-                    borderColor: !selectedTaskId ? tc.tint : tc.border,
-                    backgroundColor: !selectedTaskId ? `${tc.tint}18` : tc.filterBg,
+                    borderColor: picker.timerOnly.selected ? tc.tint : tc.border,
+                    backgroundColor: picker.timerOnly.selected ? `${tc.tint}18` : tc.filterBg,
                   },
                 ]}
               >
-                <Text style={[styles.taskPickerOptionText, { color: !selectedTaskId ? tc.tint : tc.text }]}>
-                  {timerOnlyLabel}
+                <Text style={[styles.taskPickerOptionText, { color: picker.timerOnly.selected ? tc.tint : tc.text }]}>
+                  {picker.timerOnly.label}
                 </Text>
               </Pressable>
               <FlatList
                 data={tasks}
                 renderItem={({ item: task }) => {
-                  const selected = task.id === selectedTaskId;
+                  const selected = task.id === pomodoro.selectedTaskId;
                   return (
                     <Pressable
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
                       onPress={() => {
-                        mobilePomodoroController.setSelectedTaskId(task.id);
+                        runAction({ type: 'selectTask', taskId: task.id });
                         setIsTaskPickerOpen(false);
                       }}
                       style={[
@@ -383,7 +355,7 @@ export function PomodoroPanel({
                 removeClippedSubviews={false}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                  <Text style={[styles.noTaskText, { color: tc.secondaryText }]}>{noTaskLabel}</Text>
+                  <Text style={[styles.noTaskText, { color: tc.secondaryText }]}>{picker.empty}</Text>
                 }
               />
             </View>
