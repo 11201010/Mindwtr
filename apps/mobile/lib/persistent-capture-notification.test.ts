@@ -97,6 +97,22 @@ describe('persistent-capture-notification', () => {
         expect(mockShow).not.toHaveBeenCalled();
     });
 
+    it('removes a notification left pinned by an off the app stopped in the middle of', async () => {
+        // The switch removed the key, then the process died before the notifier's mirror was cleared: the next start re-pins it
+        // from the mirror (NotificationOpenIntentsPackage), so the startup restore removes it again.
+        mockGetItem.mockResolvedValue(null);
+        await restorePersistentCaptureNotificationOnStartup(strings);
+        expect(mockHide).toHaveBeenCalledTimes(1);
+        expect(mockShow).not.toHaveBeenCalled();
+
+        // Storage that cannot be read says nothing: the notification stays as it is.
+        mockHide.mockClear();
+        mockGetItem.mockRejectedValue(new Error('storage unavailable'));
+        await restorePersistentCaptureNotificationOnStartup(strings);
+        expect(mockHide).not.toHaveBeenCalled();
+        expect(mockShow).not.toHaveBeenCalled();
+    });
+
     it('re-arms on every return to the foreground while enabled (#819)', async () => {
         mockGetItem.mockResolvedValue('true');
         const unsubscribe = keepPersistentCaptureNotificationArmed(() => strings);

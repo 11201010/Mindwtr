@@ -63,15 +63,25 @@ export function applyPersistentCaptureNotification(enabled: boolean, strings: Pe
 }
 
 /**
- * Re-post the notification on app start when the preference is on — Android
+ * Re-post the notification on app start when the preference is on (and remove it when off) — Android
  * drops notifications on reboot and there is deliberately no boot receiver in
  * v1, so the app re-arms it the next time it runs. Permission is only checked
  * here, never requested; prompting belongs to the settings toggle.
  */
 export async function restorePersistentCaptureNotificationOnStartup(strings: PersistentCaptureStrings): Promise<void> {
     if (!isPersistentCaptureSupported()) return;
-    const enabled = await readPersistentCaptureEnabled();
-    if (!enabled) return;
+    let stored: string | null;
+    try {
+        stored = await AsyncStorage.getItem(STORAGE_KEY);
+    } catch {
+        return;
+    }
+    if (stored !== 'true') {
+        // An off whose notifier call never ran (the process died after the key went) left the notifier's mirror on, and
+        // every process start re-pins from it: removing it here clears the mirror too.
+        applyPersistentCaptureNotification(false, strings);
+        return;
+    }
     if (!(await hasNotificationPermission())) return;
     applyPersistentCaptureNotification(true, strings);
 }
