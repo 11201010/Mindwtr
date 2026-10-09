@@ -3,7 +3,6 @@ package tech.dongdongbh.mindwtr.pilot
 import android.app.Application
 import java.util.concurrent.TimeUnit
 import tech.dongdongbh.mindwtr.androidwidget.CaptureSyncHeadlessService
-import tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureNotifier
 
 /**
  * Cancels RN's background sync worker, and sets, before any component of this process runs, the hook through which RN's widget module (the quick capture dialog, the
@@ -18,8 +17,8 @@ class MindwtrApplication : Application() {
         // RN's background sync worker goes on the first start after the upgrade (a no-op later): the native job replaces it.
         runCatching { CoreWork.cancelRnSync(this) }
         // RN's NotificationOpenIntentsPackage: any process start (a receiver, a widget, the app) posts the persistent capture
-        // notification again from RN's own mirror of it, off the main thread (#819).
-        Thread({ runCatching { PersistentCaptureNotifier.restoreOnProcessStart(this) } }, "mindwtr-capture-repin").start()
+        // notification again from RN's own mirror of it, off the main thread (#819); a failure reaches the next boot's log.
+        Thread({ PersistentCapture.restoreAtProcessStart(this) }, "mindwtr-capture-repin").start()
     }
 
     private companion object {

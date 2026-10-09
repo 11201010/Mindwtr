@@ -141,25 +141,58 @@ internal fun coreTime(hour: Int, minute: Int): String = String.format(Locale.ROO
 internal object PersistentCapture {
     /** The line Settings › Diagnostics shows for a notification that was not posted or removed (docs/release-notes/diagnostics-ledger.md). */
     const val FAILED = "Native Android persistent capture notification not applied releaseCheck=v1.3.5/native-persistent-capture"
+    /** Held by every post, removal and process-start restore, so a removal never runs between a restore's read and its post. */
+    private val LOCK = Any()
+    /** A process start's failure, kept here (no engine runs yet) until the next boot's restore logs it. */
+    private const val PREFS = "mindwtr_persistent_capture_host"
+    private const val START_FAILURE = "startFailure"
 
     /** Core's `{ post }`: the title, text and channel's name to post, or null to remove it. A failure goes to [log] (core's log). */
     fun apply(context: Context, reply: JSONObject, log: (String, JSONObject) -> Unit) = guarded(log) {
         val post = reply.optJSONObject("post")
-        if (post == null) PersistentCaptureNotifier.cancel(context)
-        else PersistentCaptureNotifier.post(context, post.getString("title"), post.getString("text"), post.getString("channelName"))
+        synchronized(LOCK) {
+            if (post == null) PersistentCaptureNotifier.cancel(context)
+            else PersistentCaptureNotifier.post(context, post.getString("title"), post.getString("text"), post.getString("channelName"))
+        }
     }
 
-    /** RN's restore: only while on, and only with the notification permission (it is never asked for here). */
-    fun restore(context: Context, runtime: CoreHost) = restoreWith(read = { runtime.menuRead("persistentCaptureNotification", "{}") },
-        granted = { ReminderAlarms.permissionGranted(context) }, apply = { reply -> apply(context, reply, runtime::logLine) }, log = runtime::logLine)
+    /**
+     * RN's process-start restore (NotificationOpenIntentsPackage) from the notifier's own mirror, before any engine: a receiver,
+     * a widget or the app. Its failure is kept for the next boot's [restore].
+     */
+    fun restoreAtProcessStart(context: Context) = startWith(restore = { PersistentCaptureNotifier.restoreOnProcessStart(context) },
+        keep = { failure -> context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(START_FAILURE, failure).commit() })
+
+    internal fun startWith(restore: () -> Unit, keep: (String) -> Unit) {
+        runCatching { synchronized(LOCK) { restore() } }.onFailure {
+            runCatching { keep(it.javaClass.simpleName.take(64)) }
+            runCatching { Log.w(CoreHost.TAG, "Native Android persistent capture notification not restored at process start", it) }
+        }
+    }
+
+    /**
+     * RN's restore with core's answer applied whole: on, it is posted again (only with the notification permission, which is never
+     * asked for here); off, it is removed, so an off whose removal never ran (the process died after the key went) does not stay
+     * pinned from the notifier's mirror.
+     */
+    fun restore(context: Context, runtime: CoreHost) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        restoreWith(read = { runtime.menuRead("persistentCaptureNotification", "{}") }, granted = { ReminderAlarms.permissionGranted(context) },
+            apply = { reply -> apply(context, reply, runtime::logLine) }, log = runtime::logLine,
+            startFailure = { prefs.getString(START_FAILURE, null)?.also { prefs.edit().remove(START_FAILURE).commit() } })
+    }
 
     /** [restore] apart from Android (JVM-tested: PersistentCaptureTest). */
-    internal fun restoreWith(read: () -> JSONObject, granted: () -> Boolean, apply: (JSONObject) -> Unit, log: (String, JSONObject) -> Unit) = guarded(log) {
-        val reply = read()
-        if (!reply.isNull("post") && granted()) apply(reply)
+    internal fun restoreWith(read: () -> JSONObject, granted: () -> Boolean, apply: (JSONObject) -> Unit, log: (String, JSONObject) -> Unit,
+        startFailure: () -> String? = { null }) {
+        runCatching { startFailure() }.getOrNull()?.let { failure -> runCatching { log(FAILED, JSONObject().put("error", failure).put("path", "process-start")) } }
+        guarded(log) {
+            val reply = read()
+            if (reply.isNull("post") || granted()) apply(reply)
+        }
     }
 
-    /** [block], its failure in logcat and in Settings › Diagnostics too: no screen shows a notification that was not posted. */
+    /** [block], its failure in Settings › Diagnostics (core's log) and logcat: no screen shows a notification that was not posted. */
     private fun guarded(log: (String, JSONObject) -> Unit, block: () -> Unit) {
         runCatching(block).onFailure {
             runCatching { log(FAILED, JSONObject().put("error", it.javaClass.simpleName)) }

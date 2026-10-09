@@ -2,11 +2,14 @@ package tech.dongdongbh.mindwtr.pilot
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** A persistent capture notification that was not posted again reaches core's log (Settings › Diagnostics), not only logcat. */
+/** The persistent capture notification's restore paths: core's answer applied whole, and every failure in core's log. */
 class PersistentCaptureTest {
     private val on = JSONObject().put("post", JSONObject().put("title", "Quick capture").put("text", "Tap").put("channelName", "Capture"))
+    private val off = JSONObject().put("post", JSONObject.NULL)
 
     @Test fun aFailedPostReachesTheDiagnosticsLog() {
         val lines = mutableListOf<Pair<String, String>>()
@@ -15,12 +18,41 @@ class PersistentCaptureTest {
         assertEquals(listOf(PersistentCapture.FAILED to """{"error":"SecurityException"}"""), lines)
     }
 
-    @Test fun offOrWithoutPermissionPostsNothingAndLogsNothing() {
-        val posted = mutableListOf<JSONObject>()
+    @Test fun offIsAppliedWithOrWithoutPermissionAndOnOnlyWithIt() {
+        val applied = mutableListOf<JSONObject>()
         val lines = mutableListOf<String>()
-        PersistentCapture.restoreWith(read = { JSONObject().put("post", JSONObject.NULL) }, granted = { true }, apply = { posted += it }, log = { m, _ -> lines += m })
-        PersistentCapture.restoreWith(read = { on }, granted = { false }, apply = { posted += it }, log = { m, _ -> lines += m })
-        assertEquals(0, posted.size)
+        PersistentCapture.restoreWith(read = { off }, granted = { false }, apply = { applied += it }, log = { m, _ -> lines += m })
+        PersistentCapture.restoreWith(read = { on }, granted = { false }, apply = { applied += it }, log = { m, _ -> lines += m })
+        assertEquals(listOf(off), applied)
         assertEquals(0, lines.size)
+    }
+
+    /** Off stored, then the process died before the notifier's mirror was cleared: the next start re-pins, the boot removes it. */
+    @Test fun anInterruptedOffIsUndoneAtTheNextStart() {
+        var mirror = true
+        var shown = false
+        PersistentCapture.startWith(restore = { if (mirror) shown = true }, keep = {})
+        assertTrue(shown)
+        PersistentCapture.restoreWith(read = { off }, granted = { true }, apply = { reply -> if (reply.isNull("post")) { mirror = false; shown = false } },
+            log = { _, _ -> })
+        assertFalse(shown)
+        assertFalse(mirror)
+        // And the start after that one re-pins nothing.
+        PersistentCapture.startWith(restore = { if (mirror) shown = true }, keep = {})
+        assertFalse(shown)
+    }
+
+    /** A process start has no engine yet: its failure is kept (one short name) and the next boot's restore logs it once. */
+    @Test fun aProcessStartFailureReachesTheDiagnosticsLogOnce() {
+        var kept: String? = null
+        PersistentCapture.startWith(restore = { throw IllegalStateException("no channel") }, keep = { kept = it })
+        assertEquals("IllegalStateException", kept)
+        val lines = mutableListOf<Pair<String, Map<String, String>>>()
+        val take = { kept.also { kept = null } }
+        repeat(2) {
+            PersistentCapture.restoreWith(read = { off }, granted = { true }, apply = {}, startFailure = take,
+                log = { m, c -> lines += m to c.keys().asSequence().associateWith { c.getString(it) } })
+        }
+        assertEquals(listOf(PersistentCapture.FAILED to mapOf("error" to "IllegalStateException", "path" to "process-start")), lines)
     }
 }
