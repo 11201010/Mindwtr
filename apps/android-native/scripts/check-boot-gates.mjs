@@ -680,7 +680,7 @@ assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\
     const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
         'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', 'loading.get()', 'sqlite = database()',
         'activationOwed = pendingBackupIds().isNotEmpty()',
-        'callAsync(if (activationOwed) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled")'].map((text) => start.indexOf(text));
+        '(if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled") else callAsync("boot", legacyState, legacyBackup, "journaled"))'].map((text) => start.indexOf(text));
     assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
     // Pass D1a: a journaled backup commit boots in recovery (no load maintenance before its replay), and the replay resumes normal
     // activation once its last backup commit has a final reply, before the entries after it.
@@ -908,8 +908,8 @@ assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'),
 assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest"\)\.map \{ "test\/java\/\$installer\/\$it\.kt" \}\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
 // flag sets 'required'; iOS boots and recovers with none (its bootRecovery sends two arguments).
-assert.match(coreHost, /callAsync\(if \(activationOwed\) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled"\)/);
-assert.equal(coreHost.match(/"journaled"/g).length, 1);
+assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled"\) else callAsync\("boot", legacyState, legacyBackup, "journaled"\)\)/);
+assert.equal(coreHost.match(/"journaled"/g).length, 2);
 assert.match(hostEntry, /setNativeReplayTokens\(journaled \? 'required' : 'optional'\)/);
 assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
 assert.equal(hostEntry.match(/setNativeReplayTokens\(/g).length, 1);
@@ -1154,7 +1154,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
     assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
     assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
-    assert.match(coreHost, /callAsync\(if \(activationOwed\) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled"\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /\(if \(activationOwed\) callAsync\("bootRecovery", legacyState, legacyBackup, "journaled"\) else callAsync\("boot", legacyState, legacyBackup, "journaled"\)\)\.also \{ netCheck\(\) \}/);
     assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
     // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
     const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];

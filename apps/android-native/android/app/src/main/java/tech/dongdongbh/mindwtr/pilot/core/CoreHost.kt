@@ -228,7 +228,7 @@ class CoreHost(
                 // This host journals every write (WriteJournal), so core requires each write's replay tokens. A journaled backup commit
                 // boots in recovery: no load maintenance runs before its replay, so the document it was prepared against is unchanged.
                 activationOwed = pendingBackupIds().isNotEmpty()
-                callAsync(if (activationOwed) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled").also { netCheck() }
+                (if (activationOwed) callAsync("bootRecovery", legacyState, legacyBackup, "journaled") else callAsync("boot", legacyState, legacyBackup, "journaled")).also { netCheck() }
             } catch (failure: Throwable) {
                 if (sqlite == null) runCatching { database().close() }
                 closeOnEngine()
@@ -697,7 +697,7 @@ class CoreHost(
     fun backupPrepare(inputJson: String): JSONObject = callAsync("backupDocumentPrepare", inputJson, deadlineMs = BACKUP_DEADLINE_MS)
 
     /** The journaled commit of a published plan ([BackupOperations.publish]'s reference); core's reply. */
-    fun backupCommit(referenceJson: String, snapshotName: String): JSONObject = callAsync(BackupOperations.METHOD, referenceJson, snapshotName)
+    fun backupCommit(referenceJson: String, snapshotName: String): JSONObject = callAsync("backupDocumentCommit", referenceJson, snapshotName)
 
     /** Core's result toast for a commit's reply. */
     fun backupResultModel(replyJson: String): JSONObject = callAsync("backupDocumentResultModel", replyJson)
