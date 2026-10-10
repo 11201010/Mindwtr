@@ -399,7 +399,88 @@ const shootSettings = async (prefix, suffix, rn) => {
         sh('input keyevent KEYCODE_BACK');
         await sleep(1000);
     }
+    await shootData(prefix, suffix);
     await shootAI(prefix, suffix, rn);
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(1000);
+};
+/**
+ * Pass D1a: Settings › Data folded and with the Backup fold open (both modes); in light mode also the Merge and Restore questions
+ * for a pushed backup (cancelled, so nothing is written), the invalid-file warning, and Sync › Recovery snapshots open. A shot
+ * that cannot be reached is reported, never fatal to the other shots. Ends on the Settings menu.
+ */
+const DATA_DIR = '/sdcard/Download/mindwtr-parity-d1';
+const DATA_FILES = { valid: 'd1-parity-backup.json', invalid: 'd1-parity-invalid.json' };
+const pushDataFiles = () => {
+    const at = new Date().toISOString();
+    const task = (title) => ({ id: `parity-${title}`, title, status: 'next', tags: [], contexts: [], createdAt: at, updatedAt: at, rev: 1 });
+    writeFileSync(resolve(out, `fixture/${DATA_FILES.valid}`), JSON.stringify({ tasks: [task('Backup task one'), task('Backup task two')], projects: [], sections: [], areas: [], people: [], settings: {} }, null, 2));
+    writeFileSync(resolve(out, `fixture/${DATA_FILES.invalid}`), '{"notes": "not a Mindwtr backup"}');
+    sh(`mkdir -p ${DATA_DIR}`);
+    for (const name of Object.values(DATA_FILES)) adbRaw('push', resolve(out, `fixture/${name}`), `${DATA_DIR}/${name}`);
+};
+const anyNodes = () => {
+    const xml = adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty').toString('utf8');
+    return [...xml.matchAll(/<node [^>]*>/g)].map(([node]) => Object.fromEntries([...node.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value])));
+};
+const tapNode = (node) => { const [x1, y1, x2, y2] = node.bounds.match(/\d+/g).map(Number); sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`); };
+/** The system document picker: the file named [name], found in its list or through its search. */
+const pickParityFile = async (name) => {
+    for (let wait = 0; wait < 30 && front().includes(`${PKG}/`); wait += 1) await sleep(500);
+    await sleep(1500);
+    let nodes = anyNodes();
+    let hit = nodes.find((node) => node.text === name);
+    if (!hit) {
+        const search = nodes.find((node) => /search/i.test(`${node['content-desc']} ${node['resource-id']}`) && node.clickable === 'true');
+        if (search) { tapNode(search); await sleep(800); sh(`input text '${name}'`); sh('input keyevent KEYCODE_ENTER'); await sleep(2500); nodes = anyNodes(); hit = nodes.filter((node) => node.text === name).at(-1); }
+    }
+    if (!hit) fail(`the document picker did not show ${name}`);
+    tapNode(hit);
+    for (let wait = 0; wait < 30 && !front().includes(`${PKG}/`); wait += 1) await sleep(500);
+};
+/** A Data row: RN's label text, or the native row's one TalkBack node ("label, description"). */
+const dataRow = (nodes, label) => nodes.find((node) => node.text === label || (node['content-desc'] ?? '').startsWith(`${label}, `));
+const shootData = async (prefix, suffix) => {
+    try {
+        const rows = await waitFor('the Data row', (current) => Boolean(withDescription(current, `${en['settings.data']}. ${en['settings.menuDesc.data']}`)), 30_000);
+        await tap(withDescription(rows, `${en['settings.data']}. ${en['settings.menuDesc.data']}`));
+        await shoot(`${prefix}-settings-data-${suffix}`, (current) => Boolean(dataRow(current, en['settings.backup'])));
+        await tap(dataRow(await screen(), en['settings.backup']) ?? fail('no Backup fold'));
+        await shoot(`${prefix}-settings-data-backup-${suffix}`, (current) => Boolean(dataRow(current, en['settings.exportBackup'])));
+        if (suffix === 'light') {
+            const question = async (row, file, name, ready) => {
+                await tap(dataRow(await screen(), row) ?? fail(`no ${row} row`));
+                await pickParityFile(file);
+                await shoot(`${prefix}-settings-data-${name}-${suffix}`, ready);
+                const cancel = (await screen()).find((node) => /^cancel$/i.test(node.text ?? ''));
+                if (cancel) await tap(cancel);
+                await sleep(1500);
+            };
+            await question(en['settings.mergeBackup'], DATA_FILES.valid, 'merge-question', (current) => current.some((node) => /^cancel$/i.test(node.text ?? '')));
+            await question(en['settings.syncMobile.restoreBackup'], DATA_FILES.valid, 'restore-question', (current) => current.some((node) => /^cancel$/i.test(node.text ?? '')));
+            await tap(dataRow(await screen(), en['settings.mergeBackup']) ?? fail('no Merge row'));
+            await pickParityFile(DATA_FILES.invalid);
+            await shoot(`${prefix}-settings-data-invalid-${suffix}`, (current) => hasText(current, en['settings.backupMobile.invalidBackup']));
+        }
+    } catch (error) {
+        console.log(`warn - ${prefix} Data screen: ${error.message}`);
+    }
+    requireAppFront();
+    sh('input keyevent KEYCODE_BACK');
+    await sleep(1000);
+    if (suffix !== 'light') return;
+    try {
+        const rows = await waitFor('the Sync row', (current) => Boolean(withDescription(current, `${en['settings.sync']}. ${en['settings.menuDesc.sync']}`)), 30_000);
+        await tap(withDescription(rows, `${en['settings.sync']}. ${en['settings.menuDesc.sync']}`));
+        let nodes = await waitFor('Sync', (current) => hasText(current, en['settings.syncOff']) || Boolean(dataRow(current, en['settings.recoverySnapshots'])), 30_000);
+        const snapshots = (current) => current.find((node) => node.text === en['settings.recoverySnapshots'] || (node['content-desc'] ?? '').startsWith(`${en['settings.recoverySnapshots']}, `));
+        for (let step = 0; step < 20 && !snapshots(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
+        await tap(snapshots(nodes) ?? fail('no Recovery snapshots card'));
+        await shoot(`${prefix}-settings-sync-snapshots-${suffix}`, (current) => hasText(current, en['settings.recoverySnapshotsEmpty']));
+    } catch (error) {
+        console.log(`warn - ${prefix} Recovery snapshots: ${error.message}`);
+    }
     requireAppFront();
     sh('input keyevent KEYCODE_BACK');
     await sleep(1000);
@@ -603,6 +684,7 @@ try {
     const current = front();
     if (!current.includes(`${PKG}/`) && !current.includes(`${home}/`)) throw new Stopped(`another app is in front: ${current.trim()}`);
     check(Number(buildFixture()) === Object.keys(T).length, `fixture built through core: ${Object.keys(T).length} tasks (${fixture})`);
+    pushDataFiles();
     sh('settings put system accelerometer_rotation 0');
     sh('settings put system user_rotation 0');
 
@@ -717,4 +799,5 @@ try {
         try { sh(value === 'null' ? `settings delete system ${name}` : `settings put system ${name} ${value}`); } catch { /* device gone */ }
     }
     try { sh('rm -f /data/local/tmp/mindwtr-parity-ui.xml /data/local/tmp/mindwtr-parity.db'); } catch { /* device gone */ }
+    try { sh(`rm -rf ${DATA_DIR}`); } catch { /* device gone */ }
 }
