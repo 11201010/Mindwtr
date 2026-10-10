@@ -108,7 +108,9 @@ object PersistentCaptureNotifier {
 
   @Synchronized
   fun cancel(context: Context) {
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()
+    // clear() writes an empty file when none exists yet: an off with nothing mirrored (every start, by default) writes nothing.
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    if (prefs.all.isNotEmpty()) prefs.edit().clear().apply()
     val notificationManager =
       context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     notificationManager?.cancel(NOTIFICATION_ID)
