@@ -118,7 +118,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val mime = when (file.getString("format")) { "csv" -> "text/csv"; "tasknotes" -> "application/zip"; else -> "application/json" }
             val written = tree?.let { runCatching { writeToFolder(it, name, mime, bytes) }.onFailure { Log.w(CoreHost.TAG, "Export folder write failed ${failureForLog(it)}") }.isSuccess } ?: false
             if (written) {
-                runtime.logLine("Native Android backup file written", JSONObject().put("releaseCheck", "v1.3.5/android-backup-export")
+                runtime.logLine("Native Android backup file written releaseCheck=v1.3.5/android-backup-export", JSONObject().put("releaseCheck", "v1.3.5/android-backup-export")
                     .put("format", file.getString("format")).put("route", "saf"))
                 shell.ui { action = null }
             } else {
@@ -165,7 +165,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val send = Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             send.clipData = ClipData.newRawUri(null, uri)
             activity.startActivity(Intent.createChooser(send, "Export Mindwtr Backup"))
-            shell.coreHost()?.let { runtime -> Thread { runtime.logLine("Native Android backup file written", JSONObject()
+            shell.coreHost()?.let { runtime -> Thread { runtime.logLine("Native Android backup file written releaseCheck=v1.3.5/android-backup-export", JSONObject()
                 .put("releaseCheck", "v1.3.5/android-backup-export").put("format", formatOf(file.name)).put("route", "share")) }.start() }
         } catch (failure: Exception) {
             Log.w(CoreHost.TAG, "Export share failed ${failureForLog(failure)}")
@@ -320,7 +320,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */
     private fun cleanupInterruptedExport(runtime: CoreHost) {
         val outcome = cleanupExportRecord(exportPending) { uri -> DocumentsContract.deleteDocument(resolver, Uri.parse(uri)) } ?: return
-        runtime.logLine("Native Android interrupted export removed", JSONObject().put("releaseCheck", "v1.3.5/android-export-cleanup").put("outcome", outcome))
+        runtime.logLine("Native Android interrupted export removed releaseCheck=v1.3.5/android-export-cleanup", JSONObject().put("releaseCheck", "v1.3.5/android-export-cleanup").put("outcome", outcome))
     }
 
     // ---- Files ----

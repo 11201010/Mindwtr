@@ -283,7 +283,7 @@ class CoreHost(
         val stop = debugFault("backup_stop")
         val settled = if (stop == "settle-fail") false else settle(entry, result, replay)
         if (settled) ops.discard(id)
-        if (replay) logLine("Native Android backup replay settled", JSONObject().put("releaseCheck", "v1.3.5/android-backup-replay")
+        if (replay) this.logLine("Native Android backup replay settled releaseCheck=v1.3.5/android-backup-replay", JSONObject().put("releaseCheck", "v1.3.5/android-backup-replay")
             .put("operation", operation).put("outcome", outcome))
         if (stop == "after-settle") {
             Log.i(TAG, "Native Android backup stop at=after-settle")
