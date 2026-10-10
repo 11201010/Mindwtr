@@ -149,6 +149,7 @@ vi.mock('./app-log', () => ({
 }));
 
 import {
+  cleanupInterruptedBackupExport,
   createMobileRecoverySnapshot,
   exportCurrentDataBackup,
   importTodoistData,
@@ -266,6 +267,42 @@ describe('mobile data transfer', () => {
     expect(sharingMocks.shareAsync).toHaveBeenCalledOnce();
     const completion = logMocks.logInfo.mock.calls.find(([message]) => message === 'Backup export complete');
     expect(completion?.[1]?.extra).not.toHaveProperty('releaseCheck');
+  });
+
+  it('records the created document before the folder write and clears the record once the write finishes', async () => {
+    Platform.OS = 'android';
+    const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3AMindwtr%20Backup.json';
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
+    fileSystemMocks.createSafFileAsync.mockResolvedValue(fileUri);
+    let recordDuringWrite: string | undefined;
+    fileSystemMocks.writeSafFileAsync.mockImplementationOnce(async () => {
+      recordDuringWrite = fileSystemMocks.fileContents.get('file://document/export-pending.json');
+    });
+
+    await exportCurrentDataBackup(emptyData);
+
+    expect(JSON.parse(recordDuringWrite ?? '{}')).toEqual({ uri: fileUri });
+    expect(fileSystemMocks.fileContents.has('file://document/export-pending.json')).toBe(false);
+  });
+
+  it('deletes a folder document a process death left half written, then its record', async () => {
+    const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
+    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ uri: fileUri }));
+
+    await cleanupInterruptedBackupExport();
+
+    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenCalledWith(fileUri, { idempotent: true });
+    expect(fileSystemMocks.fileContents.has('file://document/export-pending.json')).toBe(false);
+  });
+
+  it('cleans an interrupted folder write before the next export', async () => {
+    Platform.OS = 'android';
+    const half = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
+    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ uri: half }));
+
+    await exportCurrentDataBackup(emptyData);
+
+    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenCalledWith(half, { idempotent: true });
   });
 
   it('leaves nothing to remove when the folder permission is refused', async () => {

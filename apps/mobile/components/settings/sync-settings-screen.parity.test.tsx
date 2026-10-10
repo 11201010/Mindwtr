@@ -204,7 +204,7 @@ vi.mock('@/lib/cloudkit-sync', () => ({
     return harness.cloudKitStatus;
   },
 }));
-vi.mock('@/lib/data-transfer', () => ({ listLocalDataSnapshots: async () => [] }));
+vi.mock('@/lib/data-transfer', () => ({ listLocalDataSnapshots: async () => [], cleanupInterruptedBackupExport: async () => undefined }));
 vi.mock('@/lib/analytics-heartbeat', () => ({
   isMobileAnalyticsHeartbeatConfigured: () => false,
   resetMobileAnalyticsOptOutMarker: async () => undefined,

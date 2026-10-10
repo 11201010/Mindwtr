@@ -454,11 +454,35 @@ export const restoreLocalDataSnapshot = async (snapshotName: string): Promise<vo
     }
 };
 
+// A folder document whose write a process death cut short looks like a finished backup. Its URI is on disk before the first
+// byte and goes once the write closed; a record left over deletes that document at the next export or Data screen visit.
+const EXPORT_PENDING_FILE_NAME = 'export-pending.json';
+const exportPendingFile = (): File | null => {
+    const baseUri = String(Paths.document?.uri ?? FileSystem.documentDirectory ?? '').trim().replace(/\/$/u, '');
+    return baseUri ? new File(`${baseUri}/${EXPORT_PENDING_FILE_NAME}`) : null;
+};
+
+export const cleanupInterruptedBackupExport = async (): Promise<void> => {
+    const record = exportPendingFile();
+    if (!record?.exists) return;
+    try {
+        const { uri } = JSON.parse(await record.text()) as { uri?: unknown };
+        if (typeof uri === 'string' && uri.startsWith('content://') && StorageAccessFramework) {
+            await StorageAccessFramework.deleteAsync(uri, { idempotent: true });
+            void logInfo('Interrupted backup export removed', { scope: 'transfer', extra: { operation: 'exportBackup', releaseCheck: 'v1.3.5/mobile-export-cleanup' } });
+        }
+    } catch (error) {
+        void logError(error, { scope: 'transfer', extra: { operation: 'exportBackup' } });
+    }
+    try { record.delete(); } catch { /* the next cleanup tries again */ }
+};
+
 // One export path for both formats: the SAF/sharing dance below is identical,
 // only the filename, body and mime type differ.
 export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'csv' | 'tasknotes' = 'json'): Promise<void> => {
     assertPersonalWorkspace();
     addBreadcrumb('transfer:export');
+    await cleanupInterruptedBackupExport();
     const isCsv = format === 'csv';
     const isTaskNotes = format === 'tasknotes';
     const snapshotName = isTaskNotes
@@ -496,12 +520,21 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                         mimeType
                     );
                     createdFileUri = fileUri;
+                    const pendingRecord = exportPendingFile();
+                    pendingRecord?.create({ intermediates: true, overwrite: true });
+                    pendingRecord?.write(JSON.stringify({ uri: fileUri }));
                     if (base64Content !== null) {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, base64Content, {
                             encoding: FileSystem.EncodingType.Base64,
                         });
                     } else {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, jsonContent);
+                    }
+                    try {
+                        pendingRecord?.delete();
+                    } catch (recordError) {
+                        // ponytail: a record that cannot be deleted makes the next cleanup remove this finished file too.
+                        void logError(recordError, { scope: 'transfer', extra: { operation: 'exportBackup' } });
                     }
                     void logInfo('Backup export complete', {
                         scope: 'transfer',
@@ -522,6 +555,7 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                 if (createdFileUri) {
                     try {
                         await StorageAccessFramework.deleteAsync(createdFileUri, { idempotent: true });
+                        exportPendingFile()?.delete();
                     } catch (cleanupError) {
                         void logError(cleanupError, { scope: 'transfer', extra: { operation: 'exportBackup' } });
                     }

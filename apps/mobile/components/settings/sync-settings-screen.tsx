@@ -34,6 +34,7 @@ import { useToast } from '@/contexts/toast-context';
 import { CompactText } from '@/components/compact-text';
 import { isCloudKitAvailable } from '@/lib/cloudkit-sync';
 import {
+    cleanupInterruptedBackupExport,
     listLocalDataSnapshots,
 } from '@/lib/data-transfer';
 import { getDropboxRedirectUri } from '@/lib/dropbox-oauth';
@@ -291,6 +292,11 @@ function SyncSettingsView({
     useEffect(() => {
         void refreshRecoverySnapshots();
     }, [refreshRecoverySnapshots]);
+
+    // A backup a process death cut short while it was written into a picked folder is removed when Data opens again.
+    useEffect(() => {
+        if (mode === 'data') void cleanupInterruptedBackupExport();
+    }, [mode]);
 
     const renderSyncHistory = () => {
         if (syncHistoryEntries.length === 0) return null;
