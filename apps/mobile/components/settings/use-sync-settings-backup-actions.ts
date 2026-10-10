@@ -63,6 +63,9 @@ import { clearLog, ensureLogFilePath, logInfo } from '@/lib/app-log';
 import { logSyncEncryptionDiagnosticsBlock } from '@/lib/sync-encryption-state';
 import { logSettingsError } from '@/lib/settings-utils';
 
+/** A failure's own words: an Error's message (never JavaScript's "Error: " prefix), else the value as text. */
+const failureText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 export type BackupAction =
     | null
     | 'export'
@@ -120,7 +123,7 @@ export function useSyncSettingsBackupActions({
     ), [tr]);
     const formatThrownBackupError = useCallback((error: unknown): string => {
         const diagnostic = getBackupSourceFileDiagnostic(error);
-        return diagnostic ? formatImportDiagnostic(diagnostic, tr) : String(error);
+        return diagnostic ? formatImportDiagnostic(diagnostic, tr) : failureText(error);
     }, [tr]);
     const formatRecoverySnapshotLabel = useCallback((fileName: string): string => formatCoreRecoverySnapshotLabel(fileName), []);
 
@@ -197,7 +200,7 @@ export function useSyncSettingsBackupActions({
                             });
                         } catch (error) {
                             logSettingsError(error);
-                            showSettingsErrorToast(tr('settings.backupMobile.restoreFailed'), String(error), 5200);
+                            showSettingsErrorToast(tr('settings.backupMobile.restoreFailed'), formatThrownBackupError(error), 5200);
                         } finally {
                             setBackupAction(null);
                         }
@@ -205,7 +208,7 @@ export function useSyncSettingsBackupActions({
                 },
             ]
         );
-    }, [formatRecoverySnapshotLabel, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
+    }, [formatRecoverySnapshotLabel, formatThrownBackupError, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
 
     const confirmRestoreBackup = useCallback(async (validation: BackupValidation) => {
         if (!validation.data) return;
@@ -223,11 +226,11 @@ export function useSyncSettingsBackupActions({
             });
         } catch (error) {
             logSettingsError(error);
-            showSettingsErrorToast(tr('settings.backupMobile.restoreFailed'), String(error), 5200);
+            showSettingsErrorToast(tr('settings.backupMobile.restoreFailed'), formatThrownBackupError(error), 5200);
         } finally {
             setBackupAction(null);
         }
-    }, [handleRestoreRecoverySnapshot, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
+    }, [formatThrownBackupError, handleRestoreRecoverySnapshot, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
 
     const handleRestoreBackup = useCallback(async () => {
         setBackupAction('restore');
@@ -287,11 +290,11 @@ export function useSyncSettingsBackupActions({
             });
         } catch (error) {
             logSettingsError(error);
-            showSettingsErrorToast(tr('settings.mergeBackupFailed'), String(error), 5200);
+            showSettingsErrorToast(tr('settings.mergeBackupFailed'), formatThrownBackupError(error), 5200);
         } finally {
             setBackupAction(null);
         }
-    }, [handleRestoreRecoverySnapshot, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
+    }, [formatThrownBackupError, handleRestoreRecoverySnapshot, tr, refreshRecoverySnapshots, setBackupAction, showSettingsErrorToast, showToast]);
 
     const handleMergeBackup = useCallback(async () => {
         setBackupAction('merge');

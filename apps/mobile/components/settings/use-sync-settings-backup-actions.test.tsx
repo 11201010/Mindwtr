@@ -298,6 +298,28 @@ describe('useSyncSettingsBackupActions', () => {
         expect(dataTransfer.restoreLocalDataSnapshot).toHaveBeenCalledWith('data.2026-08-13T10-00-00.000.snapshot.json');
     });
 
+    // A failed restore, merge or snapshot restore shows the failure's own words, not JavaScript's "Error: " prefix.
+    it.each(['restore', 'merge', 'snapshot'] as const)('shows a failed %s without the "Error: " prefix', async (kind) => {
+        vi.mocked(dataTransfer.pickBackupDocument).mockResolvedValue({ uri: 'file://backup.json', fileName: 'backup.json' });
+        vi.mocked(dataTransfer.inspectBackupDocument).mockResolvedValue({
+            valid: true, data: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
+            errors: [], warnings: [], metadata: { taskCount: 0, projectCount: 0, sectionCount: 0, areaCount: 0 },
+        } as never);
+        const failure = new Error('Local data changed while restoring. Try again.');
+        vi.mocked(dataTransfer.restoreDataFromBackup).mockRejectedValue(failure);
+        vi.mocked(dataTransfer.mergeDataFromBackup).mockRejectedValue(failure);
+        vi.mocked(dataTransfer.restoreLocalDataSnapshot).mockRejectedValue(failure);
+
+        await act(async () => { create(<Harness />); });
+        if (kind === 'restore') await latest?.handleRestoreBackup();
+        else if (kind === 'merge') await latest?.handleMergeBackup();
+        else await latest?.handleRestoreRecoverySnapshot('data.2026-08-13T10-00-00.000.snapshot.json');
+        const [, , buttons] = vi.mocked(Alert.alert).mock.calls[0] as [string, string, Array<{ onPress?: () => unknown }>];
+        await act(async () => { await buttons[1].onPress?.(); });
+
+        expect(showSettingsErrorToast.mock.calls.at(-1)?.[1]).toBe('Local data changed while restoring. Try again.');
+    });
+
     // #Q-03: the result toast carries the rollback, so it dies with the message
     // instead of leaving a persistent affordance.
     it('offers Undo import on the result and restores that exact snapshot', async () => {
