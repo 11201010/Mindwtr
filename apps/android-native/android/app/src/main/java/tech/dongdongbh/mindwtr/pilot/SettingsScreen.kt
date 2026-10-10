@@ -402,7 +402,8 @@ private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.m
             .clearAndSetSemantics { contentDescription = "$title, $description"; role = Role.Button; testTag = "backup-disclosure"
                 onClick { toggle(); true }; if (open) collapse { toggle(); true } else expand { toggle(); true } }
             .clickable(onClick = toggle).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            // RN's settingInfo margin (16) and the row's gap (12) before the chevron.
+            Column(Modifier.weight(1f).padding(end = 28.dp)) {
                 Text(title, style = rnText(16, 500, 21), color = c.text)
                 Text(description, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
             }
@@ -437,19 +438,19 @@ internal fun BackupRow(label: String, description: String, color: Color, enabled
     }
 }
 
-/** RN's Alert before a restore, a merge or a snapshot restore (DataTransfer.kt's open question): Cancel, then core's action word. */
+/**
+ * RN's Alert before a restore, a merge or a snapshot restore (DataTransfer.kt's open question), drawn as RN's themed alert: Cancel,
+ * then core's action word, in red for a restore (RN's destructive style) and the tint for a merge.
+ */
 @Composable
 internal fun DataTransferQuestion(model: InboxViewModel) {
     val transfer = model.menu.settings.transfer
     val open = transfer.question ?: return
     val words = open.getJSONObject("model")
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = transfer::cancel,
-        title = { Text(words.getString("title")) },
-        text = { Text(words.optString("summary").ifEmpty { words.optString("message") }) },
-        confirmButton = { androidx.compose.material3.TextButton(transfer::confirm, Modifier.testTag("data-transfer-confirm")) { Text(words.getString("confirmLabel").uppercase()) } },
-        dismissButton = { androidx.compose.material3.TextButton(transfer::cancel, Modifier.testTag("data-transfer-cancel")) { Text(words.getString("cancelLabel").uppercase()) } },
-    )
+    val destructive = open.getString("kind") == "snapshot" || open.optString("mode") == "restore"
+    ThemedAlert(words.getString("title"), words.optString("summary").ifEmpty { words.optString("message") },
+        listOf(AlertButton(words.getString("cancelLabel"), "cancel", transfer::cancel),
+            AlertButton(words.getString("confirmLabel"), if (destructive) "destructive" else "default", transfer::confirm)), transfer::cancel)
 }
 
 /** RN's pressable settingRow with a colored label and no trailing control: one button node that reads its texts, as RN's does. */
