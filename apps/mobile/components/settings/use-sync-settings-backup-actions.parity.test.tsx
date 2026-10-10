@@ -30,7 +30,7 @@ import { getTranslator, resolveI18nText } from '@mindwtr/core';
 import * as dataTransfer from '@/lib/data-transfer';
 import { useSyncSettingsBackupActions } from './use-sync-settings-backup-actions';
 
-const FIXTURE = new URL('./use-sync-settings-backup-actions.parity.fixtures.json', import.meta.url);
+const FIXTURE = new URL('./use-sync-settings-backup-actions.parity.fixtures.json', import.meta.url).pathname;
 const t = getTranslator('en');
 const tr = (key: string, values?: Record<string, string | number | boolean | null | undefined>) => resolveI18nText(t, key, { values: values as never });
 const SNAPSHOT = 'data.2026-08-13T10-00-00.000.snapshot.json';

@@ -1,7 +1,7 @@
 import { MAX_BACKUP_SOURCE_BYTES, serializeBackupData } from './backup-transfer';
 import { base64ToBytes } from './base64-bytes';
 import { runSerializedSyncDocumentWriteOperation } from './data-transfer-transaction';
-import { createImportDiagnostics, formatImportDiagnostic, type ImportDiagnosticTranslator } from './import-diagnostics';
+import { formatImportDiagnostic, type ImportDiagnosticTranslator } from './import-diagnostics';
 import { DEFAULT_IMPORT_SOURCE_LIMITS } from './import-source-reader';
 import { applyImportSource, parseImportSource, summarizeBackupMerge } from './import-runner';
 import { taskEditValuesEqual } from './json-value-equality';
@@ -12,6 +12,11 @@ import type { DgtImportExecutionResult } from './dgt-import';
 import type { OmniFocusImportExecutionResult } from './omnifocus-import';
 import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
 import { DATA_TRANSFER_TOAST_MS } from './data-settings-model';
+import {
+    buildAreaImportResultMessage, buildBackupPreviewSummary, buildDgtPreviewSummary, buildMergeResultMessage, buildMindwtrCsvPreviewSummary,
+    buildMindwtrCsvResultMessage, buildOmniFocusPreviewSummary, buildOmniFocusResultMessage, buildTickTickPreviewSummary,
+    buildTodoistPreviewSummary, buildTodoistResultMessage,
+} from './data-transfer-messages';
 import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
@@ -118,8 +123,6 @@ const parseTodoistSource = (text: unknown, metadata: unknown) => parseImportSour
 const parseTickTickSource = (text: unknown, metadata: unknown) => parseImportSource('ticktick', decodeBinarySource(text, metadata, 'TickTick'));
 const parseDgtSource = (text: unknown, metadata: unknown) => parseImportSource('dgt', decodeBinarySource(text, metadata, 'DGT'));
 const parseOmniFocusSource = (text: unknown, metadata: unknown) => parseImportSource('omnifocus', decodeBinarySource(text, metadata, 'OmniFocus'));
-const warningMessages = (warnings: string[], t: ImportDiagnosticTranslator) => createImportDiagnostics(warnings, 'warning')
-    .map((item) => formatImportDiagnostic(item, t));
 const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
     const model = { valid: false, title: t('settings.backupMobile.importMindwtrCsvData'), summary: '',
         confirmLabel: t('settings.backupMobile.import'), cancelLabel: t('common.cancel'),
@@ -130,17 +133,7 @@ const inspectCsv = (text: string, metadata: NativeBackupDocumentMetadata, t: Imp
             const error = parsed.diagnostics.find((item) => item.severity === 'error');
             return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
         }
-        const preview = parsed.preview;
-        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.areaName ? `${project.areaName} / ` : ''}${project.name}: ${project.taskCount}`);
-        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
-        const details = [t('settings.backupMobile.importTasksFromFile', { taskCount: preview.taskCount, fileName: preview.fileName }),
-            preview.areaCount > 0 ? t('settings.backupMobile.mindwtrCsvAreasWillBeCreated', { areaCount: preview.areaCount }) : null,
-            preview.projectCount > 0 ? t('settings.backupMobile.projectsWillBeCreatedWhenNeeded', { projectCount: preview.projectCount }) : null,
-            preview.sectionCount > 0 ? t('settings.backupMobile.mindwtrCsvSectionsWillBeCreated', { sectionCount: preview.sectionCount }) : null,
-            preview.checklistItemCount > 0 ? t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: preview.checklistItemCount }) : null,
-            preview.standaloneTaskCount > 0 ? t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: preview.standaloneTaskCount }) : null,
-            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        return { ...model, valid: true, summary: buildMindwtrCsvPreviewSummary(parsed.preview, t), errorMessage: '' };
     } catch { return model; }
 };
 const inspectTodoist = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
@@ -153,14 +146,7 @@ const inspectTodoist = (text: string, metadata: NativeBackupDocumentMetadata, t:
             const error = parsed.diagnostics.find((item) => item.severity === 'error');
             return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
         }
-        const preview = parsed.preview;
-        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.name}: ${project.taskCount}`);
-        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
-        const details = [t('settings.backupMobile.importTodoistTasksFromProjects', { taskCount: preview.taskCount, projectCount: preview.projectCount }),
-            preview.sectionCount > 0 ? t('settings.backupMobile.sectionsWillBePreserved', { sectionCount: preview.sectionCount }) : null,
-            preview.checklistItemCount > 0 ? t('settings.backupMobile.subtasksWillBecomeChecklistItems', { subtaskCount: preview.checklistItemCount }) : null,
-            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        return { ...model, valid: true, summary: buildTodoistPreviewSummary(parsed.preview, t), errorMessage: '' };
     } catch { return model; }
 };
 const inspectTickTick = (text: string, metadata: NativeBackupDocumentMetadata, t: ImportDiagnosticTranslator) => {
@@ -173,16 +159,7 @@ const inspectTickTick = (text: string, metadata: NativeBackupDocumentMetadata, t
             const error = parsed.diagnostics.find((item) => item.severity === 'error');
             return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
         }
-        const preview = parsed.preview;
-        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.areaName ? `${project.areaName} / ` : ''}${project.name}: ${project.taskCount}`);
-        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
-        const details = [t('settings.backupMobile.importTasksFromFile', { taskCount: preview.taskCount, fileName: preview.fileName }),
-            preview.areaCount > 0 ? t('settings.backupMobile.ticktickAreasWillBeCreated', { areaCount: preview.areaCount }) : null,
-            preview.projectCount > 0 ? t('settings.backupMobile.ticktickProjectsWillBeCreated', { projectCount: preview.projectCount }) : null,
-            preview.checklistItemCount > 0 ? t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: preview.checklistItemCount }) : null,
-            preview.recurringCount > 0 ? t('settings.backupMobile.recurringTasksWillKeepSupportedRepeatRules', { taskCount: preview.recurringCount }) : null,
-            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        return { ...model, valid: true, summary: buildTickTickPreviewSummary(parsed.preview, t), errorMessage: '' };
     } catch { return model; }
 };
 
@@ -196,16 +173,7 @@ const inspectDgt = (text: string, metadata: NativeBackupDocumentMetadata, t: Imp
             const error = parsed.diagnostics.find((item) => item.severity === 'error');
             return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
         }
-        const preview = parsed.preview;
-        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.areaName ? `${project.areaName} / ` : ''}${project.name}: ${project.taskCount}`);
-        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
-        const details = [t('settings.backupMobile.importTasksFromFile', { taskCount: preview.taskCount, fileName: preview.fileName }),
-            preview.areaCount > 0 ? t('settings.backupMobile.dgtAreasWillBeCreated', { areaCount: preview.areaCount }) : null,
-            preview.projectCount > 0 ? t('settings.backupMobile.projectsWillBeCreated', { projectCount: preview.projectCount }) : null,
-            preview.checklistItemCount > 0 ? t('settings.backupMobile.checklistItemsWillBePreserved', { checklistItemCount: preview.checklistItemCount }) : null,
-            preview.standaloneTaskCount > 0 ? t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: preview.standaloneTaskCount }) : null,
-            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        return { ...model, valid: true, summary: buildDgtPreviewSummary(parsed.preview, t), errorMessage: '' };
     } catch { return model; }
 };
 
@@ -219,17 +187,7 @@ const inspectOmniFocus = (text: string, metadata: NativeBackupDocumentMetadata, 
             const error = parsed.diagnostics.find((item) => item.severity === 'error');
             return { ...model, errorMessage: error ? formatImportDiagnostic(error, t) : model.errorMessage };
         }
-        const preview = parsed.preview;
-        const projects = preview.projects.slice(0, 4).map((project) => `• ${project.name}: ${project.taskCount}`);
-        if (preview.projects.length > 4) projects.push(t('settings.backupMobile.moreProjects', { projectCount: preview.projects.length - 4 }));
-        const details = [t('settings.backupMobile.importTaskCountFromFile', { taskCount: preview.taskCount, fileName: preview.fileName }),
-            preview.projectCount > 0 ? t('settings.backupMobile.projectsWillBeCreatedWhenNeeded', { projectCount: preview.projectCount }) : null,
-            preview.areaCount > 0 ? t('settings.backupMobile.omnifocusAreasWillBeCreated', { areaCount: preview.areaCount }) : null,
-            preview.checklistItemCount > 0 ? t('settings.backupMobile.nestedTasksWillBecomeChecklistItems', { taskCount: preview.checklistItemCount }) : null,
-            preview.standaloneTaskCount > 0 ? t('settings.backupMobile.tasksWillStayOutsideProjects', { taskCount: preview.standaloneTaskCount }) : null,
-            t('settings.backupMobile.importedTasksKeepOmnifocusNotesDatesTagsRecurrenceAndChecklist'),
-            ...projects, ...warningMessages(preview.warnings, t)].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        return { ...model, valid: true, summary: buildOmniFocusPreviewSummary(parsed.preview, t), errorMessage: '' };
     } catch { return model; }
 };
 
@@ -258,15 +216,8 @@ export function inspectNativeBackupDocument(text: string, metadata: NativeBackup
             const errors = validation.diagnostics.filter((item) => item.severity === 'error');
             return { ...model, errorMessage: errors.length ? errors.map((item) => formatImportDiagnostic(item, t)).join('\n') : model.errorMessage };
         }
-        const warnings = validation.diagnostics.filter((item) => item.severity === 'warning').map((item) => formatImportDiagnostic(item, t));
-        const details = [
-            validation.metadata?.backupAt
-                ? t('settings.backupMobile.backupDateLabel', { backupDate: new Date(validation.metadata.backupAt).toLocaleString() })
-                : validation.metadata?.fileName ? t('settings.backupMobile.fileLabel', { fileName: validation.metadata.fileName }) : null,
-            t('settings.backupMobile.backupPreviewCounts', { taskCount: validation.metadata?.taskCount ?? 0, projectCount: validation.metadata?.projectCount ?? 0 }),
-            t(replacing ? 'settings.backupMobile.thisWillReplaceAllCurrentLocalDataARecoverySnapshot' : 'settings.mergeBackupConfirm'), ...(warnings.length ? ['', ...warnings] : []),
-        ].filter(Boolean);
-        return { ...model, valid: true, summary: details.join('\n'), errorMessage: '' };
+        const effect = t(replacing ? 'settings.backupMobile.thisWillReplaceAllCurrentLocalDataARecoverySnapshot' : 'settings.mergeBackupConfirm');
+        return { ...model, valid: true, summary: buildBackupPreviewSummary(validation, effect, t), errorMessage: '' };
     } catch { return model; }
 }
 
@@ -459,49 +410,17 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
     const durationMs = reply.operation === 'restore' ? null : DATA_TRANSFER_TOAST_MS[reply.operation];
-    if (reply.operation === 'omnifocus') {
-        const result = reply.result;
-        return { title: t('settings.backupMobile.importComplete'), message: [
-            t('settings.backupMobile.importedTaskProjectCounts', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }),
-            result.importedAreaCount > 0 ? t('settings.backupMobile.omnifocusAreasCreated', { areaCount: result.importedAreaCount }) : null,
-            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.nestedTasksBecameChecklistItems', { taskCount: result.importedChecklistItemCount }) : null,
-            result.importedStandaloneTaskCount > 0 ? t('settings.backupMobile.tasksStayedOutsideProjects', { taskCount: result.importedStandaloneTaskCount }) : null,
-            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
-    }
-    if (reply.operation === 'ticktick' || reply.operation === 'dgt') {
-        const result = reply.result;
-        return { title: t('settings.backupMobile.importComplete'), message: [
-            t('settings.backupMobile.importedTaskProjectAreaCounts', { taskCount: result.importedTaskCount,
-                projectCount: result.importedProjectCount, areaCount: result.importedAreaCount }),
-            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: result.importedChecklistItemCount }) : null,
-            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
-    }
-    if (reply.operation === 'todoist') {
-        const result = reply.result;
-        return { title: t('settings.backupMobile.importComplete'), message: [
-            t('settings.backupMobile.importedTodoistTasksIntoProjects', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }),
-            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.subtasksBecameChecklistItems', { subtaskCount: result.importedChecklistItemCount }) : null,
-            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
-    }
-    if (reply.operation === 'csv') {
-        const result = reply.result;
-        return { title: t('settings.backupMobile.importComplete'), message: [
-            t('settings.backupMobile.importedTaskProjectSectionAreaCounts', { taskCount: result.importedTaskCount,
-                projectCount: result.importedProjectCount, sectionCount: result.importedSectionCount, areaCount: result.importedAreaCount }),
-            result.importedChecklistItemCount > 0 ? t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: result.importedChecklistItemCount }) : null,
-            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
-    }
+    const imported = (message: string) => ({ title: t('settings.backupMobile.importComplete'), message,
+        undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs });
+    if (reply.operation === 'omnifocus') return imported(buildOmniFocusResultMessage(reply.result, reply.snapshotName, t));
+    if (reply.operation === 'ticktick' || reply.operation === 'dgt') return imported(buildAreaImportResultMessage(reply.result, reply.snapshotName, t));
+    if (reply.operation === 'todoist') return imported(buildTodoistResultMessage(reply.result, reply.snapshotName, t));
+    if (reply.operation === 'csv') return imported(buildMindwtrCsvResultMessage(reply.result, reply.snapshotName, t));
     return {
         title: t(reply.operation === 'merge' ? 'settings.mergeBackup' : 'settings.backupMobile.restoreComplete'),
-        message: reply.operation === 'merge' ? [
-            t('settings.mergeBackupSummary', { addedCount: reply.added, updatedCount: reply.updated }),
-            t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-        ].join('\n') : reply.operation === 'replace' ? t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: reply.snapshotName })
-            : t('settings.backupMobile.recoverySnapshotRestored'),
+        message: reply.operation === 'merge' ? buildMergeResultMessage(reply, reply.snapshotName, t)
+            : reply.operation === 'replace' ? t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: reply.snapshotName })
+                : t('settings.backupMobile.recoverySnapshotRestored'),
         undoLabel: reply.operation !== 'restore' ? t('settings.undoImport') : '', doneLabel: t('common.done'), durationMs,
     };
 }
