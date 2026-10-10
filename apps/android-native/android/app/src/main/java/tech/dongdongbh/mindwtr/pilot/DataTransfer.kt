@@ -40,8 +40,11 @@ import java.util.UUID
 
 /** The measured transfer limit (design §4.1): a picked file and the library together, before anything is decoded or parsed. */
 object DataTransferLimits {
-    // ponytail: one fixed limit measured on the S23 (result.md, pass D1a); a device with a smaller heap gets the same number.
-    private const val LIMIT_BYTES = 48L * 1024 * 1024
+    // Measured on the S23 (pass D1a, result.md; heap growth limit 256 MiB): the Java heap peaked at 100 MiB for a 24 MiB source
+    // (merge, and restore over a 24 MiB library) and 182 MiB for 32 MiB, so 24 MiB is the largest source under half the heap,
+    // and the limit is half of it.
+    // ponytail: one fixed limit; a device with a smaller heap gets the same number. Stream the plan through a file if libraries outgrow it.
+    private const val LIMIT_BYTES = 12L * 1024 * 1024
     /** Core's MAX_BACKUP_SOURCE_BYTES: a picked JSON backup alone. */
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
 
