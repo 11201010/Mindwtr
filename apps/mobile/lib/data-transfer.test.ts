@@ -449,6 +449,24 @@ describe('mobile data transfer', () => {
     expect([...fileSystemMocks.fileContents.keys()].sort()).toEqual([...existing].sort());
   });
 
+  it('keeps the snapshot it just wrote when the clock went back behind five newer ones', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-09T12:34:05.123Z'));
+    try {
+      // Written while the clock ran ahead; after it goes back they all outrank a new snapshot by name.
+      Array.from({ length: 5 }, (_unused, index) =>
+        `file://document/snapshots/data.2027-01-0${index + 1}T00-00-00.000.snapshot.json`)
+        .forEach((uri) => fileSystemMocks.fileContents.set(uri, '{}'));
+
+      const written = await createMobileRecoverySnapshot();
+
+      expect(fileSystemMocks.fileContents.has(`file://document/snapshots/${written}`)).toBe(true);
+      await expect(restoreLocalDataSnapshot(written)).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails explicitly instead of looping forever when one instant is fully collided', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-09T12:34:05.123Z'));

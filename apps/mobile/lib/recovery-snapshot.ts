@@ -50,10 +50,10 @@ export const listSnapshotEntries = (directory: Directory): Array<{ name: string;
     }
     return sortRecoverySnapshotNames([...uris.keys()]).map((name) => ({ name, uri: uris.get(name)! }));
 };
-export const pruneSnapshots = (directory: Directory): void => {
+export const pruneSnapshots = (directory: Directory, protect: readonly string[] = []): void => {
     if (isSandboxMode()) return;
     const entries = listSnapshotEntries(directory);
-    const pruned = new Set(recoverySnapshotNamesToPrune(entries.map((entry) => entry.name)));
+    const pruned = new Set(recoverySnapshotNamesToPrune(entries.map((entry) => entry.name), protect));
     entries.filter((entry) => pruned.has(entry.name)).forEach((entry) => {
         try {
             const file = new File(entry.uri);
@@ -116,7 +116,7 @@ export const saveCurrentDataSnapshot = async (data: AppData): Promise<string> =>
         }
         throw error;
     }
-    pruneSnapshots(directory);
+    pruneSnapshots(directory, [fileName]);
     void logInfo('Recovery snapshot complete', {
         scope: 'transfer',
         extra: {

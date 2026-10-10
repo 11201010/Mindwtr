@@ -45,6 +45,13 @@ describe('recovery snapshot names (mobile parity)', () => {
         ]);
     });
 
+    it('never prunes a protected name, which takes one of the five places', () => {
+        const future = Array.from({ length: 5 }, (_, day) => `data.2027-01-0${day + 1}T00-00-00.000.snapshot.json`);
+        const written = 'data.2026-08-09T12-34-05.123.snapshot.json';
+        expect(recoverySnapshotNamesToPrune([...future, written], [written, 'data.2020-01-01T00-00-00.000.snapshot.json']))
+            .toEqual(['data.2027-01-01T00-00-00.000.snapshot.json']);
+    });
+
     it('labels a snapshot by its local date and minute; another name stays as it is', () => {
         process.env.TZ = 'UTC';
         const label = formatRecoverySnapshotLabel('data.2026-08-09T12-34-05.123.1.snapshot.json');

@@ -36,9 +36,18 @@ export const sortRecoverySnapshotNames = (names: readonly string[]): string[] =>
     )
     .map(({ name }) => name);
 
-/** The names a prune deletes: every snapshot after the newest [MAX_RECOVERY_SNAPSHOTS]. */
-export const recoverySnapshotNamesToPrune = (names: readonly string[]): string[] =>
-    sortRecoverySnapshotNames(names).slice(MAX_RECOVERY_SNAPSHOTS);
+/**
+ * The names a prune deletes: every snapshot after the newest [MAX_RECOVERY_SNAPSHOTS], except the [protect]ed ones (the
+ * snapshot just written, one an open operation still needs). After the clock went back, older-named snapshots outrank a new
+ * one; it must stay, or its import's Undo finds no file.
+ */
+export const recoverySnapshotNamesToPrune = (names: readonly string[], protect: Iterable<string> = []): string[] => {
+    const kept = new Set(protect);
+    const sorted = sortRecoverySnapshotNames(names);
+    // Protected snapshots count toward the five, so the newest others fill only the places left.
+    const places = Math.max(0, MAX_RECOVERY_SNAPSHOTS - sorted.filter((name) => kept.has(name)).length);
+    return sorted.filter((name) => !kept.has(name)).slice(places);
+};
 
 /** Settings' label for a snapshot: its instant as a local date and time (hours and minutes); another name stays as it is. */
 export const formatRecoverySnapshotLabel = (fileName: string): string => {
