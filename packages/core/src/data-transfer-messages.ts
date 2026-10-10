@@ -23,7 +23,8 @@ const projectLines = (projects: readonly ProjectLine[], t: Translate, withArea: 
     return lines;
 };
 
-const join = (details: (string | null)[]): string => details.filter(Boolean).join('\n');
+// Drops the absent lines only: an '' is the blank line before a project list or the warnings (RN dropped it with filter(Boolean)).
+const join = (details: (string | null)[]): string => details.filter((line) => line !== null).join('\n');
 
 /**
  * Restore and merge preview the same file identically; only the sentence about what the action does to local data differs
