@@ -47,7 +47,7 @@ describe('the Calendar feed', () => {
         expect(feeds.event('missing')).toBeNull();
     });
 
-    it('keeps the events while the same range reloads (RN keeps them), and shows loading with the calendars for a new range', async () => {
+    it('keeps the events under RN\'s Loading… line while the same range reloads, and shows loading with the calendars for a new range', async () => {
         const { feeds, loads, changed, ready, flush, view } = harness();
         feeds.calendarView({}, view(OCTOBER));
         loads[0].settle(ready([event]));
@@ -55,7 +55,10 @@ describe('the Calendar feed', () => {
         expect(feeds.refresh('calendar')).toEqual({ started: true });
         expect(loads[1].input).toEqual({ slot: 'calendar', ...OCTOBER, refresh: true });
         const during = feeds.calendarView({}, view(OCTOBER));
-        expect(during.ok && during.value.calendar).toMatchObject({ status: 'ready', events: [event] });
+        expect(during.ok && during.value.calendar).toEqual({ status: 'loading', calendars: [{ id: 'c' }], events: [event] });
+        expect(feeds.event(event.id)).toEqual({ event, canOpen: true });
+        // Actions work on the events shown, as RN's composer does while it reloads (core refuses a loading feed).
+        expect(feeds.calendar({ taskId: 't' })).toEqual({ taskId: 't', calendar: { status: 'ready', calendars: [{ id: 'c' }], events: [event] } });
         const moved = feeds.calendarView({}, view(NOVEMBER));
         expect(moved.ok && moved.value.calendar).toEqual({ status: 'loading', calendars: [{ id: 'c' }] });
         // The October reload ends after the move: it shows nothing.

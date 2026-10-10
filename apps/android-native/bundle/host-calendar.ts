@@ -73,7 +73,7 @@ type Reply<T> = { ok: true; value: T } | { ok: false; error: { code: string; mes
 type Event = ExternalCalendarEvent;
 /** native-host-contract-calendar.ts NativeCalendarFeed. */
 type Feed =
-    | { status: 'loading'; calendars?: unknown[] }
+    | { status: 'loading'; calendars?: unknown[]; events?: Event[] }
     | { status: 'error'; message: string; calendars?: unknown[] }
     | { status: 'ready'; calendars: unknown[]; events: Event[] };
 type LoadInput = { slot: NativeCalendarFeedSlot; start: string; end: string; timeoutMs?: number; refresh?: boolean };
@@ -87,7 +87,7 @@ const DAILY_REVIEW_TIMEOUT_MS = 15_000;
  * (getReviewCalendarRange). A view read attaches the slot's feed; a slot with no load for that range or for the subscriptions
  * now synced starts one (RN's effect deps), and the screen is told when it ends (`changed`), so Kotlin only reads again.
  * `refresh` is RN's reload on focus and on a return to the app. While the Calendar reloads the same range its events stay
- * (RN keeps them); a new range, and a review's reload, show loading.
+ * under RN's Loading… line (RN keeps them); a new range, and a review's reload, show loading alone.
  */
 export const createCalendarFeeds = (deps: {
     load: (input: LoadInput) => Promise<Reply<Feed>>;
@@ -108,9 +108,11 @@ export const createCalendarFeeds = (deps: {
         const range = `${input.start}|${input.end}`;
         const sameRange = previous?.range === range;
         const calendars = previous?.feed.calendars;
-        const kept = input.slot === 'calendar' && sameRange && previous!.feed.status === 'ready' ? previous!.feed : null;
+        // The Calendar's same-range reload keeps the events shown under RN's Loading… line (core's loading feed with events).
+        const shown = input.slot === 'calendar' && sameRange && previous!.feed.status !== 'error' ? previous!.feed.events : undefined;
         const token = ++tokens;
-        entries.set(input.slot, { range, subscriptions: subscriptions(), feed: kept ?? { status: 'loading', ...(calendars ? { calendars } : {}) }, load: input, token });
+        entries.set(input.slot, { range, subscriptions: subscriptions(),
+            feed: { status: 'loading', ...(calendars ? { calendars } : {}), ...(shown ? { events: shown } : {}) }, load: input, token });
         void deps.load(refresh ? { ...input, refresh: true } : input).then((answer) => {
             const entry = entries.get(input.slot);
             // A newer load replaced it (STALE_REVISION), or the slot moved on: nothing to show.
@@ -134,9 +136,13 @@ export const createCalendarFeeds = (deps: {
     };
 
     return {
-        /** A Calendar call's input with the feed the Calendar shows (none before its first view). */
+        /**
+         * A Calendar call's input with the feed the Calendar shows (none before its first view). A same-range reload's events
+         * count as ready: RN's composer and sheets use the events shown while it reloads, and core refuses a loading feed.
+         */
         calendar: <T,>(input: T): T => {
-            const feed = entries.get('calendar')?.feed;
+            const shown = entries.get('calendar')?.feed;
+            const feed = shown?.status === 'loading' && shown.events ? { status: 'ready' as const, calendars: shown.calendars ?? [], events: shown.events } : shown;
             return feed && input && typeof input === 'object' && !('calendar' in input) ? { ...input, calendar: feed } : input;
         },
         /**
@@ -165,7 +171,7 @@ export const createCalendarFeeds = (deps: {
         /** An event the Calendar's feed shows, by its id, and whether the calendar app can open it (a device calendar's). */
         event: (eventId: string): { event: Event; canOpen: boolean } | null => {
             const feed = entries.get('calendar')?.feed;
-            const event = feed?.status === 'ready' ? feed.events.find((candidate) => candidate.id === eventId) : undefined;
+            const event = feed?.status !== 'error' ? feed?.events?.find((candidate) => candidate.id === eventId) : undefined;
             return event ? { event, canOpen: canOpenExternalCalendarEvent(event, 'android') } : null;
         },
     };

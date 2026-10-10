@@ -1212,7 +1212,12 @@ const CALENDAR_REQUESTS: Record<string, (input: never) => Promise<Reply> | Reply
         if (!calendarFeeds || (slot !== 'calendar' && slot !== 'weeklyReview' && slot !== 'dailyReview')) {
             return { ok: false, error: { code: 'INVALID_INPUT', message: 'A screen slot is required' } };
         }
-        return { ok: true, value: calendarFeeds.refresh(slot) };
+        const started = calendarFeeds.refresh(slot);
+        // The screen reads again now as well, so RN's Loading… line shows while the reload runs.
+        if (started.started) {
+            try { checked(native().hostEvent(JSON.stringify({ type: 'calendarFeed', slot }))); } catch { /* it reads again when the load ends */ }
+        }
+        return { ok: true, value: started };
     },
 };
 /** The Menu tab's commands, by their diagnostic operation: each passes Kotlin's input (its request or capture UUID included) unchanged. */
