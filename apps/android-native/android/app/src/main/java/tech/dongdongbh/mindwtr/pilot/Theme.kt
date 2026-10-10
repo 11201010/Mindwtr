@@ -14,10 +14,12 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -310,6 +312,20 @@ fun MindwtrTheme(reply: ThemeChoice.Reply?, content: @Composable () -> Unit) {
         surfaceContainerHigh = c.cardBg, surfaceContainerHighest = c.inputBg,
     )
     CompositionLocalProvider(LocalTheme provides theme) { MaterialTheme(colorScheme = scheme, content = content) }
+}
+
+/** RN's COMPACT_TEXT_MAX_SCALE (constants/text-scale.ts): a control label's text grows with the font scale up to 1.2x. */
+const val COMPACT_TEXT_MAX_SCALE = 1.2f
+
+/** The factor that holds text at [maxScale] once the system [fontScale] passes it (RN's maxFontSizeMultiplier). */
+fun compactFontFactor(fontScale: Float, maxScale: Float = COMPACT_TEXT_MAX_SCALE): Float = if (fontScale <= maxScale) 1f else maxScale / fontScale
+
+/** RN's CompactText: this style with its size and line height capped at 1.2x the font scale. */
+@Composable
+fun TextStyle.compact(): TextStyle {
+    val factor = compactFontFactor(LocalDensity.current.fontScale)
+    if (factor == 1f) return this
+    return copy(fontSize = fontSize * factor, lineHeight = if (lineHeight.isSpecified) lineHeight * factor else lineHeight)
 }
 
 /** RN's type: the platform sans (Fonts.sans is 'normal' on Android), at RN's size, weight, and line height. */

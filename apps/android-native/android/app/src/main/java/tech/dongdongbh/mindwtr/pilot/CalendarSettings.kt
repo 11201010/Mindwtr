@@ -308,7 +308,7 @@ private fun FoldHeader(model: InboxViewModel, card: JSONObject, open: Boolean, t
     }
 }
 
-/** RN's backendOption: a bordered pill; [filled] is Add's filled look once the URL has text. */
+/** RN's backendOption: a bordered pill with a CompactText label; [filled] is Add's filled look once the URL has text. */
 @Composable
 private fun Pill(label: String, tag: String, enabled: Boolean = true, filled: Boolean = false, top: Int = 0, press: () -> Unit) {
     val c = LocalTheme.current.colors
@@ -317,7 +317,7 @@ private fun Pill(label: String, tag: String, enabled: Boolean = true, filled: Bo
     Box(Modifier.padding(top = top.dp).clip(shape).background(if (filled) theme.filledBg else c.filterBg).border(1.dp, c.border, shape)
         .clearAndSetSemantics { contentDescription = label; role = Role.Button; testTag = tag; if (enabled) onClick { press(); true } else disabled() }
         .clickable(enabled = enabled, onClick = press).padding(horizontal = 10.dp, vertical = 6.dp)) {
-        Text(label, style = rnText(13, 700, 17), color = when { filled -> theme.filledText; enabled || tag != "calendar-add" -> c.text; else -> c.secondaryText },
+        Text(label, style = rnText(13, 700, 17).compact(), color = when { filled -> theme.filledText; enabled || tag != "calendar-add" -> c.text; else -> c.secondaryText },
             maxLines = 2, textAlign = TextAlign.Center)
     }
 }
