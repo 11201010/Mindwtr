@@ -426,6 +426,8 @@ export const restoreLocalDataSnapshot = async (snapshotName: string): Promise<vo
     if (!file.exists) {
         throw new Error('Snapshot file not found.');
     }
+    // The same bound a picked backup gets, before the whole file is read into memory.
+    if (typeof file.size === 'number') assertBackupSourceFileSize(file.size);
     const validation = validateBackupJson(await file.text(), { fileName: snapshotName });
     if (!validation.valid || !validation.data) {
         throw new Error(validation.errors[0] || 'Snapshot is not a valid backup.');

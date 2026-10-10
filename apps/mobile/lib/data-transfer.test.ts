@@ -37,6 +37,8 @@ const logMocks = vi.hoisted(() => ({
 const fileSystemMocks = vi.hoisted(() => ({
   fileContents: new Map<string, string>(),
   fileWrites: [] as string[],
+  fileReads: [] as string[],
+  fileSizes: new Map<string, number>(),
   writeError: null as Error | null,
   getInfoAsync: vi.fn(),
   readAsStringAsync: vi.fn(),
@@ -128,8 +130,9 @@ vi.mock('expo-file-system', () => ({
       fileSystemMocks.fileWrites.push(text);
       fileSystemMocks.fileContents.set(this.uri, text);
     }
-    async text() { return fileSystemMocks.fileContents.get(this.uri) ?? '{}'; }
+    async text() { fileSystemMocks.fileReads.push(this.uri); return fileSystemMocks.fileContents.get(this.uri) ?? '{}'; }
     async bytes() { return new Uint8Array(); }
+    get size() { return fileSystemMocks.fileSizes.get(this.uri) ?? (fileSystemMocks.fileContents.get(this.uri) ?? '').length; }
   },
 }));
 
@@ -175,6 +178,8 @@ describe('mobile data transfer', () => {
     Platform.OS = 'web';
     vi.clearAllMocks();
     fileSystemMocks.fileContents.clear();
+    fileSystemMocks.fileReads.length = 0;
+    fileSystemMocks.fileSizes.clear();
     fileSystemMocks.fileWrites = [];
     fileSystemMocks.writeError = null;
     fileSystemMocks.readAsStringAsync.mockResolvedValue('');
@@ -465,6 +470,18 @@ describe('mobile data transfer', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('refuses a recovery snapshot over the backup size limit before reading it', async () => {
+    const name = 'data.2026-08-08T12-00-00.000.snapshot.json';
+    const uri = `file://document/snapshots/${name}`;
+    fileSystemMocks.fileContents.set(uri, JSON.stringify(emptyData));
+    fileSystemMocks.fileSizes.set(uri, MAX_BACKUP_SOURCE_BYTES + 1);
+
+    await expect(restoreLocalDataSnapshot(name)).rejects.toThrow();
+
+    expect(fileSystemMocks.fileReads).not.toContain(uri);
+    expect(storageMocks.saveData).not.toHaveBeenCalled();
   });
 
   it('fails explicitly instead of looping forever when one instant is fully collided', async () => {
