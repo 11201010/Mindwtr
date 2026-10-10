@@ -416,7 +416,7 @@ const pushDataFiles = () => {
     const at = new Date().toISOString();
     const task = (title) => ({ id: `parity-${title}`, title, status: 'next', tags: [], contexts: [], createdAt: at, updatedAt: at, rev: 1 });
     writeFileSync(resolve(out, `fixture/${DATA_FILES.valid}`), JSON.stringify({ tasks: [task('Backup task one'), task('Backup task two')], projects: [], sections: [], areas: [], people: [], settings: {} }, null, 2));
-    writeFileSync(resolve(out, `fixture/${DATA_FILES.invalid}`), '{"notes": "not a Mindwtr backup"}');
+    writeFileSync(resolve(out, `fixture/${DATA_FILES.invalid}`), 'not a Mindwtr backup');
     sh(`mkdir -p ${DATA_DIR}`);
     for (const name of Object.values(DATA_FILES)) adbRaw('push', resolve(out, `fixture/${name}`), `${DATA_DIR}/${name}`);
 };
