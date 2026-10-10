@@ -297,7 +297,7 @@ class AISettingsModel(private val menu: MenuModel) {
     fun done(action: FailedAction, reply: JSONObject) {
         reply.optJSONObject("consent")?.let { prompt -> consent = JSONObject(action.title).getJSONObject("change") to prompt }
         reply.menuText("extraBodyDraft")?.let { extraDraft = it }
-        reply.menuObjects("toasts").lastOrNull()?.let { shell.showToast(it.menuText("title"), it.getString("message"), it.getString("tone")) }
+        reply.menuObjects("toasts").lastOrNull()?.let { shell.showToast(it) }
     }
 
     private fun uuid() = UUID.randomUUID().toString()

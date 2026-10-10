@@ -254,7 +254,7 @@ class CaptureModalModel(private val shell: InboxViewModel, private val saved: Sa
                 shell.openSavedTask(reply.getString("taskId"), reply.menuText("projectId"))
             } else end(reply.getJSONObject("close"))
             "refused" -> {
-                reply.getJSONObject("notice").let { shell.showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                reply.getJSONObject("notice").let { shell.showToast(it) }
                 keep(fresh)
             }
             "confirmLines" -> keep(fresh.copy(confirm = reply.getJSONObject("confirm"), lineIds = List(reply.getInt("lineCount")) { UUID.randomUUID().toString() }))

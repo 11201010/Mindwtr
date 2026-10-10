@@ -238,8 +238,7 @@ class AboutSettingsModel(private val menu: MenuModel) {
                 answer.onFailure { Log.w(CoreHost.TAG, "About update check failed ${failureForLog(it)}") }
                 answer.getOrNull()?.menuObjects("notices")?.forEach { notice ->
                     if (notice.getString("kind") == "alert") alert = notice
-                    else shell.showToast(notice.getString("title"), notice.getString("message"), notice.getString("tone"),
-                        durationMs = if (notice.has("durationMs")) notice.getLong("durationMs") else null)
+                    else shell.showToast(notice)
                 }
             }
         }, "mindwtr-about-update").start()
@@ -265,7 +264,7 @@ class AboutSettingsModel(private val menu: MenuModel) {
         val rate = view.getJSONObject("rate")
         if (rate.getJSONArray("urls").let { urls -> (0 until urls.length()).none { open(context, urls.getString(it)) } }) {
             val failed = rate.getJSONObject("failed")
-            shell.showToast(failed.getString("title"), failed.getString("message"), failed.getString("tone"))
+            shell.showToast(failed)
         }
     }
 

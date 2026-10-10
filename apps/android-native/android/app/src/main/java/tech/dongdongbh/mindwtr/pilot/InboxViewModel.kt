@@ -97,6 +97,10 @@ private fun JSONObject.metaPart(): MetaPart = MetaPart(
 
 private fun JSONObject.text(name: String) = if (!has(name) || isNull(name)) null else getString(name)
 
+/** How long a toast shows: core's `durationMs` when it names one (RN's toast-context), else RN's 3.2 s, or 5.2 s with an action. */
+fun toastDurationMs(toast: JSONObject?, action: String?): Long =
+    toast?.takeIf { it.has("durationMs") && !it.isNull("durationMs") }?.getLong("durationMs") ?: if (action != null) 5_200 else 3_200
+
 /** A field map as JSON. Null stays JSON null: `JSONObject.put(name, null)` would drop the name. */
 fun json(values: Map<String, String?>): String =
     JSONObject().apply { values.forEach { (name, value) -> put(name, value ?: JSONObject.NULL) } }.toString()
@@ -198,7 +202,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
     var areaSheet by mutableStateOf(false); private set
     /** The row whose status menu is open (RN's SwipeableTaskItemStatusMenu). */
     var statusMenu by mutableStateOf<TaskRow?>(null); private set
-    /** RN's toast: an optional title, a message, and its tone, shown for RN's 3.2 s. */
+    /** RN's toast: an optional title, a message, and its tone, shown for core's time or RN's 3.2 s (toastDurationMs). */
     var toast by mutableStateOf<Toast?>(null); private set
     /** The "Add new project…" draft, its area ("" = no area), and its request UUID; all survive process death. */
     var projectDraft by mutableStateOf(saved.get<String>("projectDraft") ?: ""); private set
@@ -290,8 +294,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             }
             // A screen's external calendars finished loading (host-calendar.ts): the screen showing them reads again.
             "calendarFeed" -> if (menu.list == FEED_LISTS[event.optString("slot")]) menu.whenIdle { if (writable) menu.refresh() }
-            "toast" -> showToast(event.optString("title").ifEmpty { null }, event.getString("message"), event.optString("tone", "warning"),
-                event.optString("action").ifEmpty { null }) { if (event.optString("open") == "sync") menu.openSyncSettings() }
+            "toast" -> showToast(event, event.optString("action").ifEmpty { null }) { if (event.optString("open") == "sync") menu.openSyncSettings() }
         }
     }
 
@@ -993,9 +996,12 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                            onAction: () -> Unit = {}) {
         toast = Toast(title, message, tone, action, onAction)
         val mine = ++toastShown
-        // A toast RN shows longer (About's FOSS update notice, 4.8 s) names its own time.
-        main.postDelayed({ if (mine == toastShown) toast = null }, durationMs ?: if (action != null) 5_200 else 3_200)
+        main.postDelayed({ if (mine == toastShown) toast = null }, durationMs ?: toastDurationMs(null, action))
     }
+
+    /** Core's toast or notice (`title`, `message`, `tone`, `durationMs`), shown for core's time (toastDurationMs). */
+    internal fun showToast(toast: JSONObject, action: String? = null, tone: String = toast.optString("tone", "warning"), onAction: () -> Unit = {}) =
+        showToast(toast.text("title")?.ifEmpty { null }, toast.getString("message"), tone, action, toastDurationMs(toast, action), onAction)
 
     fun dismissToast() { toast = null }
 
@@ -1208,7 +1214,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
             val now = capture?.takeIf { it.session == current.session && it.requests.firstOrNull() === next } ?: return@background pumpCapture()
             reply.onSuccess { result ->
                 val view = if (edit != null) result.getJSONObject("view") else result
-                if (edit != null) result.optJSONObject("notice")?.let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                if (edit != null) result.optJSONObject("notice")?.let { showToast(it) }
                 val answered = now.copy(options = view.getJSONObject("options"), view = view, requests = now.requests.drop(1))
                 // Text typed while core answered is read again, so the preview follows the field.
                 keepCapture(if (now.text != current.text) answered.reading() else answered)
@@ -1278,7 +1284,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                 else -> keepCapture(null)
             }
             "refused" -> {
-                reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                reply.getJSONObject("notice").let { showToast(it) }
                 keepCapture(fresh)
             }
             else -> {
@@ -1306,7 +1312,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     "confirmLines" -> keepCapture(current.copy(confirm = plan.getJSONObject("confirm"), linesText = plan.getString("text"),
                         lineIds = List(plan.getInt("lineCount")) { UUID.randomUUID().toString() }))
                     "setText" -> typeCapture(plan.getString("text"))
-                    "refused" -> plan.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                    "refused" -> plan.getJSONObject("notice").let { showToast(it) }
                 }
             }
         }
@@ -1368,7 +1374,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         ui {
             val current = capture ?: return@ui
             if (reply.getString("kind") == "saved") keepCapture(null) else {
-                reply.getJSONObject("notice").let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
+                reply.getJSONObject("notice").let { showToast(it) }
                 keepCapture(current.copy(pending = null, confirm = null, lineIds = emptyList(), linesText = null, snapshot = null, snapshotTaken = false))
             }
         }
@@ -1639,8 +1645,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
 
     /** Core's result: the next step (or the end of the queue), a notice instead of moving on, and the filed item's toast. */
     private fun finishAnswer(reply: JSONObject) {
-        reply.optJSONObject("notice")?.let { showToast(it.getString("title"), it.getString("message"), it.getString("tone")) }
-        reply.optJSONObject("toast")?.let { showToast(null, it.getString("message"), "info") }
+        reply.optJSONObject("notice")?.let { showToast(it) }
+        reply.optJSONObject("toast")?.let { showToast(it, tone = "info") }
         // A background re-send after process death has no screen to move on; its record is done.
         val current = processing ?: return
         if (current.hidden) { keepProcessing(null); return }

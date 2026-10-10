@@ -159,8 +159,8 @@ class EntryRouter(private val shell: InboxViewModel, dir: File) {
 
     /** Core's answer: its toast, its route (with the task or project it names), then RN's capture screen over it, or the popup over the tabs. */
     private fun open(reply: JSONObject, view: JSONObject?): Unit = with(shell) {
-        // A missing task link's notice has no title (#1368).
-        reply.optJSONObject("notice")?.let { showToast(it.optString("title").ifEmpty { null }, it.getString("message"), it.getString("tone")) }
+        // A missing task link's notice has no title (#1368): showToast(JSONObject) reads an absent or empty title as none.
+        reply.optJSONObject("notice")?.let { showToast(it) }
         reply.menuText("route")?.let { go(it, reply) }
         reply.optJSONObject("captureModal")?.let { captureModal.opened(it.getJSONObject("params"), view ?: return) }
         val capture = reply.optJSONObject("capture") ?: return

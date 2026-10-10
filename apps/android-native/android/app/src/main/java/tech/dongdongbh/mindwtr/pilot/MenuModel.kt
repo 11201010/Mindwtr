@@ -1309,7 +1309,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         if (reply.optBoolean("changed")) endBulk(list)
         reply.optJSONObject("toast")?.let { toast ->
             val undo = toast.optJSONObject("undo")
-            shell.showToast(toast.text("title"), toast.getString("message"), toast.getString("tone"), undo?.getString("label")) {
+            shell.showToast(toast, undo?.getString("label")) {
                 undo?.let { whenIdle { bulkBusy = "undo"; act("bulkAction", JSONObject().put("list", list).put("action", it.getJSONObject("action"))) } }
             }
         }
@@ -1401,13 +1401,13 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         when (action.kind) {
             "somedayMove" -> {
                 val refused = reply.optJSONObject("refused")
-                if (refused != null) { shell.showToast(refused.text("title"), refused.getString("message"), "error"); return }
+                if (refused != null) { shell.showToast(refused, tone = "error"); return }
                 closeDialog("move")
                 // A move from the bulk bar leaves selection mode, as RN's does.
                 if (own("someday").has("bulk")) endBulk("someday")
                 reply.optJSONObject("toast")?.let { toast ->
                     val moveRequestId = reply.getString("undoRequestId")
-                    shell.showToast(null, toast.getString("message"), "success", toast.getString("undoLabel")) { undo(moveRequestId) }
+                    shell.showToast(toast, toast.getString("undoLabel"), "success") { undo(moveRequestId) }
                 }
             }
             "somedayTask" -> {
@@ -1430,7 +1430,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
                 if (JSONObject(action.title).optString("type") in setOf("moveTasksToInbox", "trashTasks")) selecting(false)
                 reply.optJSONObject("toast")?.let { toast ->
                     val undo = toast.optJSONObject("undo")
-                    shell.showToast(toast.text("title"), toast.getString("message"), toast.getString("tone"), undo?.getString("label")) {
+                    shell.showToast(toast, undo?.getString("label")) {
                         undo?.let { whenIdle { archive(it.getJSONObject("action")) } }
                     }
                 }
@@ -1478,7 +1478,7 @@ class MenuModel(internal val shell: InboxViewModel, private val saved: SavedStat
         reply.optJSONObject("toast")?.let { toast ->
             val undo = toast.optJSONObject("undo")
             val kind = if (action.kind == "reviewTask") "reviewAction" else action.kind
-            shell.showToast(toast.text("title"), toast.getString("message"), toast.getString("tone"), undo?.getString("label")) {
+            shell.showToast(toast, undo?.getString("label")) {
                 undo?.let { whenIdle { act(kind, it.getJSONObject("action")) } }
             }
         }

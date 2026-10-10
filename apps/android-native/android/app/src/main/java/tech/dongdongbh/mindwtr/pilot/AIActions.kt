@@ -287,7 +287,7 @@ class AIActionsModel(private val shell: InboxViewModel) {
         when (reply.getString("kind")) {
             "alert" -> alert = reply.getString("title") to reply.getString("message")
             "toast" -> reply.getJSONObject("toast").let { toast ->
-                shell.showToast(toast.menuText("title"), toast.getString("message"), toast.getString("tone"), toast.getJSONObject("action").getString("label")) {
+                shell.showToast(toast, toast.getJSONObject("action").getString("label")) {
                     shell.closeProcessing()
                     shell.menu.openAISettings()
                 }

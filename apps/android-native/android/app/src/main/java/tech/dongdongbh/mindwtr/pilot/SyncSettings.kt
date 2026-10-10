@@ -323,7 +323,7 @@ class SyncSettingsModel(private val menu: MenuModel) {
         val all = reply.menuObjects("toasts")
         if (all.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android sync screen command=$name toasts=${all.joinToString("|") { "${it.optString("tone")}:${it.optString("title")}" }}")
         val toast = all.lastOrNull() ?: return
-        shell.showToast(toast.menuText("title")?.ifEmpty { null }, toast.getString("message"), toast.getString("tone"))
+        shell.showToast(toast)
     }
 
     private fun uuid() = UUID.randomUUID().toString()

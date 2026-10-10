@@ -330,7 +330,7 @@ class CalendarModel(private val menu: MenuModel, private val saved: SavedStateHa
         composer?.takeIf { it.requestId == action.id }?.let { keepComposer(it.copy(requestId = UUID.randomUUID().toString())) }
     }
 
-    private fun toast(toast: JSONObject) = shell.showToast(toast.menuText("title"), toast.getString("message"), toast.getString("tone"))
+    private fun toast(toast: JSONObject) = shell.showToast(toast)
 
     /**
      * Core's answer to a calendar action: its toast (a time conflict), a refused composer save's error (the composer stays, its

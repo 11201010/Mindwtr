@@ -238,7 +238,7 @@ class CalendarSettingsModel(private val menu: MenuModel) {
         val all = reply.menuObjects("toasts")
         if (all.isNotEmpty()) Log.i(CoreHost.TAG, "Native Android calendar screen command=$name toasts=${all.joinToString("|") { "${it.optString("tone")}:${it.optString("title")}:${it.optString("message")}" }}")
         val toast = all.lastOrNull() ?: return
-        shell.showToast(toast.menuText("title")?.ifEmpty { null }, toast.getString("message"), toast.getString("tone"))
+        shell.showToast(toast)
     }
 }
 
