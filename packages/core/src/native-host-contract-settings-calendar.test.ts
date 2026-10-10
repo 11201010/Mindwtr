@@ -1932,6 +1932,37 @@ describe('native host contract: Settings › Calendar', () => {
             expect(fetches).toBe(2);
         });
 
+        it('a change to the subscriptions replaces a running load of the same range: a removed subscription\'s events never show', async () => {
+            const [kept, removed] = fixture.settings.synced.externalCalendars!;
+            await seed({ externalCalendars: [kept, removed] });
+            const handset = phone({ calendars: [] });
+            const fetched: string[] = [];
+            let hold = true;
+            const fetchFeed = handset.host.fetch;
+            handset.host.fetch = (async (...args: Parameters<typeof fetch>) => {
+                fetched.push(String(args[0]));
+                if (hold) {
+                    await new Promise<void>((_resolve, reject) => {
+                        args[1]?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+                    });
+                }
+                return fetchFeed(...args);
+            }) as typeof fetch;
+            const contract = await openHost(handset.host);
+            const first = contract.loadExternalCalendarFeed({ slot: 'calendar', ...range });
+            await settle();
+            await useTaskStore.getState().updateSettings({ externalCalendars: [kept] });
+            hold = false;
+            const after = contract.loadExternalCalendarFeed({ slot: 'calendar', ...range });
+            expect(after).not.toBe(first);
+            expect(await first).toMatchObject({ ok: false, error: { code: 'STALE_REVISION' } });
+            const shown = value(await after);
+            if (shown.status !== 'ready') throw new Error('not ready');
+            expect(shown.calendars.map((calendar) => calendar.id)).toEqual([kept.id]);
+            // The replaced load had started reading the subscriptions.
+            expect(fetched.length).toBeGreaterThan(0);
+        });
+
         it('answers a refresh within a second from the last load, and loads again after it', async () => {
             await seed({});
             const handset = phone({ calendars: [], storage: { [KEYS.feeds]: JSON.stringify(fixture.settings.synced.externalCalendars) } });
