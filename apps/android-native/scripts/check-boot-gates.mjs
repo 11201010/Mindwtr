@@ -1134,7 +1134,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     // D9: a nested call (on the engine) pumps until its answer; any other starts its operation in one engine task and is answered
     // from the pump's turns, so it never holds the engine while the operation waits. Past its deadline it is cancelled, drained,
     // or stops the host, as a nested one.
-    assert.match(coreHost, /if \(Thread\.currentThread\(\) === engineThread\) \{\s+stopped\?\.let \{ throw IllegalStateException\(it\) \}\s+finish\(begin\(method, args, deadlineMs, done\), answer\(method, args, deadlineMs\)\)/);
+    assert.match(coreHost, /if \(Thread\.currentThread\(\) === engineThread\) \{\s+stopped\?\.let \{ throw IllegalStateException\(it\) \}\s+finish\(begin\(method, args, deadlineMs, done\), answerChecked\(method, args, deadlineMs\)\)/);
     // D9a review: a journaled write starts only after the write before it answered (WriteQueue, JVM-tested), reads at once;
     // each ending call starts the next waiting write, and a closing host fails the writes that never started.
     assert.match(coreHost, /onEngineQueued \{\s+stopped\?\.let \{ throw IllegalStateException\(it\) \}[^}]*?begin\(method, args, deadlineMs, done\)\.let \{ if \(writeQueue\.admit\(it\)\) start\(it\) \}\s+\}/);
