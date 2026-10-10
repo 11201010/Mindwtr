@@ -101,7 +101,7 @@ describe('native immutable backup inspection and models', () => {
         const reply = { version: 1 as const, operation: 'merge' as const, snapshotName: NAME, added: 2, updated: 3 };
         expect(buildNativeBackupDocumentResult(reply, t)).toEqual({ title: t('settings.mergeBackup'),
             message: `${t('settings.mergeBackupSummary', { addedCount: 2, updatedCount: 3 })}\n${t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: NAME })}`,
-            undoLabel: t('settings.undoImport'), doneLabel: t('common.done') });
+            undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs: 5600 });
         const confirmation = buildNativeBackupSnapshotRestoreConfirmation(NAME, t);
         expect(confirmation.title).toBe(t('settings.undoImportConfirmTitle'));
         expect(confirmation.message).toContain('Anything you changed since is rolled back too');
@@ -453,7 +453,7 @@ describe('native selected JSON backup replacement', () => {
         const env = await open(); const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, 'replace'));
         const reply = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
         expect(buildNativeBackupDocumentResult(reply, t)).toEqual({ title: t('settings.backupMobile.restoreComplete'),
-            message: t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: NAME }), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') });
+            message: t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: NAME }), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs: 5000 });
         const later = await env.adapter.getData(); later.tasks.push(task('after-replace', { rev: 30 })); later.tasks.find((item) => item.id === 'visible')!.title = 'After replacement'; await env.adapter.saveData(later);
         const undoId = '22222222-2222-4222-8222-222222222222';
         const undo = await prepareNativeBackupDocument(env.adapter, { ...input(prepared.recoveryJSON!, 'restore'), requestId: undoId });

@@ -11,6 +11,7 @@ import type { TickTickImportExecutionResult } from './ticktick-import';
 import type { DgtImportExecutionResult } from './dgt-import';
 import type { OmniFocusImportExecutionResult } from './omnifocus-import';
 import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
+import { DATA_TRANSFER_TOAST_MS } from './data-settings-model';
 import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
@@ -454,8 +455,10 @@ export async function commitNativeBackupDocument(adapter: NativeReceiptSqliteAda
     }
 }
 
+/** RN's result toast: its title and lines, Undo (none after a snapshot restore), and RN's duration (null: the toast's default). */
 export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply, t: ImportDiagnosticTranslator) {
     validateReply(reply);
+    const durationMs = reply.operation === 'restore' ? null : DATA_TRANSFER_TOAST_MS[reply.operation];
     if (reply.operation === 'omnifocus') {
         const result = reply.result;
         return { title: t('settings.backupMobile.importComplete'), message: [
@@ -464,7 +467,7 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
             result.importedChecklistItemCount > 0 ? t('settings.backupMobile.nestedTasksBecameChecklistItems', { taskCount: result.importedChecklistItemCount }) : null,
             result.importedStandaloneTaskCount > 0 ? t('settings.backupMobile.tasksStayedOutsideProjects', { taskCount: result.importedStandaloneTaskCount }) : null,
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
     }
     if (reply.operation === 'ticktick' || reply.operation === 'dgt') {
         const result = reply.result;
@@ -473,7 +476,7 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
                 projectCount: result.importedProjectCount, areaCount: result.importedAreaCount }),
             result.importedChecklistItemCount > 0 ? t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: result.importedChecklistItemCount }) : null,
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
     }
     if (reply.operation === 'todoist') {
         const result = reply.result;
@@ -481,7 +484,7 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
             t('settings.backupMobile.importedTodoistTasksIntoProjects', { taskCount: result.importedTaskCount, projectCount: result.importedProjectCount }),
             result.importedChecklistItemCount > 0 ? t('settings.backupMobile.subtasksBecameChecklistItems', { subtaskCount: result.importedChecklistItemCount }) : null,
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
     }
     if (reply.operation === 'csv') {
         const result = reply.result;
@@ -490,7 +493,7 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
                 projectCount: result.importedProjectCount, sectionCount: result.importedSectionCount, areaCount: result.importedAreaCount }),
             result.importedChecklistItemCount > 0 ? t('settings.backupMobile.checklistItemsPreserved', { checklistItemCount: result.importedChecklistItemCount }) : null,
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
-            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done') };
+            ...warningMessages(result.warnings, t)].filter(Boolean).join('\n'), undoLabel: t('settings.undoImport'), doneLabel: t('common.done'), durationMs };
     }
     return {
         title: t(reply.operation === 'merge' ? 'settings.mergeBackup' : 'settings.backupMobile.restoreComplete'),
@@ -499,7 +502,7 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
             t('settings.backupMobile.recoverySnapshotSaved', { snapshotName: reply.snapshotName }),
         ].join('\n') : reply.operation === 'replace' ? t('settings.backupMobile.backupRestoredWithSnapshot', { snapshotName: reply.snapshotName })
             : t('settings.backupMobile.recoverySnapshotRestored'),
-        undoLabel: reply.operation !== 'restore' ? t('settings.undoImport') : '', doneLabel: t('common.done'),
+        undoLabel: reply.operation !== 'restore' ? t('settings.undoImport') : '', doneLabel: t('common.done'), durationMs,
     };
 }
 
