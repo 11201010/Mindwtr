@@ -1250,9 +1250,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const pushSetting = methods.find((method) => method.name === 'iosCalendarPushSetting');
     assert(pushSetting && pushSetting.body.includes('iosCalendarPushOwned('), 'Calendar push settings require the private iOS owner');
     assert.deepEqual(called(pushSetting.body), ['setCalendarSetting'], 'the private push facade delegates only its shared setting');
-    const iosOnlyMethods = methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name);
+    // iOS's Calendar push facade sends the shared setCalendarSetting (Android journals it through its own method).
+    const iosOnlyMethods = [...methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name), 'iosCalendarPushSetting'];
     {
-        assert.equal(iosOnlyMethods.length, iosOnlyWrites.length, 'each iOS-only write has its host method');
+        assert.equal(iosOnlyMethods.length, iosOnlyWrites.length + 1, 'each iOS-only write has its host method');
         const java = resolve(app, 'android/app/src/main/java');
         const kotlin = readdirSync(java, { recursive: true }).filter((file) => file.endsWith('.kt')).map((file) => readFileSync(resolve(java, file), 'utf8')).join('\n');
         assert.equal(kotlin.match(new RegExp(`"(${iosOnlyMethods.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS-only writes');
@@ -1335,12 +1336,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets, isFossBuild\) : null;/);
     assert.match(hostEntry, /const localAttachments = nativeSync \? null : createNativeLocalAttachmentsForHost\(\);/);
     assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
-    assert.match(hostEntry, /createNativeHostContract\(\{ reminderPlatform: globalThis\.__mindwtrHostPlatform === 'ios' \? 'ios' : 'android', get syncSettings\(\) \{ return nativeSync\?\.settingsHost \?\? iosManualSync\?\.settingsHost; \}, \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*calendar: iosCalendar,\s*get attachments\(\) \{\s*const selected = iosProjectAttachmentDownload \? iosSelfHostedProjectAttachments\?\.contractHost \?\? iosManualSync\?\.attachmentsHost : attachmentsHost;\s*if \(!iosRelocatedProjectAvailability \|\| !selected\) return selected \?\? undefined;/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ reminderPlatform: globalThis\.__mindwtrHostPlatform === 'ios' \? 'ios' : 'android', get syncSettings\(\) \{ return nativeSync\?\.settingsHost \?\? iosManualSync\?\.settingsHost; \}, \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*calendar: iosCalendar \?\? nativeCalendar \?\? undefined,\s*get attachments\(\) \{\s*const selected = iosProjectAttachmentDownload \? iosSelfHostedProjectAttachments\?\.contractHost \?\? iosManualSync\?\.attachmentsHost : attachmentsHost;\s*if \(!iosRelocatedProjectAvailability \|\| !selected\) return selected \?\? undefined;/);
     assert.match(hostEntry, /const result = await \(iosSelfHostedProjectAttachments \?\? iosManualSync\)\?\.prepareAttachmentAvailableDetailed\?\.\(attachment\);/);
     assert.match(hostEntry, /\.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
     // The persistent capture switch on RN's AsyncStorage key, on the host with RN's AsyncStorage (pass R2).
     assert.match(hostEntry, /const persistentCapture = nativeSync \? \{\s+read: \(\) => \(JSON\.parse\(checked\(native\(\)\.kvGet\(PERSISTENT_CAPTURE_STORAGE_KEY\)\)\) as \[string \| null\]\)\[0\] === 'true',/);
-    assert.match(hostEntry, /\}, \.\.\.\(nativeCalendar \? \{ calendar: nativeCalendar \} : \{\}\) \}\);/, 'the contract binds the calendar device');
     // C3: core's calendar device binds RN's AsyncStorage, the polyfill's fetch and file reads, and HostCalendars, only on a host with the calendar bridge.
     assert.match(hostEntry, /const nativeCalendar = nativeSync && typeof globalThis\.__mindwtrCalendarCall === 'function'\s*\? createNativeCalendar\(keyValue, \(\) => globalThis\.__mindwtrCalendarCall as never, \(\) => globalThis\.__mindwtrFileCall as never, \(\) => \{\s*if \(!bootAdapter\) throw new Error\('Native storage is not loaded yet'\);\s*return bootAdapter;\s*\}\)\s*: null;/);
     // C3 review: RN's calendar_sync map is read (a task RN exported before the notes marker stays out of the device events), never written.

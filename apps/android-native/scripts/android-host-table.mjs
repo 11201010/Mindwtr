@@ -26,6 +26,7 @@ export const ANDROID_HOST_METHODS = [
     'backupSnapshotRestoreModel',
     'boot',
     'bootRecovery',
+    'calendarRequest',
     'cancel',
     'captureEdit',
     'captureLines',
