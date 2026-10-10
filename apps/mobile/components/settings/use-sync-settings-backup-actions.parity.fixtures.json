@@ -1,0 +1,142 @@
+{
+  "handleImportTodoist:plain": {
+    "preview": {
+      "title": "Import Todoist data?",
+      "message": "Import 9 tasks from 2 Todoist project(s)?\n• Project 1: 2\n• Project 2: 3"
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 tasks into 3 project(s).\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "handleImportTickTick:plain": {
+    "preview": {
+      "title": "Import TickTick data?",
+      "message": "Import 9 tasks from ticktick.zip?"
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), and 1 area(s).\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "handleImportDgt:plain": {
+    "preview": {
+      "title": "Import DGT GTD data?",
+      "message": "Import 9 tasks from dgt.json?"
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), and 1 area(s).\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "handleImportOmniFocus:plain": {
+    "preview": {
+      "title": "Import OmniFocus data?",
+      "message": "Import 9 task(s) from omnifocus.csv?\nImported tasks keep OmniFocus notes, dates, tags, recurrence, and checklist children when supported."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s) and 3 project(s).\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "handleImportMindwtrCsv:plain": {
+    "preview": {
+      "title": "Import Mindwtr CSV data?",
+      "message": "Import 9 tasks from mindwtr.csv?"
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), 2 section(s), and 1 area(s).\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "restore:plain": {
+    "preview": {
+      "title": "Restore backup?",
+      "message": "File: backup.json\nContains 1 tasks and 0 projects.\nThis will replace all current local data. A recovery snapshot will be saved first."
+    },
+    "result": {
+      "title": "Restore complete",
+      "message": "Backup restored successfully. Recovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "merge:plain": {
+    "preview": {
+      "title": "Merge Backup",
+      "message": "File: backup.json\nContains 1 tasks and 0 projects.\nNewer items from the backup are combined with your current data. Nothing local is removed, and items you deleted here stay deleted. A recovery snapshot is saved first when available."
+    },
+    "result": {
+      "title": "Restore complete",
+      "message": "Backup restored successfully. Recovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "handleImportTodoist:rich": {
+    "preview": {
+      "title": "Import Todoist data?",
+      "message": "Import 9 tasks from 6 Todoist project(s)?\n3 section(s) will be preserved.\n4 subtask(s) will become checklist items.\n• Project 1: 2\n• Project 2: 3\n• Project 3: 4\n• Project 4: 5\n• 2 more project(s)…\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 tasks into 3 project(s).\n4 subtask(s) became checklist items.\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    }
+  },
+  "handleImportTickTick:rich": {
+    "preview": {
+      "title": "Import TickTick data?",
+      "message": "Import 9 tasks from ticktick.zip?\n1 area(s) will be created from TickTick folders.\n6 project(s) will be created from TickTick lists.\n2 checklist item(s) will be preserved.\n1 recurring task(s) will keep supported repeat rules.\n• Area 0 / Project 1: 2\n• Project 2: 3\n• Area 2 / Project 3: 4\n• Project 4: 5\n• 2 more project(s)…\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), and 1 area(s).\n4 checklist item(s) were preserved.\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    }
+  },
+  "handleImportDgt:rich": {
+    "preview": {
+      "title": "Import DGT GTD data?",
+      "message": "Import 9 tasks from dgt.json?\n1 area(s) will be created from DGT folders.\n6 project(s) will be created.\n2 checklist item(s) will be preserved.\n1 task(s) will stay outside projects so you can process them in Mindwtr.\n• Area 0 / Project 1: 2\n• Project 2: 3\n• Area 2 / Project 3: 4\n• Project 4: 5\n• 2 more project(s)…\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), and 1 area(s).\n4 checklist item(s) were preserved.\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    }
+  },
+  "handleImportOmniFocus:rich": {
+    "preview": {
+      "title": "Import OmniFocus data?",
+      "message": "Import 9 task(s) from omnifocus.csv?\n6 project(s) will be created when needed.\n1 area(s) will be created from OmniFocus folders when needed.\n2 nested task(s) will become checklist items when possible.\n1 task(s) will stay outside projects so you can process them in Mindwtr.\nImported tasks keep OmniFocus notes, dates, tags, recurrence, and checklist children when supported.\n• Project 1: 2\n• Project 2: 3\n• Project 3: 4\n• Project 4: 5\n• 2 more project(s)…\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s) and 3 project(s).\n1 area(s) were created from OmniFocus folders.\n4 nested task(s) became checklist items.\n5 task(s) stayed outside projects.\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    }
+  },
+  "handleImportMindwtrCsv:rich": {
+    "preview": {
+      "title": "Import Mindwtr CSV data?",
+      "message": "Import 9 tasks from mindwtr.csv?\n1 area(s) will be created from the Area column.\n6 project(s) will be created when needed.\n2 section(s) will be created from the Section column.\n2 checklist item(s) will be preserved.\n1 task(s) will stay outside projects so you can process them in Mindwtr.\n• Area 0 / Project 1: 2\n• Project 2: 3\n• Area 2 / Project 3: 4\n• Project 4: 5\n• 2 more project(s)…\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Import complete",
+      "message": "Imported 12 task(s), 3 project(s), 2 section(s), and 1 area(s).\n4 checklist item(s) were preserved.\nRecovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    }
+  },
+  "restore:rich": {
+    "preview": {
+      "title": "Restore backup?",
+      "message": "Backup date: <backupDate>\nContains 7 tasks and 2 projects.\nThis will replace all current local data. A recovery snapshot will be saved first.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Restore complete",
+      "message": "Backup restored successfully. Recovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  },
+  "merge:rich": {
+    "preview": {
+      "title": "Merge Backup",
+      "message": "Backup date: <backupDate>\nContains 7 tasks and 2 projects.\nNewer items from the backup are combined with your current data. Nothing local is removed, and items you deleted here stay deleted. A recovery snapshot is saved first when available.\n1 imported record(s) needed an adjustment. Review the imported data.\n1 unsupported repeat rule(s) were kept as notes."
+    },
+    "result": {
+      "title": "Restore complete",
+      "message": "Backup restored successfully. Recovery snapshot saved as data.2026-08-13T10-00-00.000.snapshot.json."
+    }
+  }
+}
