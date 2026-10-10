@@ -473,7 +473,9 @@ try {
     await launch();
     check(replayLines().length > replays && replayLines().at(-1).includes('"outcome":"committed"'), '(E4a) the commit replayed after a task became due landed, not stale');
     check(liveTitles('due').includes(`d1l${run}`), '(E4a) its row is in the library');
-    const promoted = sqlite(pullDb('due-status'), `SELECT status FROM tasks WHERE title = 'd1k${run}'`)[0]?.status;
+    let promoted;
+    await until('(E4a) the due task to be promoted', () => (promoted = sqlite(pullDb('due-status'), `SELECT status FROM tasks WHERE title = 'd1k${run}'`)[0]?.status) === 'next', 30_000)
+        .catch(() => undefined);
     check(promoted === 'next', `(E4a) normal activation ran after the replay: the due task is promoted (${promoted})`);
 
     // ---- E2b: a death in the middle of a folder write ----
