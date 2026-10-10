@@ -183,6 +183,7 @@ export * from './gtd-settings-model';
 export * from './data-settings-model';
 export * from './notifications-settings-model';
 export * from './native-backup-document';
+export * from './recovery-snapshot-names';
 export * from './more-menu-model';
 export * from './reference';
 export * from './project-grouping';

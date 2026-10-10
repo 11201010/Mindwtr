@@ -1,9 +1,13 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import {
+    buildRecoverySnapshotFileName,
     countActiveRecords,
     flushPendingSave,
     isSandboxMode,
+    RECOVERY_SNAPSHOT_FILE_PATTERN,
+    recoverySnapshotNamesToPrune,
     serializeBackupData,
+    sortRecoverySnapshotNames,
     useTaskStore,
     type AppData,
 } from '@mindwtr/core';
@@ -19,8 +23,7 @@ import { mobileStorage } from './storage-adapter';
  * (A-05).
  */
 const SNAPSHOT_DIR_NAME = 'snapshots';
-export const SNAPSHOT_FILE_PATTERN = /^data\.(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})(?:\.(\d{3})(?:\.(\d+))?)?\.snapshot\.json$/u;
-const MAX_LOCAL_SNAPSHOTS = 5;
+export const SNAPSHOT_FILE_PATTERN = RECOVERY_SNAPSHOT_FILE_PATTERN;
 const SNAPSHOT_PENDING_FILE_NAME = 'data.pending.snapshot.tmp';
 const MAX_SNAPSHOT_NAME_COLLISIONS = 100;
 
@@ -36,43 +39,22 @@ export const getSnapshotDirectory = (): Directory | null => {
     if (!baseUri) return null;
     return new Directory(`${baseUri}/${SNAPSHOT_DIR_NAME}`);
 };
-const buildSnapshotFileName = (date: Date = new Date(), collisionIndex = 0): string => {
-    const iso = date.toISOString();
-    const [datePart, timePartWithZone] = iso.split('T');
-    const safeTime = String(timePartWithZone || '00:00:00.000Z')
-        .replace(/Z$/u, '')
-        .replace(/:/gu, '-');
-    const collisionSuffix = collisionIndex > 0 ? `.${collisionIndex}` : '';
-    return `data.${datePart}T${safeTime}${collisionSuffix}.snapshot.json`;
-};
+const buildSnapshotFileName = buildRecoverySnapshotFileName;
 export const listSnapshotEntries = (directory: Directory): Array<{ name: string; uri: string }> => {
     if (isSandboxMode()) return [];
     if (!directory.exists) return [];
-    return directory
-        .list()
-        .map((entry) => {
-            const uri = String(entry.uri || '');
-            const name = uri.split('/').pop() || '';
-            const match = name.match(SNAPSHOT_FILE_PATTERN);
-            if (!match) return null;
-            return {
-                name,
-                uri,
-                timestampKey: `${match[1]}.${match[2] ?? '000'}`,
-                collisionIndex: Number(match[3] ?? 0),
-            };
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-        .sort((left, right) =>
-            right.timestampKey.localeCompare(left.timestampKey)
-            || right.collisionIndex - left.collisionIndex
-        )
-        .map(({ name, uri }) => ({ name, uri }));
+    const uris = new Map<string, string>();
+    for (const entry of directory.list()) {
+        const uri = String(entry.uri || '');
+        uris.set(uri.split('/').pop() || '', uri);
+    }
+    return sortRecoverySnapshotNames([...uris.keys()]).map((name) => ({ name, uri: uris.get(name)! }));
 };
 export const pruneSnapshots = (directory: Directory): void => {
     if (isSandboxMode()) return;
     const entries = listSnapshotEntries(directory);
-    entries.slice(MAX_LOCAL_SNAPSHOTS).forEach((entry) => {
+    const pruned = new Set(recoverySnapshotNamesToPrune(entries.map((entry) => entry.name)));
+    entries.filter((entry) => pruned.has(entry.name)).forEach((entry) => {
         try {
             const file = new File(entry.uri);
             if (file.exists) {

@@ -5,6 +5,7 @@ import {
     createImportDiagnostic,
     createImportDiagnostics,
     formatImportDiagnostic,
+    formatRecoverySnapshotLabel as formatCoreRecoverySnapshotLabel,
     getBackupSourceFileDiagnostic,
     getInMemoryAppDataSnapshot,
     summarizeBackupMerge,
@@ -116,15 +117,7 @@ export function useSyncSettingsBackupActions({
         const diagnostic = getBackupSourceFileDiagnostic(error);
         return diagnostic ? formatImportDiagnostic(diagnostic, tr) : String(error);
     }, [tr]);
-    const formatRecoverySnapshotLabel = useCallback((fileName: string): string => {
-        const match = fileName.match(
-            /^data\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:\.(\d{3})(?:\.\d+)?)?\.snapshot\.json$/i,
-        );
-        if (!match) return fileName;
-        const [, datePart, hour, minute, second, milliseconds = '000'] = match;
-        const localDate = new Date(`${datePart}T${hour}:${minute}:${second}.${milliseconds}Z`);
-        return `${localDate.toLocaleDateString()} ${localDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    }, []);
+    const formatRecoverySnapshotLabel = useCallback((fileName: string): string => formatCoreRecoverySnapshotLabel(fileName), []);
 
     // Restore and merge preview the same file identically; only the sentence about what the
     // action does to local data differs.
