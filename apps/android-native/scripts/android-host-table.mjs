@@ -52,6 +52,7 @@ export const ANDROID_HOST_METHODS = [
     'inboxStep',
     'ingest',
     'language',
+    'legacyCheck',
     'logClear',
     'logLine',
     'logLinkHandoff',
