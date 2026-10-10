@@ -1433,21 +1433,19 @@ describe('native host contract: Settings › Calendar', () => {
     });
 
     describe('without calendar push bound (until the push pass)', () => {
-        it('shows the stored push options and refuses the push commands', async () => {
+        it('hides the push card and refuses the push commands', async () => {
             freezeClock();
             await seed({});
             const handset = phone({ calendars: ['primary', 'managed'], storage: { [KEYS.pushEnabled]: '1', [KEYS.pushCalendar]: 'g-mindwtr' } });
             const { syncEntries: _entries, ...readOnly } = handset.host;
             const contract = await openHost({ ...readOnly, calendars: { ...handset.host.calendars, createCalendar: undefined } });
+            // dd 10-10: no push card until the host binds calendar push, so an upgrade with push on shows no switch that does nothing.
             const view = value(await contract.openCalendarSettings());
-            expect(view.push.enabled).toBe(true);
-            expect(view.push.target?.options.map((option) => option.name)).toEqual(['Mindwtr calendar', 'alex@gmail.com']);
-            for (const change of [view.push.target!.colors!.options[1].edit, view.push.target!.delete.edit]) {
-                expect(await edit(contract, change)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
-            }
-            // Off needs no calendar writes.
-            expect(value(await edit(contract, view.push.toggle)).changed).toBe(true);
-            expect(await edit(contract, value(contract.getCalendarSettings()).push.toggle)).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(view.push).toBeNull();
+            // Off needs no calendar writes; on is refused.
+            expect(value(await edit(contract, { type: 'push', before: true, enabled: false })).changed).toBe(true);
+            expect(await edit(contract, { type: 'push', before: false, enabled: true })).toMatchObject({ ok: false, error: { code: 'ACTION_FAILED' } });
+            expect(value(contract.getCalendarSettings()).push).toBeNull();
             expect(handset.state.calendarWrites).toEqual([]);
         });
     });

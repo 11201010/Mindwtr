@@ -236,7 +236,8 @@ export type NativeCalendarAreaChoice = {
 export type NativeCalendarSettings = {
     version: typeof NATIVE_HOST_CONTRACT_VERSION;
     title: string;
-    push: {
+    /** Null while the host has no calendar push (hasCalendarPush): the screen shows no push card. */
+    push: null | {
         title: string;
         description: string;
         enabled: boolean;
@@ -660,7 +661,8 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
         return {
             version: NATIVE_HOST_CONTRACT_VERSION,
             title: t('settings.calendar'),
-            push: {
+            // No card until the host binds calendar push (dd 10-10): a switch that cannot push would mislead.
+            push: hasCalendarPush(current.host) ? {
                 title: tr('settings.calendarMobile.pushTasksToCalendar'),
                 description: tr('settings.calendarMobile.scheduledTasksAndTasksWithDueDatesAreAddedTo'),
                 enabled: push.enabled,
@@ -706,7 +708,7 @@ export function createCalendarSettingsMethods(deps: CalendarSettingsDeps) {
                         edit: { type: 'deleteMindwtrCalendar', calendarId: shownCalendarId, creationIntentRevision: shownCreationIntentRevision },
                     },
                 } : null,
-            },
+            } : null,
             device: {
                 title: t('settings.deviceCalendars'),
                 description: t('settings.deviceCalendarsDesc'),

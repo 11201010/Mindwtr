@@ -5,7 +5,7 @@
 //
 // Serves a calendar on this computer (calendar-feed-server.mjs, 127.0.0.1:<port>, MINDWTR_CALENDAR_PORT or 18783) and maps the
 // phone's port to it (`adb reverse`). Then, through the app's own screens:
-//   (1) Settings › Advanced › Calendar opens with RN's cards (push, device calendars) and the subscription form; the device
+//   (1) Settings › Advanced › Calendar opens with the device calendars card (no push card until calendar push, C4) and the subscription form; the device
 //       calendars stay off (this check never reads the phone's own calendars);
 //   (2) Add stores the subscription under RN's key in RKStorage and in the synced settings, and the list shows it; a URL with a
 //       user name and password shows masked, and neither URL reaches the write journal, the diagnostics log or logcat;
@@ -231,7 +231,7 @@ try {
     }
     // (1) The screen, RN's cards; the device calendars are never turned on here.
     let nodes = await openCalendarSettings();
-    check(Boolean(tagged(nodes, 'calendar-push')), '(1) Settings › Calendar opens with the push card');
+    check(!tagged(nodes, 'calendar-push'), '(1) Settings › Calendar opens without the push card (until calendar push, C4)');
     check(Boolean(tagged(nodes, 'calendar-device')), '(1) and the device calendars card');
     check(Boolean(await reveal((current) => tagged(current, 'calendar-url'), 'URL field')), '(1) and the subscription form');
 
