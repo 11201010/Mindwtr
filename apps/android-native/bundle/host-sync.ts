@@ -105,6 +105,8 @@ export type NativeSyncBindings = {
     isFossBuild: boolean;
     /** Selected durable cleanup ownership, required by the explicit iOS foreground factory. */
     retireLocalAttachment?: NativeAttachmentBindings['retireLocalAttachment'];
+    /** RN's recovery snapshot names, newest first (Settings › Sync's Recovery snapshots card); absent: the card lists none. */
+    listRecoverySnapshots?: () => Promise<string[]>;
 };
 
 /** host-polyfills.js's sync crypto call (HostCrypto.kt); absent where the host has no crypto (the gates' stand-in). */
@@ -593,6 +595,7 @@ export const createNativeSync = (bindings: NativeSyncBindings) => {
             delete: (key) => secureConfig.deleteSecureConfigValue(key),
         },
         performSync,
+        ...(bindings.listRecoverySnapshots ? { listRecoverySnapshots: bindings.listRecoverySnapshots } : {}),
         clearSyncConfigCache: () => service.clearMobileSyncConfigCache(),
         reconcileBackgroundSync,
         rememberWebdavCapabilityProof: (config) => capabilityProof.rememberWebdavCapabilityProof(config),

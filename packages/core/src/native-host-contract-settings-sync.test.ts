@@ -2742,3 +2742,29 @@ describe('native host contract: Settings › Sync on the native host (S3)', () =
         expect(card?.status).toContain(shown);
     });
 });
+
+describe('native Settings › Sync recovery snapshot rows (pass D1a)', () => {
+    it('labels each snapshot as RN does and names same-minute ones apart for TalkBack', async () => {
+        const first = 'data.2026-08-09T12-34-05.snapshot.json';
+        const second = 'data.2026-08-09T12-34-52.123.1.snapshot.json';
+        await seed({}, false);
+        const dev = createDevice({});
+        dev.host.listRecoverySnapshots = async () => [second, first, 'unrecognized.snapshot.json'];
+        const contract = await openHost(dev.host);
+        value(await contract.openSyncSettings());
+        const card = value(contract.getSyncSettings()).recoverySnapshots;
+        const t = (key: string) => (en as Record<string, string>)[key];
+        const label = (name: string) => {
+            const match = name.match(/^data\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:\.(\d{3})(?:\.\d+)?)?\.snapshot\.json$/u)!;
+            const at = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5] ?? '000'}Z`);
+            return `${at.toLocaleDateString()} ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        };
+        expect(card.snapshots).toEqual([second, first, 'unrecognized.snapshot.json']);
+        expect(card.rows.map((row) => [row.name, row.label])).toEqual([[second, label(second)], [first, label(first)],
+            ['unrecognized.snapshot.json', 'unrecognized.snapshot.json']]);
+        expect(card.rows[0].accessibilityLabel).toBe(t('settings.recoverySnapshotsRestoreNamed').replace('{{snapshotName}}', `${label(second)} (${second})`));
+        expect(card.rows[2].accessibilityLabel).toBe(t('settings.recoverySnapshotsRestoreNamed').replace('{{snapshotName}}', 'unrecognized.snapshot.json'));
+        expect(card.rows[1].accessibilityHint).toBe(t('settings.recoverySnapshotsConfirm').replace('{snapshot}', first));
+        expect(card).toMatchObject({ restoreLabel: t('settings.recoverySnapshotsRestore'), loading: t('settings.recoverySnapshotsLoading'), enabled: true });
+    });
+});

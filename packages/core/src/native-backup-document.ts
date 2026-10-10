@@ -11,6 +11,7 @@ import type { TickTickImportExecutionResult } from './ticktick-import';
 import type { DgtImportExecutionResult } from './dgt-import';
 import type { OmniFocusImportExecutionResult } from './omnifocus-import';
 import { MAX_NATIVE_DOCUMENT_RECEIPT_REPLY_BYTES, type NativeReceiptSqliteAdapter } from './native-request-receipts';
+import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
 import { validateMergedSyncData } from './sync-normalization';
@@ -502,11 +503,14 @@ export function buildNativeBackupDocumentResult(reply: NativeBackupDocumentReply
     };
 }
 
-export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName: string, t: ImportDiagnosticTranslator) {
+/** RN's question before a snapshot restore: the Undo words after an import or restore, else the Recovery snapshots row's. */
+export function buildNativeBackupSnapshotRestoreConfirmation(snapshotName: string, t: ImportDiagnosticTranslator, undo = true) {
     if (!snapshot(snapshotName)) invalid();
-    const match = snapshotName.match(snapshotPattern)!;
-    const date = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5] ?? '000'}Z`);
-    const label = `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    return { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName: label }),
-        confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
+    const label = formatRecoverySnapshotLabel(snapshotName);
+    return undo
+        ? { title: t('settings.undoImportConfirmTitle'), message: t('settings.undoImportConfirm', { snapshotName: label }),
+            confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') }
+        : { title: t('settings.backupMobile.restoreRecoverySnapshot'),
+            message: t('settings.backupMobile.restoreSnapshotReplaceLocalData', { snapshotName: label }),
+            confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') };
 }

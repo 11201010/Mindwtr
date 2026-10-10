@@ -1,3 +1,4 @@
+import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { strToU8, zipSync } from 'fflate';
 import { bytesToBase64 } from './base64-bytes';
 import { createImportDiagnostics, formatImportDiagnostic } from './import-diagnostics';
@@ -106,6 +107,16 @@ describe('native immutable backup inspection and models', () => {
         expect(confirmation.message).toContain('Anything you changed since is rolled back too');
         expect(buildNativeBackupDocumentResult({ ...reply, operation: 'restore', added: 0, updated: 0 }, t).message)
             .toBe(t('settings.backupMobile.recoverySnapshotRestored'));
+    });
+    it('asks RN\'s Recovery snapshots row question for a plain restore, with the same label', () => {
+        const undo = buildNativeBackupSnapshotRestoreConfirmation(NAME, t);
+        const restore = buildNativeBackupSnapshotRestoreConfirmation(NAME, t, false);
+        const label = formatRecoverySnapshotLabel(NAME);
+        expect(restore).toEqual({ title: t('settings.backupMobile.restoreRecoverySnapshot'),
+            message: t('settings.backupMobile.restoreSnapshotReplaceLocalData', { snapshotName: label }),
+            confirmLabel: t('markdown.referenceRestore'), cancelLabel: t('common.cancel') });
+        expect(undo.message).toBe(t('settings.undoImportConfirm', { snapshotName: label }));
+        expect(() => buildNativeBackupSnapshotRestoreConfirmation('data.bad.snapshot.json', t, false)).toThrow('INVALID_INPUT');
     });
 });
 

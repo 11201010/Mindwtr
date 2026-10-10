@@ -65,6 +65,7 @@ import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-ho
 import { fail, isObjectRecord, isText } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, runStoreWrite, settleWrite } from './native-request-receipts';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
+import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { useTaskStore } from './store';
 import { isSyncEncryptionCleanupDeferredError } from './sync-encryption-service';
 import type { SyncEncryptionStatus, SyncEncryptionTransitionKind } from './sync-encryption';
@@ -331,7 +332,15 @@ export type NativeSyncSettings = {
     /** Null when the backend cannot encrypt, or while its state is first read. */
     encryption: NativeSyncEncryptionCard | null;
     preferences: { title: string; description: string; rows: { key: SyncPreferenceKey; label: string; hint: string | null; value: boolean }[] };
-    recoverySnapshots: { title: string; description: string; empty: string; snapshots: string[] };
+    recoverySnapshots: {
+        title: string; description: string; empty: string; snapshots: string[];
+        /**
+         * RN's RecoverySnapshotsCard rows: the date label over the file name, the Restore word, and TalkBack's name and hint
+         * ("label (file name)" when two snapshots of one minute would read alike). Each row is off while a sync runs.
+         */
+        rows: { name: string; label: string; accessibilityLabel: string; accessibilityHint: string }[];
+        restoreLabel: string; loading: string; enabled: boolean;
+    };
     /** The disclosure glyphs React Native draws after a folded card's title. */
     disclosure: { closed: string; open: string };
     busy: { syncing: boolean; testing: boolean; dropbox: boolean; encryption: boolean };
@@ -1121,6 +1130,17 @@ export function createSyncSettingsMethods(deps: SyncSettingsDeps) {
                 description: tr('settings.syncMobile.savedAutomaticallyBeforeRestoreAndImportOperations'),
                 empty: t('settings.recoverySnapshotsEmpty'),
                 snapshots: current.snapshots,
+                rows: current.snapshots.map((name) => {
+                    const label = formatRecoverySnapshotLabel(name);
+                    return {
+                        name, label,
+                        accessibilityLabel: tr('settings.recoverySnapshotsRestoreNamed', { snapshotName: label === name ? name : `${label} (${name})` }),
+                        accessibilityHint: tr('settings.recoverySnapshotsConfirm', { snapshot: name }),
+                    };
+                }),
+                restoreLabel: t('settings.recoverySnapshotsRestore'),
+                loading: t('settings.recoverySnapshotsLoading'),
+                enabled: !state.isSyncing,
             },
             disclosure: { closed: '▸', open: '▾' },
             busy: { syncing: state.isSyncing, testing: state.isTestingConnection, dropbox: state.dropboxBusy, encryption: card?.busy === true },

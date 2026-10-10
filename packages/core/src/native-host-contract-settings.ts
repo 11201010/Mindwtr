@@ -1104,7 +1104,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
         getDataSettings(): NativeHostResult<NativeDataSettings> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t(), heartbeat() !== null);
+            const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t(), heartbeat() !== null, deps.language());
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
         },
 
