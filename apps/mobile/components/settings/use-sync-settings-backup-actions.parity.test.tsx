@@ -87,13 +87,15 @@ describe('Settings › Data texts: frozen RN parity', () => {
     it('keeps every preview and result byte for byte', async () => {
         await act(async () => { create(<Harness />); });
         const seen: Record<string, unknown> = {};
+        // Each flow names its mocks; looked up on a plain object (a namespace import takes no computed member).
+        const mocks = { ...dataTransfer } as unknown as Record<string, ReturnType<typeof vi.fn>>;
         for (const rich of [false, true]) {
             for (const flow of flows(rich)) {
-                vi.mocked(dataTransfer[flow.pick as 'pickTodoistDocument']).mockResolvedValue(document);
-                vi.mocked(dataTransfer[flow.inspect as 'inspectTodoistDocument']).mockResolvedValue({
+                mocks[flow.pick].mockResolvedValue(document);
+                mocks[flow.inspect].mockResolvedValue({
                     valid: true, preview: flow.preview, parsedProjects: [], parsedData: {}, diagnostics: [],
                 } as never);
-                vi.mocked(dataTransfer[flow.apply as 'importTodoistData']).mockResolvedValue({ snapshotName: SNAPSHOT, result: flow.result } as never);
+                mocks[flow.apply].mockResolvedValue({ snapshotName: SNAPSHOT, result: flow.result } as never);
                 await latest![flow.handler as 'handleImportTodoist']();
                 const preview = lastAlert();
                 await pressConfirm();
