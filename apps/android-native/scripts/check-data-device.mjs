@@ -205,9 +205,12 @@ const useTestFolder = async () => {
 };
 
 // ---- Data actions ----
+/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, as drawn. */
+const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import']]
+    .some((label) => (node.text ?? '').toUpperCase() === label.toUpperCase()));
 const confirmQuestion = async (title) => {
-    const nodes = await waitFor(`the question "${title}"`, (current) => hasText(current, title) && Boolean(tagged(current, 'data-transfer-confirm')), 60_000);
-    await tap(tagged(nodes, 'data-transfer-confirm'));
+    const nodes = await waitFor(`the question "${title}"`, (current) => hasText(current, title) && Boolean(confirmButton(current)), 60_000);
+    await tap(confirmButton(nodes));
 };
 const merge = async (file) => {
     await openData();
@@ -215,7 +218,8 @@ const merge = async (file) => {
     await pickDocument(file.name);
     await until('the app back in front', () => !otherAppFront(), 15_000, 500);
 };
-const toastWith = (title, timeoutMs = 120_000) => waitFor(`the toast "${title}"`, (nodes) => hasText(nodes, title), timeoutMs);
+// The question closed first: a question can carry the same title as its result (Merge Backup).
+const toastWith = (title, timeoutMs = 120_000) => waitFor(`the toast "${title}"`, (nodes) => hasText(nodes, title) && !confirmButton(nodes), timeoutMs);
 const undoButton = (nodes) => nodes.find((node) => node.text === en['settings.undoImport']);
 const push = (file) => adbRaw('push', resolve(work, file.name), `${PHONE_DIR}/${file.name}`);
 const exportFile = async (tag, suffix) => {
@@ -268,15 +272,15 @@ const measure = async () => {
         await launch();
         const merged = await measureRun(`${mib} MiB merge`, async () => {
             await merge(file);
-            await tap(tagged(await waitFor('the question', (current) => Boolean(tagged(current, 'data-transfer-confirm')), 300_000), 'data-transfer-confirm'));
-        }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !tagged(nodes, 'data-transfer-confirm'));
+            await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 300_000)));
+        }, (nodes) => hasText(nodes, en['settings.mergeBackup']) && !confirmButton(nodes));
         if (merged !== 'done') { if (!pid()) await launch(); continue; }
         await measureRun(`${mib} MiB restore over a ${mib} MiB library`, async () => {
             await openData();
             await tap(tagged(await screen(), 'data-transfer-restore'));
             await pickDocument(file.name);
             await until('the app back in front', () => !otherAppFront(), 15_000, 500);
-            await tap(tagged(await waitFor('the question', (current) => Boolean(tagged(current, 'data-transfer-confirm')), 300_000), 'data-transfer-confirm'));
+            await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 300_000)));
         }, (nodes) => hasText(nodes, en['settings.backupMobile.restoreComplete']));
         sh(`rm -f ${PHONE_DIR}/${file.name}`);
     }
@@ -404,8 +408,8 @@ try {
     push(c);
     setProp('delay_before_ms', '8000');
     await merge(c);
-    nodes = await waitFor('the question', (current) => Boolean(tagged(current, 'data-transfer-confirm')), 60_000);
-    await tap(tagged(nodes, 'data-transfer-confirm'));
+    nodes = await waitFor('the question', (current) => Boolean(confirmButton(current)), 60_000);
+    await tap(confirmButton(nodes));
     const rowTags = ['data-transfer-export', 'data-transfer-export-csv', 'data-transfer-export-tasknotes', 'data-transfer-restore', 'data-transfer-merge'];
     nodes = await waitFor('the merge to wait', (current) => rowTags.every((tag) => tagged(current, tag)?.enabled === 'false'), 30_000);
     check(true, '(E5) while the merge runs every data row is off (RN\'s isBackupBusy), the merge row with RN\'s spinner (screenshot)');
@@ -418,8 +422,8 @@ try {
         for (const [name, value] of Object.entries(props)) setProp(name, value);
         push(file);
         await merge(file);
-        const question = await waitFor('the question', (current) => Boolean(tagged(current, 'data-transfer-confirm')), 60_000);
-        await tap(tagged(question, 'data-transfer-confirm'));
+        const question = await waitFor('the question', (current) => Boolean(confirmButton(current)), 60_000);
+        await tap(confirmButton(question));
         await until(`the process to end (${label})`, () => !pid(), 90_000, 500);
         for (const name of Object.keys(props)) setProp(name, '');
         const replays = replayLines().length;

@@ -768,6 +768,9 @@ const scenarioRecoveryAfterImport = async ({ t, id, stored, post }) => {
     check(changes.length === 0, `(4b) every row the native app left is unchanged${shortList(changes)}`);
 };
 
+/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, as drawn. */
+const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import']]
+    .some((label) => (node.text ?? '').toUpperCase() === label.toUpperCase()));
 // 10 (pass D1a): RN's recovery snapshots carry over. RN keeps them in its document folder's `snapshots` (this app's
 // files/snapshots); the native app lists them in place with RN's label, restores one, ignores RN's half-written pending file,
 // and writes its own in the same format.
@@ -810,12 +813,12 @@ const scenarioRecoverySnapshots = async () => {
     check(rowsShown.length === 1, `(10) the card lists RN's one snapshot, not its pending file (${rowsShown.length} rows)`);
     check(nodes.some((node) => node.text === name) && !nodes.some((node) => node.text === 'data.pending.snapshot.tmp'), '(10) the row shows the file name under RN\'s label');
     await tap(tagged(nodes, `recovery-snapshot-${name}`));
-    nodes = await waitFor('RN\'s question', (current) => Boolean(tagged(current, 'data-transfer-confirm'))
+    nodes = await waitFor('RN\'s question', (current) => Boolean(confirmButton(current))
         && current.some((node) => node.text === en['settings.backupMobile.restoreRecoverySnapshot']), 30_000);
-    await tap(tagged(nodes, 'data-transfer-confirm'));
+    await tap(confirmButton(nodes));
     await waitFor('the restore result', (current) => current.some((node) => node.text === en['settings.backupMobile.restoreComplete']), 60_000);
     await stopApp();
-    const live = rows(pullDatabase('9-post'), "SELECT title FROM tasks WHERE deletedAt IS NULL ORDER BY title").map((r) => r.title);
+    const live = rows(pullDatabase('10-post'), "SELECT title FROM tasks WHERE deletedAt IS NULL ORDER BY title").map((r) => r.title);
     check(isDeepStrictEqual(live, kept.map((task) => task.title)), `(10) the restore gave RN's snapshot's library: ${live.join(' ')}`);
     check(runAs('ls files/snapshots').split(/\s+/).includes('data.pending.snapshot.tmp'), '(10) RN\'s pending file stays as RN left it');
 };
