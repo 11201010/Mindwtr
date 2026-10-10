@@ -41,11 +41,15 @@ import java.util.UUID
 /** The measured transfer limit (design §4.1): a picked file and the library together, before anything is decoded or parsed. */
 object DataTransferLimits {
     // ponytail: one fixed limit measured on the S23 (result.md, pass D1a); a device with a smaller heap gets the same number.
-    const val MAX_DATA_TRANSFER_BYTES = 48L * 1024 * 1024
+    private const val LIMIT_BYTES = 48L * 1024 * 1024
     /** Core's MAX_BACKUP_SOURCE_BYTES: a picked JSON backup alone. */
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
+
+    /** The limit; debug builds only: `debug.mindwtr.native.transfer_limit_mb` raises it for the measurement run. */
+    val MAX_DATA_TRANSFER_BYTES: Long get() = debugProperty("transfer_limit_mb").toLongOrNull()?.takeIf { it > 0 }?.let { it * 1024 * 1024 } ?: LIMIT_BYTES
+
     /** A frozen plan holds the library twice (the current document and the result), plus its reply. */
-    const val MAX_PLAN_BYTES = 2 * MAX_DATA_TRANSFER_BYTES + 1024 * 1024
+    val MAX_PLAN_BYTES: Long get() = 2 * MAX_DATA_TRANSFER_BYTES + 1024 * 1024
 }
 
 /** RN's MIME type for a picked backup (pickBackupDocument). */

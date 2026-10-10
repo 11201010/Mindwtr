@@ -387,7 +387,9 @@ private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.m
         val wanted = transfer.launch ?: return@LaunchedEffect
         transfer.launched()
         // No picker on the device reads as a cancelled pick: the export shares, the restore stops.
-        if (wanted == "tree") runCatching { pickTree.launch(null) }.onFailure { transfer.folderPicked(null) }
+        // Debug builds only (check-data-device.mjs): `debug.mindwtr.native.export_tree` opens the folder picker in its test folder.
+        if (wanted == "tree") runCatching { pickTree.launch(tech.dongdongbh.mindwtr.pilot.core.debugProperty("export_tree").ifEmpty { null }?.toUri()) }
+            .onFailure { transfer.folderPicked(null) }
         else runCatching { pickJson.launch(arrayOf("application/json")) }.onFailure { transfer.backupPicked(null) }
     }
     LaunchedEffect(transfer.share) { if (transfer.share != null) activity?.let(transfer::openShare) }

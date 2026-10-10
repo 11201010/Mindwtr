@@ -2,7 +2,7 @@
 // upgradetest build, then by a newer RN recovery build.
 //
 //   node apps/android-native/scripts/build-upgrade-harness.mjs
-//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6,7,8] [--keep]
+//   node apps/android-native/scripts/check-upgrade-device.mjs <adb-serial> [--only=1,4,2,4b,2b,3,3b,5,5b,6,7,8,9,10] [--keep]
 //
 // Scenarios, each from a fresh RN v1.3.2 install:
 //   1   happy upgrade: the native app shows the RN data, imports the capture RN
@@ -69,7 +69,7 @@ import { bootFailure, box, button, check, connect, draftText, evidenced, fail, f
 import { serveWebdav, webdavDocument } from './sync-harness.mjs';
 import { PUBLISHED, REFRESHED, WIDGET_PREFS, corePublication, count, firstDifference, isRnPayloadPrefsWrite, publicationContext, widgetPrefs } from './widget-payload.mjs';
 
-const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8', '9'];
+const SCENARIOS = ['1', '4', '2', '4b', '2b', '3', '3b', '5', '5b', '6', '7', '8', '9', '10'];
 const USAGE = `usage: node check-upgrade-device.mjs <adb-serial> [--only=${SCENARIOS.join(',')}] [--keep]`;
 const args = process.argv.slice(2);
 const serials = args.filter((arg) => !arg.startsWith('--'));
@@ -768,6 +768,58 @@ const scenarioRecoveryAfterImport = async ({ t, id, stored, post }) => {
     check(changes.length === 0, `(4b) every row the native app left is unchanged${shortList(changes)}`);
 };
 
+// 10 (pass D1a): RN's recovery snapshots carry over. RN keeps them in its document folder's `snapshots` (this app's
+// files/snapshots); the native app lists them in place with RN's label, restores one, ignores RN's half-written pending file,
+// and writes its own in the same format.
+const scenarioRecoverySnapshots = async () => {
+    console.log('\n# 10 RN recovery snapshots in the native Recovery snapshots card');
+    fresh();
+    await seed('10');
+    const at = new Date(Date.now() - 3_600_000);
+    const name = `data.${at.toISOString().replace(/Z$/, '').replace(/:/g, '-')}.snapshot.json`;
+    const kept = [{ id: randomUUID(), title: `91${run}`, status: 'next', tags: [], contexts: [], createdAt: at.toISOString(), updatedAt: at.toISOString(), rev: 1 }];
+    // RN's format: serializeBackupData's pretty JSON of the library (v1.3.2 writes it the same way).
+    const local = resolve(work, name);
+    writeFileSync(local, JSON.stringify({ tasks: kept, projects: [], sections: [], areas: [], people: [], settings: {} }, null, 2));
+    const stray = resolve(work, 'data.pending.snapshot.tmp');
+    writeFileSync(stray, '{"tasks": [');
+    runAs('mkdir -p files/snapshots');
+    pushPrivate(local, `files/snapshots/${name}`);
+    pushPrivate(stray, 'files/snapshots/data.pending.snapshot.tmp');
+    console.log(`INJECTED (10): RN's snapshot ${name} (one task) and a half-written data.pending.snapshot.tmp in files/snapshots`);
+
+    install(APKS.native153, true);
+    device.launch(NATIVE_ACTIVITY);
+    let nodes = await nativeScreen();
+    check(!unavailable(nodes), `(10) native boot succeeded ${unavailable(nodes) ?? ''}`);
+    await tap(tab(nodes, en['tab.menu']) ?? fail('no Menu tab'));
+    nodes = await waitFor('the More sheet', (current) => Boolean(tagged(current, 'more-sheet')), 10_000);
+    await tap(withDescription(nodes, en['nav.settings']) ?? fail('no Settings tile'));
+    nodes = await waitFor('native Settings', (current) => Boolean(tagged(current, 'settings-main')), 20_000);
+    let row = nodes.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.sync']}. `));
+    for (let step = 0; step < 6 && !row; step += 1) {
+        nodes = await device.swipe(nodes, 'down');
+        row = nodes.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.sync']}. `));
+    }
+    await tap(row ?? fail('no Sync row in native Settings'));
+    nodes = await waitFor('native Settings > Sync', (current) => Boolean(tagged(current, 'settings-sync')), 30_000);
+    for (let step = 0; step < 10 && !tagged(nodes, 'recovery-snapshots-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
+    await tap(tagged(nodes, 'recovery-snapshots-disclosure') ?? fail('no Recovery snapshots card'));
+    nodes = await waitFor('RN\'s snapshot row', (current) => Boolean(tagged(current, `recovery-snapshot-${name}`)), 15_000);
+    const rowsShown = nodes.filter((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.'));
+    check(rowsShown.length === 1, `(10) the card lists RN's one snapshot, not its pending file (${rowsShown.length} rows)`);
+    check(nodes.some((node) => node.text === name) && !nodes.some((node) => node.text === 'data.pending.snapshot.tmp'), '(10) the row shows the file name under RN\'s label');
+    await tap(tagged(nodes, `recovery-snapshot-${name}`));
+    nodes = await waitFor('RN\'s question', (current) => Boolean(tagged(current, 'data-transfer-confirm'))
+        && current.some((node) => node.text === en['settings.backupMobile.restoreRecoverySnapshot']), 30_000);
+    await tap(tagged(nodes, 'data-transfer-confirm'));
+    await waitFor('the restore result', (current) => current.some((node) => node.text === en['settings.backupMobile.restoreComplete']), 60_000);
+    await stopApp();
+    const live = rows(pullDatabase('9-post'), "SELECT title FROM tasks WHERE deletedAt IS NULL ORDER BY title").map((r) => r.title);
+    check(isDeepStrictEqual(live, kept.map((task) => task.title)), `(10) the restore gave RN's snapshot's library: ${live.join(' ')}`);
+    check(runAs('ls files/snapshots').split(/\s+/).includes('data.pending.snapshot.tmp'), '(10) RN\'s pending file stays as RN left it');
+};
+
 const scenarioCorruptBackup = async () => {
     console.log('\n# 2b json-ahead marker with a corrupt backup');
     fresh();
@@ -1282,6 +1334,7 @@ try {
     if (want('7')) await scenarioAlarms();
     if (want('8')) await scenarioPendingCheckoff();
     if (want('9')) await scenarioPomodoro();
+    if (want('10')) await scenarioRecoverySnapshots();
     console.log(`\nUpgrade device check passed${blocked4 ? '; scenario 4 BLOCKED (see above)' : ''}`);
 } catch (error) {
     evidenced(error);
