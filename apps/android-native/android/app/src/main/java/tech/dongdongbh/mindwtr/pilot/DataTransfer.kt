@@ -103,7 +103,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         }) { failure ->
             Log.w(CoreHost.TAG, "Export failed ${failureForLog(failure)}")
             action = null
-            shell.showToast(words.getString("errorTitle"), failed, "error", durationMs = 5_200)
+            shell.showToast(words.getString("errorTitle"), failed, "error", durationMs = 4_200)
         }
     }
 
@@ -131,7 +131,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         }) { failure ->
             Log.w(CoreHost.TAG, "Export failed ${failureForLog(failure)}")
             action = null
-            words?.let { shell.showToast(it.getString("errorTitle"), it.getString("failed"), "error", durationMs = 5_200) }
+            words?.let { shell.showToast(it.getString("errorTitle"), it.getString("failed"), "error", durationMs = 4_200) }
         }
     }
 
@@ -169,7 +169,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 .put("releaseCheck", "v1.3.5/android-backup-export").put("format", formatOf(file.name)).put("route", "share")) }.start() }
         } catch (failure: Exception) {
             Log.w(CoreHost.TAG, "Export share failed ${failureForLog(failure)}")
-            words()?.let { shell.showToast(it.getString("errorTitle"), it.getString("failed"), "error", durationMs = 5_200) }
+            words()?.let { shell.showToast(it.getString("errorTitle"), it.getString("failed"), "error", durationMs = 4_200) }
         }
     }
 
@@ -191,15 +191,17 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         saved.remove<String>("dataPick")
         if (uri == null || mode == null) { action = null; return }
         action = mode
+        // RN's failure titles for a pick that cannot be read: Restore failed, or Merge failed.
+        val failedTitle = words()?.optString(if (mode == "merge") "mergeFailed" else "restoreFailed")
         whenHosted { runtime ->
             val stage = try { stage(uri) } catch (failure: Throwable) {
                 Log.w(CoreHost.TAG, "Backup stage failed ${failureForLog(failure)}")
-                shell.ui { finish(); warn(runtime, null, failure) }
+                shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
             try { admit(runtime, stage.file.length()) } catch (failure: TransferTooLarge) {
                 stage.file.delete()
-                shell.ui { finish(); warn(runtime, null, failure) }
+                shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
             val text = utf8(stage.file)
@@ -208,7 +210,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 if (!preview.getBoolean("valid") || text == null) {
                     stage.file.delete()
                     finish()
-                    shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 5_200)
+                    // RN's showSettingsWarning (4.2 s).
+                    shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 4_200)
                 } else {
                     question = JSONObject().put("kind", "confirm").put("model", preview).put("mode", mode)
                         .put("stage", stage.file.name).put("metadata", stage.metadata)
@@ -359,14 +362,18 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         if (sourceBytes + runtime.databaseBytes() > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
     }
 
-    /** RN's warning for a file that cannot be read: core's too-large text when it was over the limit. */
+    /**
+     * RN's failure toast (showSettingsErrorToast, 5.2 s) under [title]: core's too-large text when the file or the library was
+     * over the limit (RN's formatThrownBackupError), else the failure's words.
+     */
     private fun warn(runtime: CoreHost, title: String?, failure: Throwable) {
         val words = words() ?: return
-        if (failure is TransferTooLarge) {
-            val t = runtime.strings(listOf("settings.backupDiagnostics.tooLarge", "settings.backupMobile.invalidBackup")).getJSONObject("strings")
+        val message = if (failure is TransferTooLarge) {
             val mb = DataTransferLimits.MAX_DATA_TRANSFER_BYTES / (1024 * 1024)
-            shell.showToast(t.optString("settings.backupMobile.invalidBackup"), t.optString("settings.backupDiagnostics.tooLarge").replace("{{maxSizeMb}}", "$mb"), "warning", durationMs = 5_200)
-        } else shell.showToast(title ?: words.optString("restoreFailed"), (failure.message ?: "").substringAfter(": "), "error", durationMs = 5_200)
+            runCatching { runtime.strings(listOf("settings.backupDiagnostics.tooLarge")).getJSONObject("strings").getString("settings.backupDiagnostics.tooLarge") }
+                .getOrDefault("").replace("{{maxSizeMb}}", "$mb")
+        } else (failure.message ?: "").substringAfter(": ")
+        shell.showToast(title ?: words.optString("restoreFailed"), message, "error", durationMs = 5_200)
     }
 
     private fun stop(at: String) {
