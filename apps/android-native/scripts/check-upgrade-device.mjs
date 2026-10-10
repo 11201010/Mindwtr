@@ -811,7 +811,8 @@ const scenarioRecoverySnapshots = async () => {
     nodes = await waitFor('RN\'s snapshot row', (current) => Boolean(tagged(current, `recovery-snapshot-${name}`)), 15_000);
     const rowsShown = nodes.filter((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.'));
     check(rowsShown.length === 1, `(10) the card lists RN's one snapshot, not its pending file (${rowsShown.length} rows)`);
-    check(nodes.some((node) => node.text === name) && !nodes.some((node) => node.text === 'data.pending.snapshot.tmp'), '(10) the row shows the file name under RN\'s label');
+    // The row is one TalkBack node: RN's "Restore <label> (<file name>)", the file name shown under the label.
+    check((tagged(nodes, `recovery-snapshot-${name}`)['content-desc'] ?? '').includes(`(${name})`), `(10) the row names the file under RN's label: ${tagged(nodes, `recovery-snapshot-${name}`)['content-desc']}`);
     await tap(tagged(nodes, `recovery-snapshot-${name}`));
     nodes = await waitFor('RN\'s question', (current) => Boolean(confirmButton(current))
         && current.some((node) => node.text === en['settings.backupMobile.restoreRecoverySnapshot']), 30_000);
