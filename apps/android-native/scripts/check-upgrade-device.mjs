@@ -768,9 +768,9 @@ const scenarioRecoveryAfterImport = async ({ t, id, stored, post }) => {
     check(changes.length === 0, `(4b) every row the native app left is unchanged${shortList(changes)}`);
 };
 
-/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, as drawn. */
+/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, its text or TalkBack name. */
 const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import']]
-    .some((label) => (node.text ?? '').toUpperCase() === label.toUpperCase()));
+    .some((label) => [node.text, node['content-desc']].some((text) => (text ?? '').toUpperCase() === label.toUpperCase())));
 // 10 (pass D1a): RN's recovery snapshots carry over. RN keeps them in its document folder's `snapshots` (this app's
 // files/snapshots); the native app lists them in place with RN's label, restores one, ignores RN's half-written pending file,
 // and writes its own in the same format.

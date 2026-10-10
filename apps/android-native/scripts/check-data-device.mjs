@@ -205,9 +205,9 @@ const useTestFolder = async () => {
 };
 
 // ---- Data actions ----
-/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, as drawn. */
+/** The open question's action button (a dialog window has no test tags): core's Merge, Restore or Import word, its text or TalkBack name. */
 const confirmButton = (nodes) => nodes.find((node) => [en['settings.mergeBackupAction'], en['markdown.referenceRestore'], en['settings.backupMobile.import']]
-    .some((label) => (node.text ?? '').toUpperCase() === label.toUpperCase()));
+    .some((label) => [node.text, node['content-desc']].some((text) => (text ?? '').toUpperCase() === label.toUpperCase())));
 const confirmQuestion = async (title) => {
     const nodes = await waitFor(`the question "${title}"`, (current) => hasText(current, title) && Boolean(confirmButton(current)), 60_000);
     await tap(confirmButton(nodes));
@@ -337,7 +337,14 @@ try {
     check(liveTitles('undo').length === 0, '(E3) Undo restored the snapshot taken before the merge: no merged row is live');
     check(snapshots().length === 1, `(E3) one recovery snapshot (the merge's; a snapshot restore takes none): ${snapshots().join(' ')}`);
     check(journal().length === 0 && operations().length === 0, '(E3) the journal and the operation folder are empty');
+    // The same file again: Undo deleted its rows here, and RN's merge keeps a local delete ("items you deleted here stay deleted").
     await merge(a);
+    await confirmQuestion(en['settings.mergeBackup']);
+    await toastWith(en['settings.mergeBackup']);
+    check(liveTitles('remerge').length === 0, '(E3) merging the undone file again keeps its rows deleted, as RN\'s merge does');
+    const a2 = fixture(`d1-merge-a2-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { notes: '日本語 🦉' })]);
+    push(a2);
+    await merge(a2);
     await confirmQuestion(en['settings.mergeBackup']);
     await toastWith(en['settings.mergeBackup']);
     check(JSON.stringify(liveTitles('merge')) === JSON.stringify([`d1a${run}`, `d1b${run}`]), '(E3) Merge backup added both rows once');

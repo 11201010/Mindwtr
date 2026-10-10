@@ -453,12 +453,12 @@ const shootData = async (prefix, suffix) => {
                 await tap(dataRow(await screen(), row) ?? fail(`no ${row} row`));
                 await pickParityFile(file);
                 await shoot(`${prefix}-settings-data-${name}-${suffix}`, ready);
-                const cancel = (await screen()).find((node) => /^cancel$/i.test(node.text ?? ''));
+                const cancel = (await screen()).find((node) => /^cancel$/i.test(node.text || node['content-desc'] || ''));
                 if (cancel) await tap(cancel);
                 await sleep(1500);
             };
-            await question(en['settings.mergeBackup'], DATA_FILES.valid, 'merge-question', (current) => current.some((node) => /^cancel$/i.test(node.text ?? '')));
-            await question(en['settings.syncMobile.restoreBackup'], DATA_FILES.valid, 'restore-question', (current) => current.some((node) => /^cancel$/i.test(node.text ?? '')));
+            await question(en['settings.mergeBackup'], DATA_FILES.valid, 'merge-question', (current) => current.some((node) => /^cancel$/i.test(node.text || node['content-desc'] || '')));
+            await question(en['settings.syncMobile.restoreBackup'], DATA_FILES.valid, 'restore-question', (current) => current.some((node) => /^cancel$/i.test(node.text || node['content-desc'] || '')));
             await tap(dataRow(await screen(), en['settings.mergeBackup']) ?? fail('no Merge row'));
             await pickParityFile(DATA_FILES.invalid);
             await shoot(`${prefix}-settings-data-invalid-${suffix}`, (current) => hasText(current, en['settings.backupMobile.invalidBackup']));
