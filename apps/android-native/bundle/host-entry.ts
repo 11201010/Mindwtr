@@ -38,6 +38,7 @@ import {
     inspectNativeBackupDocument,
     prepareNativeBackupDocument,
     readNativeBackupDocumentOutcome,
+    sortRecoverySnapshotNames,
     validateNativeAttachmentDraftBegin,
     validateNativeAttachmentDraftLineage,
     prepareNativeAttachmentDraftAdd,
@@ -431,6 +432,8 @@ const nativeSyncBindings: NativeSyncBindings = {
     trace: (line) => { try { native().log(line); } catch { /* logcat is best effort */ } },
     scheduleBackgroundSync: (on) => { const bridge = native(); if (bridge.bgSyncSchedule) checked(bridge.bgSyncSchedule(on)); },
     isFossBuild,
+    // RN's recovery snapshots (its document folder's `snapshots`, this app's files/snapshots), newest first.
+    listRecoverySnapshots: async () => sortRecoverySnapshotNames((JSON.parse(checked(native().fileList('files/snapshots'))) as string[] | null) ?? []),
 };
 // kvMultiGet, not kvGet: the gates' stand-in bridge has kvGet and kvSet for the queue's record, and no sync.
 // iOS device storage is not permission to replace its local attachment owner or start Sync/AI.
@@ -977,6 +980,23 @@ const logEntryPoint = (input: { kind?: unknown }, result: Reply): Reply => {
  * Board from native-host-contract-calendar.ts and native-host-contract-board.ts; Settings from native-host-contract-settings.ts):
  * each passes Kotlin's input to the contract method unchanged. The composer's open and edit write nothing, so they are reads.
  */
+/** An export's file, refused when its bytes exceed the host's `maxBytes` (none: no host limit). Its text is never counted twice. */
+const boundedExport = (result: Reply, input: unknown): Reply => {
+    const maxBytes = (input as { maxBytes?: unknown } | null)?.maxBytes;
+    if (!result.ok || typeof maxBytes !== 'number') return result;
+    const { content, encoding } = result.value as { content: string; encoding: string };
+    let bytes = encoding === 'base64' ? Math.floor(content.length * 3 / 4) : 0;
+    if (encoding === 'utf8') {
+        for (let index = 0; index < content.length && bytes <= maxBytes; index += 1) {
+            const code = content.charCodeAt(index);
+            if (code < 0x80) bytes += 1;
+            else if (code < 0x800) bytes += 2;
+            else if (code >= 0xd800 && code <= 0xdbff) { bytes += 4; index += 1; }
+            else bytes += 3;
+        }
+    }
+    return bytes > maxBytes ? { ok: false, error: { code: 'INVALID_INPUT', message: 'Export exceeds the transfer limit' } } : result;
+};
 const MENU_READS: Record<string, (input: never) => Reply> = {
     more: () => contract.getMoreMenu(),
     projects: (input) => contract.getFilteredProjects(input),
@@ -1044,9 +1064,10 @@ const MENU_READS: Record<string, (input: never) => Reply> = {
     // Settings › Notifications, and the persistent capture notification to post again at start and on every resume.
     notificationsSettings: () => contract.getNotificationsSettings(),
     persistentCaptureNotification: () => contract.getPersistentCaptureNotification(),
-    dataBackup: () => contract.getDataBackup(),
-    dataCsvExport: () => contract.getDataBackup('csv'),
-    dataTaskNotesExport: () => contract.getDataBackup('tasknotes'),
+    // `maxBytes` (Android's measured transfer limit): a larger file is refused here, before its text crosses into Kotlin.
+    dataBackup: (input) => boundedExport(contract.getDataBackup(), input),
+    dataCsvExport: (input) => boundedExport(contract.getDataBackup('csv'), input),
+    dataTaskNotesExport: (input) => boundedExport(contract.getDataBackup('tasknotes'), input),
     // Settings › Sync's view (native-host-contract-settings-sync.ts) for the form's typed URL and token.
     syncSettings: (input) => contract.getSyncSettings(input),
     // Mind Sweep and a saved search's screen.
@@ -1699,9 +1720,13 @@ globalThis.MindwtrHost = {
     boot(legacyState: string, legacyBackup: string, writeJournal = ''): string {
         return boot(legacyState, legacyBackup, false, writeJournal === 'journaled');
     },
-    /** Private iOS journal recovery: no dynamic load maintenance before exact replay. */
-    bootRecovery(legacyState: string, legacyBackup: string): string {
-        return boot(legacyState, legacyBackup, true);
+    /**
+     * Journal recovery: no dynamic load maintenance (a task becoming due, the cleanup interval) before the exact replay, so a
+     * journaled backup commit meets the document it was prepared against. iOS sends two arguments; Android's journaling host
+     * adds "journaled", as for boot. The host calls resumeActivation after the replay settled.
+     */
+    bootRecovery(legacyState: string, legacyBackup: string, writeJournal = ''): string {
+        return boot(legacyState, legacyBackup, true, writeJournal === 'journaled');
     },
     /** The native host calls this after durable journal cleanup, before exposing the UI. */
     resumeActivation(): string {
@@ -4076,8 +4101,12 @@ globalThis.MindwtrHost = {
     backupDocumentResultModel(replyJSON: string): string {
         return submit(async () => buildNativeBackupDocumentResult(backupJson(replyJSON) as Parameters<typeof buildNativeBackupDocumentResult>[0], backupTranslate));
     },
-    backupSnapshotRestoreModel(snapshotName: string): string {
-        return submit(async () => buildNativeBackupSnapshotRestoreConfirmation(snapshotName, backupTranslate));
+    /** RN's question before a snapshot restore: `mode` "undo" (the default; a result's Undo) or "restore" (a Recovery snapshots row). */
+    backupSnapshotRestoreModel(snapshotName: string, mode = 'undo'): string {
+        return submit(async () => {
+            if (mode !== 'undo' && mode !== 'restore') throw new Error('INVALID_INPUT: Invalid backup document input');
+            return buildNativeBackupSnapshotRestoreConfirmation(snapshotName, backupTranslate, mode === 'undo');
+        });
     },
     /** Called by iOS only after the immutable JSON file has been written and closed. */
     backupExportPrepared(format: string): string {
