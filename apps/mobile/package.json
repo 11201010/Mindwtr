@@ -130,7 +130,8 @@
       "android": {
         "buildFromSource": [
           "expo-background-task",
-          "expo-calendar"
+          "expo-calendar",
+          "expo-document-picker"
         ]
       }
     },

@@ -180,7 +180,8 @@
       "./plugins/android-startup-trace",
       "./plugins/android-font-scale-layout",
       "./plugins/patch-alarm-notification-gradle",
-      "./plugins/patch-expo-background-task"
+      "./plugins/patch-expo-background-task",
+      "./plugins/patch-expo-document-picker"
     ],
     "experiments": {
       "typedRoutes": true
