@@ -175,6 +175,9 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'action', 'focusCount', 'timerPhase', 'timerRunning',
     // Cloud Focus creation and PATCH policy (apps/cloud/src/server.ts)
     'operation',
+    // android-backup-export: the exported file's kind (json, csv, tasknotes); it reuses route and releaseCheck.
+    // android-backup-replay and android-export-cleanup reuse operation and outcome.
+    'format',
     // cloudkit-retry-hint (desktop and mobile cloudkit-sync.ts)
     'retryAfterMs',
     // fetch-redirect-refused (core http-utils.ts) reuses method above: the refused redirect's HTTP status.

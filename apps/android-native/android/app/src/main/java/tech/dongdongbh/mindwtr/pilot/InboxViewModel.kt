@@ -375,6 +375,8 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
                     // An owed create left on disk goes first; then the open sheet and screen are read.
                     menu.start(sheet)
                     captureModal.resume()
+                    // A restore, merge or import result a death after its commit left unshown, and an export cut short.
+                    menu.settings.transfer.leftover()
                     search?.let { current ->
                         readSearch()
                         // A Save Search whose outcome was lost with the process: its exact request first, then the dialog unlocks.
@@ -1335,7 +1337,7 @@ class InboxViewModel(app: Application, private val saved: SavedStateHandle) : An
         }
         val fresh = {
             val taken = runtime.createQuickCaptureSnapshot().optJSONObject("snapshot")
-            val written = taken?.let { RecoverySnapshots.write(snapshots, it.getString("fileName"), it.getString("contents")) }
+            val written = taken?.let { RecoverySnapshots.write(snapshots, it.getString("fileName"), it.getString("contents"), menu.settings.transfer.operations.protectedNames()) }
             onMain { capture?.let { keepCapture(it.copy(snapshot = written, snapshotTaken = true)) } }
             submit(written)
         }

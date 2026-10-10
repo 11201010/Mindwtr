@@ -6,6 +6,7 @@ import org.json.JSONObject
 import tech.dongdongbh.mindwtr.androidwidget.CheckoffStore
 import tech.dongdongbh.mindwtr.androidwidget.PendingCaptureWriter
 import tech.dongdongbh.mindwtr.pilot.core.AndroidContentSource
+import tech.dongdongbh.mindwtr.pilot.core.BackupOperations
 import tech.dongdongbh.mindwtr.pilot.core.BytecodeCache
 import tech.dongdongbh.mindwtr.pilot.core.CoreBundle
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
@@ -121,7 +122,8 @@ internal object ProcessCoreHost {
             keyValue, HostFiles(app.filesDir, app.cacheDir, content = AndroidContentSource(app)), installer,
             ReminderAlarms(app, keyValue, checkpointRnState = { if (legacy != null) LegacyRnStoreGuard.checkpointRnState(app.dataDir) }),
             HostWidgets(app) { appState },
-            scheduleBackgroundSync = { on -> CoreWork.scheduleSyncStored(app, on) }, appInfo = aboutAppInfo())
+            scheduleBackgroundSync = { on -> CoreWork.scheduleSyncStored(app, on) }, appInfo = aboutAppInfo(),
+            backups = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), File(app.filesDir, "snapshots"), maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES))
         try {
             runtime.start(coreBundle(app), legacy?.bootState ?: "", legacy?.backup ?: "")
             setLanguage(runtime, language ?: legacy?.language)

@@ -99,6 +99,8 @@ class SettingsModel(private val menu: MenuModel, private val saved: SavedStateHa
     val ai = AISettingsModel(menu)
     /** Settings › About's screen state and requests (AboutSettings.kt). */
     val about = AboutSettingsModel(menu)
+    /** Settings › Data's Backup fold and Sync › Recovery snapshots (DataTransfer.kt). */
+    val transfer = DataTransferModel(menu, saved)
 
     /** RN's settings stack: "main", then "general", "manage", "data", "advanced", or a GTD screen ("gtd", "gtd-pomodoro", ...). */
     var stack by mutableStateOf(saved.get<String>("settingsStack")?.split(',') ?: listOf("main")); private set

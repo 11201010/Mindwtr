@@ -48,6 +48,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.toggleableState
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import kotlinx.coroutines.delay
@@ -380,7 +382,7 @@ internal fun SyncSettings(model: InboxViewModel, view: JSONObject) {
     }
     view.optJSONObject("encryption")?.let { EncryptionCard(sync, it) }
     PreferencesCard(model, view.getJSONObject("preferences"), view.getJSONObject("disclosure"))
-    SnapshotsCard(sync, view.getJSONObject("recoverySnapshots"), view.getJSONObject("disclosure"))
+    SnapshotsCard(model, sync, view.getJSONObject("recoverySnapshots"), view.getJSONObject("disclosure"))
 }
 
 /** RN's backendOption chip: the chosen one outlined in the tint on the filter wash. */
@@ -781,19 +783,38 @@ private fun PreferencesCard(model: InboxViewModel, preferences: JSONObject, glyp
     }
 }
 
-/** RN's RecoverySnapshotsCard, folded; restoring a snapshot comes with the Data screen's pass (core lists none here yet). */
+/**
+ * RN's RecoverySnapshotsCard, folded: each snapshot's date label over its file name and RN's Restore word (its spinner while it
+ * restores); a row asks core's question first (DataTransfer.kt), and every row is off while a sync or any data action runs.
+ */
 @Composable
-private fun SnapshotsCard(sync: SyncSettingsModel, snapshots: JSONObject, glyphs: JSONObject) {
+private fun SnapshotsCard(model: InboxViewModel, sync: SyncSettingsModel, snapshots: JSONObject, glyphs: JSONObject) {
     val c = LocalTheme.current.colors
+    val transfer = model.menu.settings.transfer
     Card(top = 16) {
         FoldHeading(snapshots.getString("title"), snapshots.getString("description"), sync.snapshotsOpen, glyphs, "recovery-snapshots-disclosure") { sync.toggleSnapshots() }
         if (sync.snapshotsOpen) {
-            val names = snapshots.getJSONArray("snapshots").let { list -> List(list.length()) { list.getString(it) } }
-            if (names.isEmpty()) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true).padding(16.dp)) {
+            val rows = snapshots.optJSONArray("rows")?.let { list -> List(list.length()) { list.getJSONObject(it) } }.orEmpty()
+            if (rows.isEmpty()) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true).padding(16.dp)) {
                 Text(snapshots.getString("empty"), style = rnText(13, 400, 18), color = c.secondaryText)
             }
-            for (name in names) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true).padding(16.dp)) {
-                Text(name, style = rnText(16, 500, 21), color = c.text, maxLines = 1)
+            val enabled = snapshots.optBoolean("enabled", true) && !transfer.busy
+            for (row in rows) {
+                val name = row.getString("name")
+                val busy = transfer.action == "snapshot:$name"
+                val spoken = row.getString("accessibilityLabel") + ", " + row.getString("accessibilityHint")
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true)
+                    .clearAndSetSemantics { contentDescription = spoken; role = Role.Button; testTag = "recovery-snapshot-$name"
+                        if (busy) stateDescription = "busy"
+                        if (enabled) onClick { transfer.askSnapshot(name, undo = false); true } else disabled() }
+                    .clickable(enabled = enabled) { transfer.askSnapshot(name, undo = false) }.padding(16.dp), verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text(row.getString("label"), style = rnText(16, 500, 21), color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(name, style = rnText(13, 400, 18), color = c.secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = c.tint, strokeWidth = 2.dp)
+                    else Text(snapshots.getString("restoreLabel"), style = rnText(16, 500, 21), color = c.tint)
+                }
             }
         }
     }

@@ -42,6 +42,9 @@ class WriteJournal(
             "createProject" to listOf("id", "text", "id"), "setAreaFilter" to listOf("{included[],excluded[]}"), "saveSearch" to listOf("{requestId}"),
             "inboxCommit" to listOf("{sessionId,taskId,requestId}"), "inboxSkip" to listOf("{sessionId,taskId,requestId}"), "menuCommand" to listOf("menu", "{menu}"),
             "ingest" to listOf("id"), "reminderDone" to listOf("id", "id"), "reminderSnooze" to listOf("{requestId}"),
+            // Settings › Data's restore, merge and import: the operation's reference and its snapshot name. CoreHost sends the checked plan
+            // (BackupOperations) between them, so the journal never holds library data.
+            "backupDocumentCommit" to listOf("{id,sha256}", "id"),
         )
         /** host-entry.ts's MENU_COMMANDS and the keys each one's JSON input holds (check-boot-gates.mjs keeps the names equal). */
         val MENU = mapOf(

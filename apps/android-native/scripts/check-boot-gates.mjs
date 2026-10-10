@@ -679,8 +679,14 @@ assert.match(sqliteBridge, /syncFile\(partial\)[\s\S]*?renameTo\(checkpointFile\
     const start = coreHost.slice(coreHost.indexOf('fun start(bundle: CoreBundle'), coreHost.indexOf('/** Where the bundle came from'));
     const order = ['val opened = FutureTask {', 'database.ensureRecoveryCheckpoint()', 'val database = { opened.get() }', 'executor.submit(Callable {',
         'install(engine, database)', 'load(engine, database, bundle)', 'opened.run()', 'return onEngine {', 'loading.get()', 'sqlite = database()',
-        'callAsync("boot", legacyState, legacyBackup, "journaled")'].map((text) => start.indexOf(text));
+        'activationOwed = pendingBackupIds().isNotEmpty()',
+        'callAsync(if (activationOwed) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled")'].map((text) => start.indexOf(text));
     assert(order.every((index, i) => index > (i ? order[i - 1] : -1)), `start order ${order}`);
+    // Pass D1a: a journaled backup commit boots in recovery (no load maintenance before its replay), and the replay resumes normal
+    // activation once its last backup commit has a final reply, before the entries after it.
+    assert.match(coreHost, /if \(index == lastBackup && activationOwed\) resumeActivation\(\)/);
+    assert.match(coreHost, /if \(owed == null && activationOwed\) resumeActivation\(\)/);
+    assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
     assert.match(start, /catch \(failure: Throwable\) \{\s+if \(sqlite == null\) runCatching \{ database\(\)\.close\(\) \}\s+closeOnEngine\(\)/, 'a failed start closes an open database it never handed over');
     assert.match(start, /catch \(error: Throwable\) \{\s+runCatching \{ database\.close\(\) \}\s+throw error/, 'a failed checkpoint closes its database');
     assert.equal(coreHost.match(/database\(\)\.(run|all|exec)\(/g).length, 3, 'the SQL calls take the database from the open\'s future');
@@ -881,7 +887,7 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\),\s*backups = BackupOperations\(File\(app\.noBackupFilesDir, \"backup-operations\"\), File\(app\.filesDir, \"snapshots\"\), maxPlanBytes = DataTransferLimits\.MAX_PLAN_BYTES\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
 // Once the guard passes, it copies RN's RKStorage before it returns, so before RnKeyValue (or anything) opens it: an open can
 // checkpoint RN's WAL away when it closes.
 assert.match(guard, /check\(blocked == null\)[^\n]*\n(?:(?!return Opened\()[\s\S])*?\n\s*checkpointRnState\(dataDir\)\n(?:(?!fun )[\s\S])*?return Opened\(/);
@@ -901,11 +907,11 @@ assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'),
 // RN's JVM tests of both, the file operations' hard-link fallback and errno names (#1139) included, run in this app's unit tests.
 assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /include\(listOf\("AttachmentFileInstallerCoreTest", "AndroidAttachmentInstallerFileOpsTest"\)\.map \{ "test\/java\/\$installer\/\$it\.kt" \}\)/);
 // The Kotlin host journals every write, and says so at boot: core then requires each write's replay tokens. Only this
-// flag sets 'required'; iOS boots and recovers with none.
-assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)/);
+// flag sets 'required'; iOS boots and recovers with none (its bootRecovery sends two arguments).
+assert.match(coreHost, /callAsync\(if \(activationOwed\) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled"\)/);
 assert.equal(coreHost.match(/"journaled"/g).length, 1);
 assert.match(hostEntry, /setNativeReplayTokens\(journaled \? 'required' : 'optional'\)/);
-assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string\): string \{\s*return boot\(legacyState, legacyBackup, true\);/);
+assert.match(hostEntry, /bootRecovery\(legacyState: string, legacyBackup: string, writeJournal = ''\): string \{\s*return boot\(legacyState, legacyBackup, true, writeJournal === 'journaled'\);/);
 assert.equal(hostEntry.match(/setNativeReplayTokens\(/g).length, 1);
 assert.equal(kotlinFiles.join('\n').match(/LegacyRnStoreGuard\.requireClear\(/g).length, 1);
 assert.match(guard, /private const val DATABASE = "files\/SQLite\/mindwtr\.db"/);
@@ -1011,7 +1017,9 @@ for (const [fn, js] of [['setTaskFocus', 'taskFocus'], ['setProjectFocus', 'proj
 }
 assert.equal([activity, owner, editorUi, focusUi, projectsUi, rowUi, areaUi].join('\n').match(/\.setTaskFocus\(|\.setProjectFocus\(|\.createProject\(|\.setAreaFilter\(|\.areaFilter\(\)/g), null);
 assert.equal(model.match(/clearFailure/g).length, 1);
-assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db"|journal")/);
+// The boot owner names only the database, the journal and (pass D1a) RN's recovery snapshots folder, which a backup operation's
+// identity check reads.
+assert.doesNotMatch(owner, /SharedPreferences|SavedStateHandle|File\(app\.filesDir, "(?!mindwtr-native-dev\.db"|SQLite\/mindwtr\.db"|journal"|snapshots")/);
 assert.match(model, /ProcessCoreHost\.get\(/);
 // Storage exceptions never cross the QuickJS JNI boundary.
 assert.equal(coreHost.match(/JSCallFunction \{/g).length, 1, 'the only JS callback constructor is guarded');
@@ -1146,7 +1154,7 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     assert.equal(/CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(hostIo)[1], /CONNECT_TIMEOUT_MS = ([\d_]+L)/.exec(rnClient)[1]);
     assert.match(hostIo, /\.connectTimeout\(CONNECT_TIMEOUT_MS, TimeUnit\.MILLISECONDS\)/);
     assert.match(coreHost, /if \(io\.busy\(\)\) io\.await\(if \(delay < 0\) 25L else minOf\(delay, 25L\)\)\s+else if \(delay > 0\) Thread\.sleep\(minOf\(delay, 25L\)\)/);
-    assert.match(coreHost, /callAsync\("boot", legacyState, legacyBackup, "journaled"\)\.also \{ netCheck\(\) \}/);
+    assert.match(coreHost, /callAsync\(if \(activationOwed\) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled"\)\.also \{ netCheck\(\) \}/);
     assert.match(coreHost, /val port = debugFault\("net_check"\)\.ifEmpty \{ return \}/, 'the net check is debug-only');
     // RN's network security config (cleartext as RN allows it, user CAs trusted), and the INTERNET permission.
     const rnConfig = /NETWORK_SECURITY_CONFIG_XML = `([\s\S]*?)`;/.exec(readFileSync(resolve(app, '../mobile/plugins/android-network-security-config.js'), 'utf8'))[1];
@@ -1212,7 +1220,14 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
     const unwiredWrites = ['addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
-    assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
+    // The one named exception (pass D1a): Settings › Data's backup commit. Its journal entry holds the operation's reference and
+    // snapshot name; CoreHost sends the checked plan (BackupOperations) as host-entry's middle argument, so the journal never
+    // holds library data. Core's commit is receipted itself (native-backup-document.ts), not a task command.
+    const backupCommit = 'backupDocumentCommit';
+    assert.deepEqual(shapes[backupCommit], ['{id,sha256}', 'id'], 'the backup commit journals its reference and snapshot name');
+    assert.match(host, /\n    backupDocumentCommit\(referenceJSON: string, planJSON: string, snapshotName: string\): string \{/);
+    assert.match(coreHost, /else arrayOf\(args\[0\], checkNotNull\(backups\)\.plan\(args\[0\] as String, args\[1\] as String\), args\[1\]\)/);
+    assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes.filter((name) => name !== backupCommit), 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
     assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
@@ -1312,6 +1327,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
     // MENU_COMMANDS. One that does not fit is set aside intact, and the log names only its file.
     for (const [name, kinds] of Object.entries(shapes)) {
+        if (name === backupCommit) continue;
         const params = new RegExp(`\\n    ${name}\\(([^)]*)\\): string \\{`).exec(host)[1].split(',').map((param) => param.trim());
         assert.equal(kinds.length, params.length, `${name} takes ${params.length} arguments`);
         params.forEach((param, index) => {
@@ -1458,10 +1474,13 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // and the replay; nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
     assert.match(callAsyncFn, /private fun begin\([^)]*\): Call \{\s+val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null/);
-    assert.match(callAsyncFn, /private fun finish\(call: Call, result: JSONObject\) \{\s+call\.deadlineCheck\?\.cancel\(false\)\s+if \(call\.entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(call\.stop, "after", call\.entry\)\s+\}\s+try \{\s+if \(call\.method in WriteJournal\.WRITES\) settle\(call\.entry, result, replay = false\)/);
-    assert.equal(callAsyncFn.match(/\bcall\(call\.method, \*call\.args\)/g).length, 1, 'start() starts a call\'s operation, after begin() journaled it');
+    assert.match(callAsyncFn, /private fun finish\(call: Call, result: JSONObject\) \{\s+call\.deadlineCheck\?\.cancel\(false\)\s+if \(call\.entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(call\.stop, "after", call\.entry\)\s+\}\s+try \{\s+if \(call\.method == BackupOperations\.METHOD\) backupFinish\(call\.entry, call\.args\.toList\(\), result, replay = false\)\s+else if \(call\.method in WriteJournal\.WRITES\) settle\(call\.entry, result, replay = false\)/);
+    // Pass D1a: a backup commit's checked plan goes in between its journaled arguments (sendArgs) before the send.
+    assert.equal(callAsyncFn.match(/\bcall\(call\.method, \*sent\)/g).length, 1, 'start() starts a call\'s operation, after begin() journaled it');
+    assert.match(callAsyncFn, /val sent = try \{ sendArgs\(call\.method, call\.args\) \} catch \(mismatch: BackupOperations\.Mismatch\)/);
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
-    assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
+    assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, answerChecked (a backup commit\'s plan put in, callAsync and replayJournal) and resumeActivation');
+    assert.equal(coreHost.match(/\banswerChecked\(/g).length, 3, 'answerChecked(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 2, 'answer() and callLong (an unjournaled command only) start host methods');
     assert.deepEqual([...new Set([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]))].sort(), ['abort', 'cancel', 'poll'], 'the engine\'s own calls: abort (a long call no longer wanted), cancel and poll');
     assert.equal(coreHost.match(/journalStop\((?:call\.)?stop, /g).length, 2, 'the stop hooks run for a first send only, never for a replay');
@@ -1475,7 +1494,8 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // Replay: in journal order, one at a time, stopped by a kept entry or no reply; at boot after the validated load and the
     // language, before this boot hands the host to any screen (get() waits on the boot); a stop is the screens' owed retry.
     const replayFn = coreHost.slice(coreHost.indexOf('fun replayJournal()'), coreHost.indexOf('private fun journalStop('));
-    assert.match(replayFn, /for \(entry in journal\.pending\(\)\) \{[\s\S]*?answer\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)\.also \{ if \(settle\(entry, it, replay = true\)\) dropped \+= 1 \}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /for \(\(index, entry\) in entries\.withIndex\(\)\) \{[\s\S]*?answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)\.also \{\s+val left = if \(entry\.method == BackupOperations\.METHOD\) backupFinish\(entry, entry\.args, it, replay = true\) else settle\(entry, it, replay = true\)\s+if \(left\) dropped \+= 1\s+\}\.error\(\)\s+\} catch \(failure: Throwable\) \{\s+owed = [^\n]+\s+break\s+\}\s+if \(WriteJournal\.keeps\(error\)\) \{ owed = error; break \}/);
+    assert.match(replayFn, /val entries = journal\.pending\(\)/);
     assert.match(replayFn, /Log\.i\(TAG, "Native Android journal replay sent=/);
     assert(coreHost.indexOf('journal = WriteJournal(journalDir') < coreHost.indexOf('engine.evaluate(bundle'));
     assert.match(owner, /private fun replay\(runtime: CoreHost\): Boolean \{\s+val replay = runtime\.replayJournal\(\)\s+replay\.owed\?\.let \{ recordFailure\(PendingFailure\(FailedAction\("journal", ""\), it, null\)\); return false \}\s+(?:\/\/[^\n]*\s+)+if \(replay\.left > 0\) return true\s+runCatching \{ runtime\.pruneReceipts\(\) \}[\s\S]*?return true\s+\}/);
@@ -2081,7 +2101,8 @@ assert.doesNotMatch(code(model), /saved\["capturing"\] = (?!value != null)|saved
 assert.match(model, /CaptureStore\(File\(app\.noBackupFilesDir, "capture"\)\)/);
 assert.match(captureUi, /FileOutputStream\(partial\)\.use \{ out -> out\.write\(state\.toString\(\)\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(partial\.renameTo\(file\)\)/);
 // Several lines: core's snapshot is written as mobile writes it (a temporary file, a clash number, the 5 newest) before the batch.
-assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\)\)/);
+// An open backup operation's snapshot and the last result's Undo snapshot are never pruned by it (pass D1a).
+assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations\.protectedNames\(\)\)/);
 assert.match(model, /private val snapshots = File\(app\.filesDir, "snapshots"\)/);
 assert.match(snapshotsKt, /private const val MAX_SNAPSHOTS = 5/);
 assert.match(snapshotsKt, /name = fileName\.removeSuffix\(SUFFIX\) \+ "\.\$clash\$SUFFIX"/);
@@ -2099,7 +2120,7 @@ assert.match(captureUi, /if \(landscape\) footer\(\)\s+\}\s+if \(!landscape\) fo
 assert.match(model, /storedCapture\?\.takeIf \{ saved\.get<Boolean>\("capturing"\) == true \|\| it\.pending != null \}/);
 assert.match(model, /keepCapture\(current\.copy\(requests = current\.requests \+ JSONObject\(\)\.put\("edit", edit\)\)\)\n/, 'an edit is persisted before it is sent');
 assert.match(captureUi, /\.put\("edits", /);
-assert.match(model, /val written = taken\?\.let \{ RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\)\) \}\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
+assert.match(model, /val written = taken\?\.let \{ RecoverySnapshots\.write\(snapshots, it\.getString\("fileName"\), it\.getString\("contents"\), menu\.settings\.transfer\.operations\.protectedNames\(\)\) \}\s+onMain \{ capture\?\.let \{ keepCapture\(it\.copy\(snapshot = written, snapshotTaken = true\)\) \} \}\s+submit\(written\)/);
 assert.equal(code(model).match(/snapshotFileName/g).length, 1);
 assert.match(model, /\.put\("snapshotFileName", name \?: JSONObject\.NULL\)/);
 assert.match(model, /if \(!taken\) fresh\(\) else try \{ submit\(name\) \} catch \(failure: Exception\) \{\s+if \(failure\.message\?\.startsWith\("STALE_REVISION"\) != true\) throw failure\s+fresh\(\)/,
@@ -2114,8 +2135,8 @@ assert.match(coreHost, /fun menuRead\(name: String, json: String\): JSONObject =
 assert.match(coreHost, /fun menuCommand\(name: String, json: String\): JSONObject = callAsync\("menuCommand", name, json\)/);
 // A project's attachment command copies a picked file, which can outlast the 30 s deadline: it gets a request's deadline, on its
 // first send and on the journal's replay alike, so a slow copy never stops the host (pass A2 review 1).
-assert.match(coreHost, /fun deadlineOf\(method: String, args: List<Any\?>\): Long =\s*if \(method == "menuCommand" && args\.firstOrNull\(\) in ATTACHMENT_COMMANDS\) NETWORK_DEADLINE_MS else OPERATION_DEADLINE_MS/);
-assert.match(coreHost, /answer\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)/);
+assert.match(coreHost, /fun deadlineOf\(method: String, args: List<Any\?>\): Long = when \{\s*method == "menuCommand" && args\.firstOrNull\(\) in ATTACHMENT_COMMANDS -> NETWORK_DEADLINE_MS\s*method == BackupOperations\.METHOD -> BACKUP_DEADLINE_MS\s*else -> OPERATION_DEADLINE_MS\s*\}/);
+assert.match(coreHost, /answerChecked\(entry\.method, entry\.args\.toTypedArray\(\), deadlineOf\(entry\.method, entry\.args\)\)/);
 assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)[1].matchAll(/"(\w+)"/g)].map((m) => m[1]),
     [.../val ATTACHMENT_KINDS = setOf\(([^)]*)\)/.exec(source('Attachments.kt'))[1].matchAll(/"(\w+)"/g)].map((m) => m[1]), 'CoreHost\'s long-deadline commands are the attachment commands');
 {
@@ -2691,7 +2712,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     }
     assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
     assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let \{ devices\.store\(it, entry\?\.sequence, replay\) \}\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
-    assert.equal(coreHost.match(/(?<!\.)\bsettle\((?:call\.)?entry, /g).length, 2, 'settle(): the first send (finish) and the replay');
+    assert.equal(coreHost.match(/(?<!\.)\bsettle\((?:call\.)?entry, /g).length, 3, 'settle(): the first send (finish), the replay, and a backup commit\'s finish (backupFinish, pass D1a)');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
     assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
     for (const [kotlin, file, core] of [['LANGUAGE_KEY', 'i18n/i18n-constants.ts', 'LANGUAGE_STORAGE_KEY'], ['THEME_KEY', 'general-settings-model.ts', 'MOBILE_THEME_STORAGE_KEY'],
@@ -3214,10 +3235,12 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(hostEntry, /^\s+dataSettings: \(\) => contract\.getDataSettings\(\),$/m);
     assert.match(hostEntry, /^\s+dataSetting: \(input\) => contract\.setDataSetting\(input\),$/m);
     // Share log: only the logs folder is shareable, through a private FileProvider and the system share sheet; nothing is sent by the app.
+    // Pass D1a adds the export share fallback's own cache folder, emptied before each export (DataTransfer.kt).
     const manifest = readFileSync(resolve(app, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
     assert.match(manifest, /<provider\s+android:name="androidx\.core\.content\.FileProvider"\s+android:authorities="\$\{applicationId\}\.diagnostics"\s+android:exported="false"\s+android:grantUriPermissions="true">/);
     const paths = readFileSync(resolve(app, 'android/app/src/main/res/xml/diagnostics_paths.xml'), 'utf8');
-    assert.deepEqual(paths.match(/<[\w-]+-path [^>]*>/g), ['<files-path name="logs" path="logs/" />']);
+    assert.deepEqual(paths.match(/<[\w-]+-path [^>]*>/g), ['<files-path name="logs" path="logs/" />', '<cache-path name="exports" path="exports/" />']);
+    assert.match(source('DataTransfer.kt'), /val dir = File\(app\.cacheDir, "exports"\)\.apply \{ mkdirs\(\) \}\s+dir\.listFiles\(\)\.orEmpty\(\)\.forEach \{ it\.delete\(\) \}/);
     const settingsModelKt = source('SettingsModel.kt');
     const share = code(settingsModelKt.slice(settingsModelKt.indexOf('fun shareLog()'), settingsModelKt.indexOf('fun clearLog()')));
     assert.match(share, /FileProvider\.getUriForFile\(activity, "\$\{activity\.packageName\}\.diagnostics", File\(path\)\)/);
@@ -3751,6 +3774,7 @@ export { canSaveTaskListTag } from ${JSON.stringify(resolve(app, '../../packages
 export { formatListItemCount } from ${JSON.stringify(resolve(app, '../../packages/core/src/list-count.ts'))};
 export { getBulkMoveStatusOptions } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-list-bulk-actions.ts'))};
 export { formatI18nTemplate } from ${JSON.stringify(resolve(app, '../../packages/core/src/i18n/index.ts'))};
+export { sortRecoverySnapshotNames } from ${JSON.stringify(resolve(app, '../../packages/core/src/recovery-snapshot-names.ts'))};
 // These service stand-ins test bridge dispatch/admission, not import or receipt policy.
 // Actual shared policy and SQLite receipts have their own core and Swift/JSC suites.
 export function inspectNativeBackupDocument(text, metadata, t, format = 'json') {

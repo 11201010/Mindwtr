@@ -56,6 +56,8 @@ class CoreHost(
     private val scheduleBackgroundSync: ((Boolean) -> Unit)? = null,
     /** The build as Settings › About reports it (AboutSettings.kt aboutAppInfo, JSON); null: this host has no About. */
     private val appInfo: String? = null,
+    /** Settings › Data's restore, merge and import files between prepare and commit (BackupOperations); null: this host has none. */
+    private val backups: BackupOperations? = null,
 ) {
     /**
      * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
@@ -92,8 +94,17 @@ class CoreHost(
          * An operation's deadline: a request's (NETWORK_DEADLINE_MS) for an attachment command, on its first send and on the journal's
          * replay alike, so a slow copy never stops the host; [OPERATION_DEADLINE_MS] for everything else.
          */
-        fun deadlineOf(method: String, args: List<Any?>): Long =
-            if (method == "menuCommand" && args.firstOrNull() in ATTACHMENT_COMMANDS) NETWORK_DEADLINE_MS else OPERATION_DEADLINE_MS
+        fun deadlineOf(method: String, args: List<Any?>): Long = when {
+            method == "menuCommand" && args.firstOrNull() in ATTACHMENT_COMMANDS -> NETWORK_DEADLINE_MS
+            method == BackupOperations.METHOD -> BACKUP_DEADLINE_MS
+            else -> OPERATION_DEADLINE_MS
+        }
+
+        /**
+         * Settings › Data's inspect, prepare and commit: each parses or writes a whole library (up to the measured transfer limit),
+         * which takes longer than a task command on a large one.
+         */
+        const val BACKUP_DEADLINE_MS = 120_000L
 
         /** How long a timed-out operation may take to end once cancelled, before the host stops for good. */
         const val DRAIN_MS = 10_000L
@@ -192,6 +203,8 @@ class CoreHost(
             executor.submit(Callable {
                 Trace.beginSection("core:journalOpen")
                 journal = WriteJournal(journalDir, log = { Log.i(TAG, it) }, floor = devices.highestSequence())
+                // Before boot: an operation folder no journal entry names was never committed, or its entry already settled.
+                backups?.let { ops -> runCatching { ops.cleanup(pendingBackupIds()) }.onFailure { Log.w(TAG, "Native Android backup cleanup failed ${it.javaClass.simpleName}") } }
                 Trace.endSection()
                 Trace.beginSection("core:contextCreate")
                 val engine = QuickJSContext.create()
@@ -212,14 +225,71 @@ class CoreHost(
             try {
                 loading.get()
                 sqlite = database()
-                // This host journals every write (WriteJournal), so core requires each write's replay tokens.
-                callAsync("boot", legacyState, legacyBackup, "journaled").also { netCheck() }
+                // This host journals every write (WriteJournal), so core requires each write's replay tokens. A journaled backup commit
+                // boots in recovery: no load maintenance runs before its replay, so the document it was prepared against is unchanged.
+                activationOwed = pendingBackupIds().isNotEmpty()
+                callAsync(if (activationOwed) "bootRecovery" else "boot", legacyState, legacyBackup, "journaled").also { netCheck() }
             } catch (failure: Throwable) {
                 if (sqlite == null) runCatching { database().close() }
                 closeOnEngine()
                 throw (failure as? ExecutionException)?.cause ?: failure
             }
         }
+    }
+
+    /** Set when this boot ran in recovery (a journaled backup commit was pending): normal activation waits for its replay. */
+    @Volatile private var activationOwed = false
+
+    /** The operation ids of the journal's backup commits. */
+    private fun pendingBackupIds(): Set<String> = checkNotNull(journal).pending().filter { it.method == BackupOperations.METHOD }
+        .mapNotNull { runCatching { JSONObject(it.args[0] as String).getString("id") }.getOrNull() }.toSet()
+
+    /** The arguments host-entry takes for [method]: a backup commit's journaled reference and name, with its checked plan between. */
+    private fun sendArgs(method: String, args: Array<out Any?>): Array<out Any?> =
+        if (method != BackupOperations.METHOD) args
+        else arrayOf(args[0], checkNotNull(backups).plan(args[0] as String, args[1] as String), args[1])
+
+    /** [method]'s reply, or a refusal (never sent) when its backup files fail their identity check. */
+    private fun answerChecked(method: String, args: Array<out Any?>, deadlineMs: Long): JSONObject {
+        val sent = try { sendArgs(method, args) } catch (mismatch: BackupOperations.Mismatch) {
+            Log.w(TAG, "Native Android backup operation refused before send: ${mismatch.message}")
+            return JSONObject().put("ok", false).put("error", "INVALID_INPUT: Backup operation files do not match")
+        }
+        return answer(method, sent, deadlineMs)
+    }
+
+    /**
+     * A backup commit's final reply, on its first send and on the journal's replay alike: the result record (outcome and Undo
+     * snapshot) is on disk before the entry settles, and the operation's folder goes only once the entry left the journal. True
+     * once it left. Debug builds only: `debug.mindwtr.native.backup_stop` = `settle-fail` keeps the entry (as a failed delete
+     * does), `after-settle` ends the process before the result shows.
+     */
+    private fun backupFinish(entry: WriteJournal.Entry?, args: List<Any?>, result: JSONObject, replay: Boolean): Boolean {
+        val ops = checkNotNull(backups)
+        val reference = args[0] as String
+        val id = runCatching { JSONObject(reference).getString("id") }.getOrDefault("")
+        val error = result.error()
+        if (WriteJournal.keeps(error)) return false
+        val reply = result.optJSONObject("value")
+        val operation = reply?.optString("operation")?.takeIf { it.isNotEmpty() } ?: ops.mode(reference) ?: ""
+        val outcome = when {
+            error == null -> "committed"
+            error.startsWith("STALE_REVISION") -> "stale"
+            replay && WriteJournal.malformed(error) -> "unresolved"
+            else -> "refused"
+        }
+        ops.writeResult(JSONObject().put("requestId", id).put("operation", operation).put("outcome", outcome)
+            .put("reply", reply ?: JSONObject.NULL).put("undoSnapshot", if (error == null && operation != "restore") args[1] as String else ""))
+        val stop = debugFault("backup_stop")
+        val settled = if (stop == "settle-fail") false else settle(entry, result, replay)
+        if (settled) ops.discard(id)
+        if (replay) logLine("Native Android backup replay settled", JSONObject().put("releaseCheck", "v1.3.5/android-backup-replay")
+            .put("operation", operation).put("outcome", outcome))
+        if (stop == "after-settle") {
+            Log.i(TAG, "Native Android backup stop at=after-settle")
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+        return settled
     }
 
     /** Where the bundle came from at start: "hit" (its cached bytecode), or why the source ran (BytecodeCache.Read). */
@@ -616,6 +686,25 @@ class CoreHost(
     /** Settings › Data's Share log: core's diagnostics log file, made when missing; `path` is null when it cannot be made. */
     fun logShare(): JSONObject = callAsync("logShare")
 
+    /** The library's bytes on disk (the database and its write-ahead log): Settings › Data's transfer admission. */
+    fun databaseBytes(): Long = databaseFile.length() + File(databaseFile.path + "-wal").length()
+
+    /** Settings › Data: core's preview of a picked file ([format] "json", "json-restore", or an importer's), which writes nothing. */
+    fun backupInspect(text: String, metadataJson: String, format: String): JSONObject =
+        callAsync("backupDocumentInspect", text, metadataJson, format, deadlineMs = BACKUP_DEADLINE_MS)
+
+    /** Core's frozen plan for [inputJson] (`{ requestId, mode, snapshotName, text, metadata }`): `{ planJSON, recoveryJSON }`; no write. */
+    fun backupPrepare(inputJson: String): JSONObject = callAsync("backupDocumentPrepare", inputJson, deadlineMs = BACKUP_DEADLINE_MS)
+
+    /** The journaled commit of a published plan ([BackupOperations.publish]'s reference); core's reply. */
+    fun backupCommit(referenceJson: String, snapshotName: String): JSONObject = callAsync(BackupOperations.METHOD, referenceJson, snapshotName)
+
+    /** Core's result toast for a commit's reply. */
+    fun backupResultModel(replyJson: String): JSONObject = callAsync("backupDocumentResultModel", replyJson)
+
+    /** Core's question before restoring snapshot [name]: [mode] "undo" (a result's Undo) or "restore" (a Recovery snapshots row). */
+    fun backupSnapshotModel(name: String, mode: String): JSONObject = callAsync("backupSnapshotRestoreModel", name, mode)
+
     /** Settings › Data's Clear log: core deletes the diagnostics log file. */
     fun logClear(): JSONObject = callAsync("logClear")
 
@@ -754,7 +843,7 @@ class CoreHost(
         }
         if (Thread.currentThread() === engineThread) {
             stopped?.let { throw IllegalStateException(it) }
-            finish(begin(method, args, deadlineMs, done), answer(method, args, deadlineMs))
+            finish(begin(method, args, deadlineMs, done), answerChecked(method, args, deadlineMs))
             return wait()
         }
         // The caller's whole wait, queue, start and answer, as one trace section (merge profiling).
@@ -814,7 +903,8 @@ class CoreHost(
             journalStop(call.stop, "after", call.entry)
         }
         try {
-            if (call.method in WriteJournal.WRITES) settle(call.entry, result, replay = false)
+            if (call.method == BackupOperations.METHOD) backupFinish(call.entry, call.args.toList(), result, replay = false)
+            else if (call.method in WriteJournal.WRITES) settle(call.entry, result, replay = false)
             if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
             call.done.complete(result.getJSONObject("value"))
         } catch (failure: Throwable) {
@@ -828,7 +918,13 @@ class CoreHost(
      * work queued behind it (a sync's continuation). Otherwise the pump's turns carry it, and a check at its deadline ends it.
      */
     private fun start(call: Call) = traced("core:${call.method}") {
-        call.id = call(call.method, *call.args) as String
+        // A backup commit's files that fail their identity check are refused here and never sent (answerChecked's rule).
+        val sent = try { sendArgs(call.method, call.args) } catch (mismatch: BackupOperations.Mismatch) {
+            Log.w(TAG, "Native Android backup operation refused before send: ${mismatch.message}")
+            finish(call, JSONObject().put("ok", false).put("error", "INVALID_INPUT: Backup operation files do not match"))
+            return@traced
+        }
+        call.id = call(call.method, *sent) as String
         call.deadlineAt = SystemClock.uptimeMillis() + call.deadlineMs
         val answer = call("poll", call.id) as String?
         if (answer != null) {
@@ -1002,6 +1098,14 @@ class CoreHost(
 
     private fun JSONObject.error(): String? = if (getBoolean("ok")) null else getString("error")
 
+    /** The recovery boot's normal activation (host-entry resumeActivation), once its backup commits settled. Engine thread. */
+    private fun resumeActivation() {
+        val result = answer("resumeActivation", emptyArray(), OPERATION_DEADLINE_MS)
+        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
+        activationOwed = false
+        Log.i(TAG, "Native Android recovery boot activation resumed")
+    }
+
     /**
      * Core's reply to a write, on the first send and on the journal's [replay] alike: a success's deviceWrites (a setting's
      * device-local part) are on disk first (a replay's only for keys no newer write set), then [entry] settles (a replay core
@@ -1028,17 +1132,26 @@ class CoreHost(
         var sent = 0
         var dropped = 0
         var owed: String? = null
-        for (entry in journal.pending()) {
+        val entries = journal.pending()
+        val lastBackup = entries.indexOfLast { it.method == BackupOperations.METHOD }
+        for ((index, entry) in entries.withIndex()) {
             sent += 1
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
             val error = try {
-                answer(entry.method, entry.args.toTypedArray(), deadlineOf(entry.method, entry.args)).also { if (settle(entry, it, replay = true)) dropped += 1 }.error()
+                answerChecked(entry.method, entry.args.toTypedArray(), deadlineOf(entry.method, entry.args)).also {
+                    val left = if (entry.method == BackupOperations.METHOD) backupFinish(entry, entry.args, it, replay = true) else settle(entry, it, replay = true)
+                    if (left) dropped += 1
+                }.error()
             } catch (failure: Throwable) {
                 owed = failure.message ?: failure.javaClass.simpleName
                 break
             }
             if (WriteJournal.keeps(error)) { owed = error; break }
+            // The recovery boot's last backup commit has its final reply: normal activation (load maintenance) runs now, before
+            // the entries after it, and before sync or any screen.
+            if (index == lastBackup && activationOwed) resumeActivation()
         }
+        if (owed == null && activationOwed) resumeActivation()
         Trace.endSection()
         stopped?.let { throw IllegalStateException(it) }
         Replay(sent, dropped, journal.pending().size, owed).also {

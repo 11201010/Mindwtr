@@ -241,6 +241,8 @@ class MindwtrTheme(val colors: ThemeColors, val isDark: Boolean, val isMaterial:
     val settingsScrim = rgba(0, 0, 0, 0.4f)
     /** RN's About link text and its spinner (settings.styles.ts linkText), RN's fixed blue. */
     val settingsLink = rgb("#3B82F6")
+    /** Settings › Data's Export rows' label (SyncBackupSection's literal #3B82F6, in every theme). */
+    val exportAction = rgb("#3B82F6")
     /** RN's feedback modal backdrop (feedbackModalBackdrop), rgba(0,0,0,0.42). */
     val feedbackScrim = rgba(0, 0, 0, 0.42f)
     /** Data's analytics switch (sync-settings-sections.tsx): trackColor { false: #767577, true: #71717A }, thumbColor #F4F4F5. */

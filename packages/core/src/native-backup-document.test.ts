@@ -19,7 +19,7 @@ import {
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts } from './native-request-receipts';
 import { openScratchSqlite } from './screen-parity.replay';
 import { SqliteAdapter, type SqliteClient } from './sqlite-adapter';
-import { resetForTests, setStorageAdapter, useTaskStore } from './store';
+import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import type { AppData, Task } from './types';
 
 const AT = '2026-10-04T12:00:00.000Z';
@@ -298,6 +298,35 @@ describe('native frozen backup plan over actual SQLite', () => {
 const csvFile = (headers: string[], rows: string[][]) => [headers, ...rows].map((row) => row.map((cell) => `"${cell.replace(/"/gu, '""')}"`).join(',')).join('\n');
 const csvInput = (text = 'Title,Project,Section,Area,Checklist,ID\n日本語 🦉,Launch,Now,Work,[x] First|[ ] Next,csv-task'): NativeBackupDocumentPrepareInput =>
     ({ ...input(), mode: 'csv', text: bytesToBase64(strToU8(text)), metadata: { ...metadata, fileName: 'owned.csv' } });
+
+describe('native backup commit replayed after process death (pass D1a, gate G-B1)', () => {
+    // A task scheduled to start yesterday (still in Inbox) and no tombstone cleanup yet: a normal load promotes the task and bumps
+    // the cleanup stamp, and saves both. Dates are relative to now, so the fixture never ages out.
+    const due = (): AppData => ({ ...clone(original), tasks: [...clone(original).tasks,
+        task('scheduled', { status: 'inbox', startTime: new Date(Date.now() - 86_400_000).toISOString() })] });
+    const restart = async (adapter: NativeReceiptSqliteAdapter, recoveryLoad: boolean) => {
+        resetForTests();
+        setStorageAdapter(adapter);
+        await useTaskStore.getState().fetchData({ throwOnError: true, ...(recoveryLoad ? { recoveryLoad: true } : {}) });
+        await flushPendingSave();
+    };
+
+    it('crashes before the SQL commit with a due scheduled task: the recovery boot replays it onto the document it was prepared against', async () => {
+        const env = await open(due());
+        const prepared = await prepareNativeBackupDocument(env.adapter, input());
+        await restart(env.adapter, true);
+        expect(await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).toMatchObject({ operation: 'merge', snapshotName: NAME });
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === 'new')).toBeDefined();
+    });
+
+    it('without the recovery boot the same replay is refused as stale: a normal load\'s maintenance changed the document first', async () => {
+        const env = await open(due());
+        const prepared = await prepareNativeBackupDocument(env.adapter, input());
+        await restart(env.adapter, false);
+        expect((await env.adapter.getData()).tasks.find((item) => item.id === 'scheduled')?.status).toBe('next');
+        await expect(commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME)).rejects.toThrow('STALE_REVISION:');
+    });
+});
 
 describe('native immutable Mindwtr CSV and ZIP import', () => {
     it.each([

@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -66,6 +68,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -335,14 +338,16 @@ private fun GeneralSettings(model: InboxViewModel, view: JSONObject) = with(mode
 // ---- Data ----
 
 /**
- * RN's Data screen's Diagnostics card (sync-settings-sections.tsx SyncDiagnosticsCard) on core's getDataSettings: the Debug
- * logging switch sends core's edit; while logging is on, Share log and Clear log. The Data screen's other cards, RN's analytics
- * row (builds with the heartbeat only) and its Encryption block (sync) come with their passes.
+ * RN's Data screen on core's getDataSettings: the Backup fold (SyncBackupSection: the three exports, Restore backup, Merge backup;
+ * DataTransfer.kt runs each), then the Diagnostics card (SyncDiagnosticsCard): the Debug logging switch sends core's edit; while
+ * logging is on, Share log and Clear log. RN's Import fold, Getting Started row, Archive retention, Pending remote deletes and
+ * Sandbox rows come with their passes.
  */
 @Composable
 private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.menu) {
     val theme = LocalTheme.current
     val c = theme.colors
+    BackupCard(model, view.getJSONObject("backup"))
     val diagnostics = view.getJSONObject("diagnostics")
     SectionTitle(diagnostics.getString("title"), top = 24, color = c.text)
     Card {
@@ -364,6 +369,85 @@ private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.m
             ActionRow(clear.getString("label"), null, c.secondaryText, true, "settings-clear-log") { settings.clearLog() }
         }
     }
+}
+
+/**
+ * RN's Backup card (SyncBackupSection): folded under its heading (RN's gtdNavigationRow with an Ionicons chevron) until opened; each
+ * row is a button that shows RN's spinner while it runs and is off while any data action runs. The system pickers open from here.
+ */
+@Composable
+private fun BackupCard(model: InboxViewModel, backup: JSONObject) = with(model.menu.settings) {
+    val theme = LocalTheme.current
+    val c = theme.colors
+    val transfer = transfer
+    val activity = LocalActivity.current
+    val pickJson = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { transfer.backupPicked(it) }
+    val pickTree = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { transfer.folderPicked(it) }
+    LaunchedEffect(transfer.launch) {
+        val wanted = transfer.launch ?: return@LaunchedEffect
+        transfer.launched()
+        // No picker on the device reads as a cancelled pick: the export shares, the restore stops.
+        if (wanted == "tree") runCatching { pickTree.launch(null) }.onFailure { transfer.folderPicked(null) }
+        else runCatching { pickJson.launch(arrayOf("application/json")) }.onFailure { transfer.backupPicked(null) }
+    }
+    LaunchedEffect(transfer.share) { if (transfer.share != null) activity?.let(transfer::openShare) }
+    val open = local.optBoolean("backupOpen")
+    val toggle = { editLocal { put("backupOpen", !open) } }
+    val title = backup.getString("title")
+    val description = backup.getString("foldDescription")
+    Card(top = 24) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .clearAndSetSemantics { contentDescription = "$title, $description"; role = Role.Button; testTag = "backup-disclosure"
+                onClick { toggle(); true }; if (open) collapse { toggle(); true } else expand { toggle(); true } }
+            .clickable(onClick = toggle).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 16.dp)) {
+                Text(title, style = rnText(16, 500, 21), color = c.text)
+                Text(description, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
+            }
+            Icon(if (open) SettingsIonicons.ChevronUp else SettingsIonicons.ChevronDown, null, tint = c.secondaryText, modifier = Modifier.size(18.dp))
+        }
+        if (open) {
+            val running = transfer.action
+            val enabled = running == null
+            BackupRow(backup.getString("exportLabel"), backup.getString("description"), theme.exportAction, enabled, running == "export", "data-transfer-export") { transfer.export("json") }
+            BackupRow(backup.getString("csvLabel"), backup.getString("csvDescription"), theme.exportAction, enabled, running == "export:csv", "data-transfer-export-csv") { transfer.export("csv") }
+            BackupRow(backup.getString("tasknotesLabel"), backup.getString("tasknotesDescription"), theme.exportAction, enabled, running == "export:tasknotes", "data-transfer-export-tasknotes") { transfer.export("tasknotes") }
+            BackupRow(backup.getString("restoreFileLabel"), backup.getString("restoreFileDescription"), c.tint, enabled, running == "restore", "data-transfer-restore") { transfer.pickBackup("restore") }
+            BackupRow(backup.getString("mergeLabel"), backup.getString("mergeDescription"), c.tint, enabled, running == "merge", "data-transfer-merge") { transfer.pickBackup("merge") }
+        }
+    }
+}
+
+/** RN's data action row: the colored label and its description, RN's small spinner at the right while [busy]; TalkBack reads one button. */
+@Composable
+internal fun BackupRow(label: String, description: String, color: Color, enabled: Boolean, busy: Boolean, tag: String, onClick: () -> Unit) {
+    val c = LocalTheme.current.colors
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).hairline(c.border, top = true)
+        .clearAndSetSemantics { contentDescription = "$label, $description"; role = Role.Button; testTag = tag
+            if (busy) stateDescription = "busy"
+            if (enabled) onClick { onClick(); true } else disabled() }
+        .clickable(enabled = enabled, onClick = onClick).padding(16.dp), verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(label, style = rnText(16, 500, 21), color = color)
+            Text(description, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp))
+        }
+        if (busy) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), color = c.tint, strokeWidth = 2.dp)
+    }
+}
+
+/** RN's Alert before a restore, a merge or a snapshot restore (DataTransfer.kt's open question): Cancel, then core's action word. */
+@Composable
+internal fun DataTransferQuestion(model: InboxViewModel) {
+    val transfer = model.menu.settings.transfer
+    val open = transfer.question ?: return
+    val words = open.getJSONObject("model")
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = transfer::cancel,
+        title = { Text(words.getString("title")) },
+        text = { Text(words.optString("summary").ifEmpty { words.optString("message") }) },
+        confirmButton = { androidx.compose.material3.TextButton(transfer::confirm, Modifier.testTag("data-transfer-confirm")) { Text(words.getString("confirmLabel").uppercase()) } },
+        dismissButton = { androidx.compose.material3.TextButton(transfer::cancel, Modifier.testTag("data-transfer-cancel")) { Text(words.getString("cancelLabel").uppercase()) } },
+    )
 }
 
 /** RN's pressable settingRow with a colored label and no trailing control: one button node that reads its texts, as RN's does. */
@@ -977,6 +1061,7 @@ private fun SettingsDialogs(model: InboxViewModel, page: SettingsPage) = with(mo
         "manageEditor" -> ManageEditor(model, page.view, open)
     }
     if (settings.screen == "ai") AISettingsDialogs(model, page.view)
+    if (settings.screen == "data" || settings.screen == "sync") DataTransferQuestion(model)
     if (settings.screen == "about") AboutOverlays(model, page.view)
     // Data's analytics question (RN's Alert): Keep enabled closes it; Disable sends the switch's edit.
     if (settings.screen == "data" && settings.local.optBoolean("analyticsConfirm")) page.view.getJSONObject("diagnostics").optJSONObject("analytics")?.let { analytics ->
