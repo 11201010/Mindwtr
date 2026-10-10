@@ -471,8 +471,9 @@ const shootData = async (prefix, suffix) => {
     await sleep(1000);
     if (suffix !== 'light') return;
     try {
-        const rows = await waitFor('the Sync row', (current) => Boolean(withDescription(current, `${en['settings.sync']}. ${en['settings.menuDesc.sync']}`)), 30_000);
-        await tap(withDescription(rows, `${en['settings.sync']}. ${en['settings.menuDesc.sync']}`));
+        const syncRow = (current) => current.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.sync']}. `));
+        const rows = await waitFor('the Sync row', (current) => Boolean(syncRow(current)), 30_000);
+        await tap(syncRow(rows));
         let nodes = await waitFor('Sync', (current) => hasText(current, en['settings.syncOff']) || Boolean(dataRow(current, en['settings.recoverySnapshots'])), 30_000);
         const snapshots = (current) => current.find((node) => node.text === en['settings.recoverySnapshots'] || (node['content-desc'] ?? '').startsWith(`${en['settings.recoverySnapshots']}, `));
         for (let step = 0; step < 20 && !snapshots(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
