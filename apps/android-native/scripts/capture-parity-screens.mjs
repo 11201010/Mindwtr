@@ -25,6 +25,10 @@
 // screens. It writes rn-*.png, native-*.png, and side-by-side pair-*.png (RN left) to
 // /home/dd/.mindwtr-harness/parity/<timestamp>/.
 //
+// PARITY_ONLY=c3-fixes shoots only C3's 10-10 fixes, in light mode: the Calendar's month with today's details while the same
+// range reloads (the feed answers after 15 s: RN's Loading… line over the events kept), and Settings › Calendar's pills at
+// system font scale 2.0 (RN's CompactText 1.2x cap). The font scale is restored at the end.
+//
 // It touches only tech.dongdongbh.mindwtr.upgradetest: it refuses any other APK, sends
 // input only while that package is in front, and at the end uninstalls it and restores
 // night mode and rotation. Leave the phone on its home screen. Exit 0 = shots taken,
@@ -730,6 +734,61 @@ const shootR2 = async (prefix, suffix, rn) => {
         await sleep(900);
     }
 };
+const c3FixesOnly = process.env.PARITY_ONLY === 'c3-fixes';
+const originalFontScale = sh('settings get system font_scale');
+/** Opens the Calendar (RN: its link; native: the Menu sheet's tile). */
+const openCalendar = async (rn) => {
+    if (rn) { openLink('calendar'); return; }
+    const menu = await waitFor('the Menu tab', (current) => Boolean(tab(current, 'Menu')), 30_000);
+    await tap(tab(menu, 'Menu'));
+    const sheet = await waitFor('the Calendar tile', (current) => current.some((node) => node['content-desc'] === en['nav.calendar']), 15_000);
+    await tap(sheet.find((node) => node['content-desc'] === en['nav.calendar']));
+};
+/** C3 fix 2: the month with today's details, then a return to the app reloads the same range while the feed answers slowly. */
+const shootCalendarReload = async (prefix, rn) => {
+    await openCalendar(rn);
+    await calendarMode(en['calendar.mobile.month']);
+    const today = await waitFor('Today', (current) => Boolean(withDescription(current, en['calendar.today'])), 15_000);
+    await tap(withDescription(today, en['calendar.today']));
+    await waitFor(`${CALENDAR_EVENTS.timed} in today's details`, (current) => hasText(current, CALENDAR_EVENTS.timed)
+        || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed)), 30_000);
+    calendarServer.state.mode('parity', 'slow');
+    requireAppFront();
+    sh('input keyevent KEYCODE_HOME');
+    await sleep(1500);
+    // The launcher's intent: the task comes back as it was (RN's AppState and native's resume reload the Calendar's range).
+    sh(`monkey -p ${PKG} -c android.intent.category.LAUNCHER 1`);
+    await shoot(`${prefix}-calendar-reload-light`, (current) => hasText(current, en['calendar.mobile.loading']));
+    calendarServer.state.mode('parity', 'ok');
+    await sleep(16_000);
+};
+/** C3 fix 3: Settings › Calendar at system font scale 2.0, scrolled to its pills (Add, Test, Choose local .ics file). */
+const shootPillsFontScale = async (prefix, rn, activity) => {
+    await stopApp();
+    sh('settings put system font_scale 2.0');
+    device.launch(activity);
+    if (rn) openLink('inbox');
+    const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
+    const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 60_000);
+    await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
+    const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);
+    await tap(withDescription(sheet, en['nav.settings']));
+    const advancedRow = (current) => withDescription(current, `${en['settings.advanced']}. ${en['settings.menuDesc.advanced']}`);
+    let rows = await screen();
+    for (let step = 0; step < 6 && !advancedRow(rows); step += 1) rows = await device.swipe(rows, 'down');
+    await tap(advancedRow(rows) ?? fail('no Advanced row'));
+    const calendarRow = (current) => withDescription(current, `${en['settings.calendar']}. ${en['settings.menuDesc.calendar']}`);
+    const advanced = await waitFor('the Calendar row', (current) => Boolean(calendarRow(current)), 30_000);
+    await tap(calendarRow(advanced));
+    const pill = en['settings.calendarMobile.chooseLocalIcsFile'];
+    const pillShown = (current) => hasText(current, pill) || Boolean(withDescription(current, pill));
+    let nodes = await waitFor('Settings › Calendar', (current) => hasText(current, en['settings.externalCalendarUrl']) || pillShown(current), 30_000);
+    for (let step = 0; step < 8 && !pillShown(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
+    await shoot(`${prefix}-settings-calendar-pills-font2-light`, pillShown);
+    for (let step = 0; step < 3; step += 1) await back();
+    sh(`settings put system font_scale ${originalFontScale === 'null' ? '1.0' : originalFontScale}`);
+    await stopApp();
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -757,7 +816,12 @@ try {
     adbRaw('push', resolve(out, 'fixture/parity-file.pdf'), '/data/local/tmp/mindwtr-parity-file.pdf');
     try { runAs('mkdir -p files/attachments'); runAs('cp /data/local/tmp/mindwtr-parity-file.pdf files/attachments/parity-file.pdf'); } finally { sh('rm -f /data/local/tmp/mindwtr-parity-file.pdf'); }
     device.launch(RN_ACTIVITY);
-    for (const mode of ['no', 'yes']) {
+    if (c3FixesOnly) {
+        await setNight('no');
+        await shootCalendarReload('rn', true);
+        await shootPillsFontScale('rn', true, RN_ACTIVITY);
+    }
+    for (const mode of c3FixesOnly ? [] : ['no', 'yes']) {
         await setNight(mode);
         // RN's activity handles uiMode itself, so AppCompat's own colors (a switch's default thumb) stay as they were at launch:
         // start RN again in dark mode, as a user who opens it in dark mode sees it.
@@ -798,7 +862,11 @@ try {
     adbRaw('install', '-r', '-d', '-g', apks.native);
     await setNight('no');
     device.launch(NATIVE_ACTIVITY);
-    for (const mode of ['no', 'yes']) {
+    if (c3FixesOnly) {
+        await shootCalendarReload('native', false);
+        await shootPillsFontScale('native', false, NATIVE_ACTIVITY);
+    }
+    for (const mode of c3FixesOnly ? [] : ['no', 'yes']) {
         if (mode === 'yes') await setNight('yes');
         if (R2_ONLY) { await shootR2('native', mode === 'yes' ? 'dark' : 'light', false); continue; }
         for (const screen of SCREENS) {
@@ -859,6 +927,7 @@ try {
     void calendarServer?.close();
     try { if (installed()) sh(`pm uninstall ${PKG}`); } catch { /* device gone */ }
     try { sh(`cmd uimode night ${['yes', 'no', 'auto'].includes(originalNight) ? originalNight : 'auto'}`); } catch { /* device gone */ }
+    try { sh(originalFontScale === 'null' ? 'settings delete system font_scale' : `settings put system font_scale ${originalFontScale}`); } catch { /* device gone */ }
     for (const [name, value] of [['user_rotation', originalRotation], ['accelerometer_rotation', originalAccelerometer]]) {
         try { sh(value === 'null' ? `settings delete system ${name}` : `settings put system ${name} ${value}`); } catch { /* device gone */ }
     }

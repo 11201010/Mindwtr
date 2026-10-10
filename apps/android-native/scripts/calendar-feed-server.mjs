@@ -1,7 +1,8 @@
 // A local ICS subscription for the device checks (pass C3), served on this computer and reached from the phone through
 // `adb reverse`. It runs on a worker thread: a check's adb calls are synchronous and would hold a request on this thread's
-// event loop. `/<name>.ics` answers by the mode set for it: "ok" (the calendar), 403, 500, "truncated" (a Content-Length the
-// body never reaches, then the socket closes) or "oversized" (a declared length past any limit, never sent). Every request's
+// event loop. `/<name>.ics` answers by the mode set for it: "ok" (the calendar), "slow" (the calendar after 15 s), 403, 500,
+// "truncated" (a Content-Length the body never reaches, then the socket closes) or "oversized" (a declared length past any
+// limit, never sent). Every request's
 // path and Origin header come back in `seen`.
 import { Worker } from 'node:worker_threads';
 
@@ -31,8 +32,9 @@ const SOURCE = `
             setTimeout(() => response.socket.destroy(), 500);
             return;
         }
-        response.writeHead(200, { 'content-type': 'text/calendar; charset=utf-8' });
-        response.end(body);
+        const answer = () => { response.writeHead(200, { 'content-type': 'text/calendar; charset=utf-8' }); response.end(body); };
+        if (mode === 'slow') { setTimeout(answer, 15000); return; }
+        answer();
     });
     server.listen(port, '127.0.0.1', () => parentPort.postMessage({ listening: true }));
 `;
