@@ -12,7 +12,7 @@ The desktop app includes a built-in MCP server in **Settings → Integrations �
 
 You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`, or use the Local API backend below.
 
-On desktop, the app shows the exact local data path in **Settings -> Sync -> Local Data**. Mobile binaries do not expose a local MCP server surface.
+On desktop, find the database in the default database locations listed under [Requirements](#requirements). Mobile binaries do not expose a local MCP server surface.
 
 ---
 
@@ -49,7 +49,7 @@ Additional macOS paths for sandboxed builds:
 A `--db` path pinned in an MCP client configuration keeps working across that move: if the file is not at the configured path, the server checks the matching `data` subfolder (or the parent folder) and reports on stderr which database it opened.
 
 If `mindwtr.db` is missing but `data.json` exists in the same desktop data folder, the MCP server will bootstrap a fresh SQLite database from that local data snapshot on first start.
-Desktop Settings → Sync → Local Data shows the exact storage location used by the app.
+The desktop data folder is the folder that holds `mindwtr.db` in the default locations above.
 
 You can override local mode with:
 - `--db /path/to/mindwtr.db`
