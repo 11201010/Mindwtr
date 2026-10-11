@@ -108,7 +108,7 @@ fn query_tasks_at(
         input
             .get(field)
             .and_then(Value::as_str)
-            .and_then(utc_date_key)
+            .and_then(local_date_key)
     };
     let from = date_key("dueDateFrom");
     let to = date_key("dueDateTo");
@@ -142,7 +142,7 @@ fn query_tasks_at(
             {
                 return false;
             }
-            let due = utc_date_key(text(task, "dueDate"));
+            let due = local_date_key(text(task, "dueDate"));
             if from.is_some_and(|from| due.is_none_or(|due| due < from))
                 || to.is_some_and(|to| due.is_none_or(|due| due > to))
             {
@@ -423,11 +423,12 @@ fn parse_date(value: &str) -> Option<Date> {
     .ok()
 }
 
-fn utc_date_key(value: &str) -> Option<Date> {
+fn local_date_key(value: &str) -> Option<Date> {
     OffsetDateTime::parse(value, &Rfc3339)
         .ok()
-        .map(|date| date.to_offset(time::UtcOffset::UTC).date())
-        .or_else(|| parse_date(value))
+        .and_then(local_wall)
+        .or_else(|| parse_local_date(value))
+        .map(|date| date.date())
 }
 
 pub(crate) fn parse_local_date(value: &str) -> Option<PrimitiveDateTime> {
@@ -438,10 +439,8 @@ pub(crate) fn parse_local_date(value: &str) -> Option<PrimitiveDateTime> {
     let mut parts = clock.split(':');
     let hour = parts.next()?.parse().ok()?;
     let minute = parts.next()?.parse().ok()?;
-    let (second, fraction) = parts
-        .next()?
-        .split_once('.')
-        .unwrap_or_else(|| (clock.rsplit(':').next().unwrap(), ""));
+    let seconds = parts.next().unwrap_or("00");
+    let (second, fraction) = seconds.split_once('.').unwrap_or((seconds, ""));
     if parts.next().is_some()
         || fraction.len() > 9
         || !fraction.bytes().all(|byte| byte.is_ascii_digit())
@@ -693,6 +692,68 @@ mod tests {
             assert_eq!(json!(ids), case["expectedIds"], "{}", case["name"]);
         }
     }
+    #[test]
+    fn mcp_native_due_windows_preserve_written_calendar_days() {
+        let data = json!({"tasks":[
+            {"id":"evening","dueDate":"2026-10-11T23:30"},
+            {"id":"morning","dueDate":"2026-10-12T07:00"},
+            {"id":"seconds","dueDate":"2026-10-11T23:30:00.123"},
+            {"id":"date-only","dueDate":"2026-10-11"},
+            {"id":"invalid","dueDate":"2026-10-11T25:30"},
+            {"id":"missing"}
+        ]});
+        let input = json!({"dueDateFrom":"2026-10-11","dueDateTo":"2026-10-11"});
+        let tasks = query_tasks(&data, input.as_object().unwrap()).unwrap();
+        let ids = tasks
+            .iter()
+            .map(|task| text(task, "id"))
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["date-only", "evening", "seconds"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_native_due_windows_convert_offsets_in_isolated_timezone_process() {
+        const MARKER: &str = "MINDWTR_DUE_WINDOW_TZ_CHILD";
+        let Ok(zone) = std::env::var(MARKER) else {
+            for zone in ["America/Los_Angeles", "Asia/Shanghai"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "local_query::tests::mcp_native_due_windows_convert_offsets_in_isolated_timezone_process",
+                        "--exact",
+                        "--nocapture",
+                    ])
+                    .env(MARKER, zone)
+                    .env("TZ", zone)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "{zone}");
+            }
+            return;
+        };
+        let (early, late) = if zone == "America/Los_Angeles" {
+            ("2026-10-11T07:30:00Z", "2026-10-12T06:30:00+00:00")
+        } else {
+            ("2026-10-10T16:30:00Z", "2026-10-11T15:30:00+00:00")
+        };
+        let data = json!({"tasks":[
+            {"id":"early","dueDate":early}, {"id":"late","dueDate":late},
+            {"id":"previous","dueDate":"2026-10-10"},
+            {"id":"next","dueDate":"2026-10-12"}
+        ]});
+        for input in [
+            json!({"dueDateFrom":"2026-10-11","dueDateTo":"2026-10-11"}),
+            json!({"dueDateFrom":early,"dueDateTo":late}),
+        ] {
+            let tasks = query_tasks(&data, input.as_object().unwrap()).unwrap();
+            let ids = tasks
+                .iter()
+                .map(|task| text(task, "id"))
+                .collect::<Vec<_>>();
+            assert_eq!(ids, ["early", "late"], "{zone}");
+        }
+    }
+
     #[test]
     fn mcp_native_query_validation_sorting_and_pagination() {
         let data = json!({"tasks":[

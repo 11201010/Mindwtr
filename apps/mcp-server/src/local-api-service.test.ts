@@ -135,10 +135,31 @@ describe('desktop Local API task reads', () => {
     expect((await service.listTasks({ limit: 9000, offset: 2 })).map((row) => row.id)).toEqual(['next', 'no-focus', 'waiting']);
   });
 
-  test('date bounds compare the UTC calendar day and false focus includes absent flags', async () => {
-    const { service } = fixture(() => jsonResponse({ tasks: [task('offset', { dueDate: '2026-01-01T23:30:00-02:00' }),
-      task('earlier', { dueDate: '2026-01-01' }), task('later', { dueDate: '2026-01-03' }), task('missing')] }));
-    expect((await service.listTasks({ dueDateFrom: '2026-01-02', dueDateTo: '2026-01-02' })).map((row) => row.id)).toEqual(['offset']);
+  test('due windows preserve written calendar days for date-only and no-offset times', async () => {
+    const { service } = fixture(() => jsonResponse({ tasks: [
+      task('evening', { dueDate: '2026-10-11T23:30' }), task('morning', { dueDate: '2026-10-12T07:00' }),
+      task('seconds', { dueDate: '2026-10-11T23:30:00.123' }), task('date-only', { dueDate: '2026-10-11' }),
+      task('invalid', { dueDate: '2026-10-11T25:30' }), task('missing'),
+    ] }));
+    expect((await service.listTasks({ dueDateFrom: '2026-10-11', dueDateTo: '2026-10-11' })).map((row) => row.id))
+      .toEqual(['date-only', 'evening', 'seconds']);
+  });
+
+  test('due windows convert offset times and bounds to their local calendar days', async () => {
+    const early = new Date(2026, 9, 11, 0, 30).toISOString();
+    const late = new Date(2026, 9, 11, 23, 30).toISOString().replace('Z', '+00:00');
+    const { service } = fixture(() => jsonResponse({ tasks: [task('early', { dueDate: early }),
+      task('late', { dueDate: late }), task('earlier', { dueDate: '2026-10-10' }),
+      task('later', { dueDate: '2026-10-12' }), task('missing')] }));
+    for (const input of [
+      { dueDateFrom: '2026-10-11', dueDateTo: '2026-10-11' },
+      { dueDateFrom: early, dueDateTo: late },
+    ]) {
+      expect((await service.listTasks(input)).map((row) => row.id)).toEqual(['early', 'late']);
+    }
+  });
+
+  test('false focus includes absent flags', async () => {
     expect((await readFixture().service.listTasks({ isFocusedToday: false })).map((row) => row.id)).toEqual(['archived', 'done', 'no-focus', 'waiting']);
   });
 
