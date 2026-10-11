@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { button, check, chipOn, connect, evidenced, fail, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
+import { box, button, check, chipOn, connect, evidenced, fail, hasText, inEditor, inList, Stopped, switchOn, tab, tabSelected, withDescription } from './device.mjs';
 import { icsCalendar, serveCalendar } from './calendar-feed-server.mjs';
 
 const [serial] = process.argv.slice(2);
@@ -750,8 +750,17 @@ const shootCalendarReload = async (prefix, rn) => {
     await calendarMode(en['calendar.mobile.month']);
     const today = await waitFor('Today', (current) => Boolean(withDescription(current, en['calendar.today'])), 15_000);
     await tap(withDescription(today, en['calendar.today']));
-    await waitFor(`${CALENDAR_EVENTS.timed} in today's details`, (current) => hasText(current, CALENDAR_EVENTS.timed)
-        || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed)), 30_000);
+    // Today's details pane lists the fixture's tasks first: scroll inside the pane (the bottom of the screen) to its events.
+    const eventShown = (current) => hasText(current, CALENDAR_EVENTS.timed) || current.some((node) => (node['content-desc'] ?? '').includes(CALENDAR_EVENTS.timed));
+    let nodes = await screen();
+    const [, , width, height] = box(nodes.find((node) => node.bounds) ?? { bounds: '[0,0][1080,2340]' });
+    for (let step = 0; step < 6 && !eventShown(nodes); step += 1) {
+        requireAppFront();
+        sh(`input swipe ${Math.round(width / 2)} ${Math.round(height * 0.93)} ${Math.round(width / 2)} ${Math.round(height * 0.8)} 400`);
+        await sleep(800);
+        nodes = await screen();
+    }
+    await waitFor(`${CALENDAR_EVENTS.timed} in today's details`, eventShown, 30_000);
     calendarServer.state.mode('parity', 'slow');
     requireAppFront();
     sh('input keyevent KEYCODE_HOME');
