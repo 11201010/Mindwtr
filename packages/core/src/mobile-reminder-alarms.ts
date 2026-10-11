@@ -114,8 +114,20 @@ export function writeReminderAlarmMap(map: ReadonlyMap<string, ReminderAlarmEntr
     return JSON.stringify(result);
 }
 
-/** What an alarm shows and when; repeating alarms by time of day (and weekday), in local time. */
-export function buildReminderAlarmSignature(config: ReminderAlarmConfig): string {
+/** The device's IANA time zone; '' where the runtime has no Intl (the native hosts' QuickJS). */
+function getDeviceTimeZone(): string {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * What an alarm shows and when; repeating alarms by time of day (and weekday), in local time,
+ * and the time zone that local time is in, so a time zone change re-arms them.
+ */
+export function buildReminderAlarmSignature(config: ReminderAlarmConfig, timeZone: string = getDeviceTimeZone()): string {
     const repeatSchedule = (() => {
         if (!config.repeatInterval) return config.fireAt.toISOString();
         const hours = String(config.fireAt.getHours()).padStart(2, '0');
@@ -130,6 +142,7 @@ export function buildReminderAlarmSignature(config: ReminderAlarmConfig): string
         message: config.message,
         fireAt: repeatSchedule,
         repeatInterval: config.repeatInterval ?? 'once',
+        ...(config.repeatInterval && timeZone ? { timeZone } : {}),
         hasSnoozeAction: config.hasSnoozeAction === true,
         ...(config.hasCompleteAction === true ? { hasCompleteAction: true } : {}),
         data: config.data ?? {},

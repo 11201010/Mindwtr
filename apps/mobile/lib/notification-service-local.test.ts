@@ -1169,6 +1169,7 @@ describe('notification-service-local', () => {
       message: 'Morning body',
       fireAt: 'daily:09:00',
       repeatInterval: 'daily',
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       hasSnoozeAction: false,
       data: { kind: 'daily-digest' },
     });

@@ -294,6 +294,22 @@ describe('mobile reminder alarms', () => {
         expect(buildReminderAlarmSignature({ ...config, fireAt: new Date('2026-10-06T18:30:00.000Z') })).toBe(buildReminderAlarmSignature(config));
     });
 
+    it('re-arms a repeating alarm after a time zone change, at the same local time', () => {
+        const config = { title: 'Morning', message: 'Body', fireAt: new Date('2026-09-29T08:00:00.000Z'), repeatInterval: 'daily' as const };
+        expect(buildReminderAlarmSignature(config, 'America/New_York')).not.toBe(buildReminderAlarmSignature(config, 'Europe/Berlin'));
+        const settings = { notificationsEnabled: false, dailyDigestMorningEnabled: true };
+        try {
+            process.env.TZ = 'America/New_York';
+            const first = plan({ settings });
+            const alarms = new Map(first.recurring.map((request, index): [string, ReminderAlarmEntry] => [request.key, { id: index + 1, signature: request.signature }]));
+            expect(plan({ settings, alarms }).keep).toEqual(['digest:morning']);
+            process.env.TZ = 'Europe/Berlin';
+            expect(plan({ settings, alarms }).schedule).toEqual(['digest:morning']);
+        } finally {
+            process.env.TZ = 'UTC';
+        }
+    });
+
     it('posts every reminder of a task into the task\'s one notification slot', () => {
         const config = { title: 'Call back', message: 'Due', fireAt: new Date('2026-09-28T10:20:00.000Z'), hasSnoozeAction: true };
         const due = buildReminderAlarmDetails('task:t-1', config);
