@@ -1,3 +1,5 @@
+import { useTaskDeepLink } from './hooks/use-task-deep-link';
+import { CalendarOpenTaskModal } from './components/views/calendar/CalendarModals';
 import { useEffect, useState, useRef, useTransition, useCallback, useMemo, Suspense, lazy } from 'react';
 import { StartupReadyProbe } from './components/StartupReadyProbe';
 import { RendererNavigationProbe } from './components/RendererNavigationProbe';
@@ -355,6 +357,7 @@ function App() {
     const [resolvingExternalSync, setResolvingExternalSync] = useState(false);
     const [hasHydratedSettings, setHasHydratedSettings] = useState(false);
     const [startupDataReady, setStartupDataReady] = useState(false);
+    const taskLinkController = useTaskDeepLink(startupDataReady && !isLoading, isTauriRuntime() && !sandboxMode, t);
     useArchiveRetentionRunner(hasHydratedSettings && !isLoading, sandboxMode);
     // App tests seed the store directly and deliberately skip the native startup
     // hydration effect; in the app, only the completed fetch opens this gate.
@@ -1823,6 +1826,7 @@ function App() {
                         blocked={startupPromptsBlocked}
                         prompts={startupPrompts}
                     />
+                    <CalendarOpenTaskModal controller={taskLinkController} readOnly={taskLinkController.openTask?.status === 'archived'} />
                     {externalSyncChange && (
                         <Dialog
                             onClose={() => !resolvingExternalSync && setExternalSyncChange(null)}

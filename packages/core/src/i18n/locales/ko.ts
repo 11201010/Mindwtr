@@ -21,6 +21,9 @@ export const koOverrides: Record<string, string> = {
     "task.expandChecklistSaveFailed": "전환을 저장하지 못했습니다. 다시 시도하면 중복 없이 같은 전환을 저장합니다.",
 
     'task.copyTitle': '제목 복사',
+    "task.copyTaskLink": "작업 링크 복사",
+    "task.copyTaskId": "작업 ID 복사",
+    "task.linkNotFound": "이 라이브러리에 작업이 없습니다. 삭제되었거나 이 기기에 아직 동기화되지 않았을 수 있습니다.",
     'task.titleCopied': '제목이 복사되었습니다',
     "settings.mcpTitle": "로컬 MCP 서버 (고급)",
     "settings.mcpDesc": "이 컴퓨터의 AI 클라이언트를 Mindwtr에 연결합니다.",

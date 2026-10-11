@@ -1,4 +1,6 @@
 import React from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { useToast } from '../../contexts/toast-context';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { TaskStatus, tFallback } from '@mindwtr/core';
 import type { ThemeColors } from '../../hooks/use-theme-colors';
@@ -12,6 +14,7 @@ interface SwipeableTaskItemStatusMenuProps {
     onStatusChange: (status: TaskStatus) => void;
     onMoveToSection?: () => void;
     onMoveToDestination?: () => void;
+    taskId: string;
     taskStatus: TaskStatus;
     tc: ThemeColors;
     t: (key: string) => string;
@@ -26,12 +29,23 @@ export function SwipeableTaskItemStatusMenu({
     onStatusChange,
     onMoveToSection,
     onMoveToDestination,
+    taskId,
     taskStatus,
     tc,
     t,
     visible,
 }: SwipeableTaskItemStatusMenuProps) {
     const statusColors = useStatusColors();
+    const { showToast } = useToast();
+    const copyReference = async (kind: 'link' | 'id') => {
+        try {
+            await Clipboard.setStringAsync(kind === 'link'
+                ? `mindwtr://open?task=${encodeURIComponent(taskId)}` : taskId);
+            showToast({ message: tFallback(t, 'list.taskCopied', 'Task copied to clipboard'), tone: 'success' });
+        } catch {
+            showToast({ message: tFallback(t, 'list.taskCopyFailed', 'Could not copy task'), tone: 'error' });
+        }
+    };
     const moveToDestinationLabel = tFallback(t, 'task.moveToProjectOrArea', 'Move to project or area…');
     const moveToSectionLabel = tFallback(t, 'viewSections.moveToSection', 'Move to section…');
     return (
@@ -75,6 +89,27 @@ export function SwipeableTaskItemStatusMenu({
                                 >
                                     <View style={[styles.menuDot, { backgroundColor: colors.text }]} />
                                     <Text style={[styles.menuText, { color: tc.text }]}>{t(`status.${status}`)}</Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                    <View style={styles.menuMoveActions}>
+                        {(['link', 'id'] as const).map((kind) => {
+                            const label = kind === 'link'
+                                ? tFallback(t, 'task.copyTaskLink', 'Copy task link')
+                                : tFallback(t, 'task.copyTaskId', 'Copy task ID');
+                            return (
+                                <Pressable
+                                    key={`copy-${kind}`}
+                                    style={[styles.menuMoveItem, { borderColor: tc.border }]}
+                                    onPress={() => {
+                                        void copyReference(kind);
+                                        onClose();
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={label}
+                                >
+                                    <Text style={[styles.menuMoveText, { color: tc.text }]}>{label}</Text>
                                 </Pressable>
                             );
                         })}

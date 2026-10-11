@@ -167,6 +167,43 @@ describe('TaskQuickActionMenu', () => {
     });
 
     it.each([
+        ['Copy task link', 'mindwtr://open?task=task%20%2F%3F%26%23'],
+        ['Copy task ID', 'task /?&#'],
+    ])('copies %s without changing the task or closing an editor', async (label, expected) => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+        try {
+            const linkedTask = { ...task, id: 'task /?&#', description: 'Private description' };
+            const before = JSON.stringify(linkedTask);
+            const props = renderMenu({ task: linkedTask, readOnly: true });
+            fireEvent.click(screen.getByRole('menuitem', { name: label }));
+            expect(writeText).toHaveBeenCalledExactlyOnceWith(expected);
+            expect(props.onClose).toHaveBeenCalledOnce();
+            expect(props.onUpdateTask).not.toHaveBeenCalled();
+            expect(props.onStatusChange).not.toHaveBeenCalled();
+            expect(props.onDuplicate).not.toHaveBeenCalled();
+            expect(JSON.stringify(linkedTask)).toBe(before);
+        } finally { vi.unstubAllGlobals(); }
+    });
+
+    it.each(['Copy task link', 'Copy task ID'])('shows clipboard failure for %s', async (label) => {
+        const writeText = vi.fn().mockRejectedValue(new Error('Clipboard unavailable'));
+        const showToast = vi.fn();
+        const previousToast = useUiStore.getState().showToast;
+        useUiStore.setState({ showToast });
+        vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+        try {
+            const props = renderMenu();
+            fireEvent.click(screen.getByRole('menuitem', { name: label }));
+            await waitFor(() => expect(showToast).toHaveBeenCalledExactlyOnceWith('Could not copy task', 'error'));
+            expect(props.onUpdateTask).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllGlobals();
+            useUiStore.setState({ showToast: previousToast });
+        }
+    });
+
+    it.each([
         ['garden', ['@garden']],
         ['garden, @garden, @@garden, #garden', ['@garden']],
         [' @, #, , home office, @工作/電話 ', ['@home office', '@工作/電話']],
@@ -226,8 +263,8 @@ describe('TaskQuickActionMenu', () => {
         const props = renderClosableMenu({ task: { ...task, status: 'done' }, readOnly: true });
 
         expect(screen.getAllByRole('menuitem').map((item) => item.textContent))
-            .toEqual(['Copy Title', 'Duplicate', 'Move to Next', 'Delete']);
-        await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{Enter}');
+            .toEqual(['Copy Title', 'Copy task link', 'Copy task ID', 'Duplicate', 'Move to Next', 'Delete']);
+        await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{Enter}');
 
         expect(props.onStatusChange).toHaveBeenCalledExactlyOnceWith('next');
         expect(screen.queryByRole('menu')).not.toBeInTheDocument();

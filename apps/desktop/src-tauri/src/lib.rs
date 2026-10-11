@@ -36,6 +36,7 @@ use tauri::menu::HELP_SUBMENU_ID;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use time::OffsetDateTime;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -48,6 +49,8 @@ mod email_capture;
 mod file_sync_attachment_publication;
 mod install;
 mod system_fonts;
+#[cfg(target_os = "linux")]
+mod linux_deep_link;
 mod linux_calendar;
 mod linux_notification;
 #[cfg(target_os = "linux")]
@@ -1233,15 +1236,26 @@ fn tray_icon_temp_dir(app_cache_dir: &Path) -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn flatpak_instance_request<I, S>(args: I) -> &'static str
+fn flatpak_instance_request<I, S>(args: I) -> String
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if launch_requests_quick_add(args) {
-        FLATPAK_INSTANCE_REQUEST_QUICK_ADD
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_owned())
+        .collect();
+    if args.len() == 2 && args[1].len() <= 4096 {
+        if let Ok(url) = reqwest::Url::parse(&args[1]) {
+            if url.scheme() == "mindwtr" {
+                return args[1].clone();
+            }
+        }
+    }
+    if launch_requests_quick_add(args.iter()) {
+        FLATPAK_INSTANCE_REQUEST_QUICK_ADD.to_owned()
     } else {
-        FLATPAK_INSTANCE_REQUEST_SHOW
+        FLATPAK_INSTANCE_REQUEST_SHOW.to_owned()
     }
 }
 
@@ -1305,6 +1319,8 @@ fn handle_flatpak_instance_request(app: &tauri::AppHandle, request: &str) {
     if request.trim().eq_ignore_ascii_case("quick-add") {
         show_quick_add_window(app);
     } else {
+        app.deep_link()
+            .handle_cli_arguments(["mindwtr", request].into_iter());
         show_main(app);
     }
 }
@@ -1313,13 +1329,15 @@ fn handle_flatpak_instance_request(app: &tauri::AppHandle, request: &str) {
 fn run_flatpak_instance_listener(app: tauri::AppHandle, listener: UnixListener) {
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 let mut request = String::new();
-                if let Err(error) = stream.read_to_string(&mut request) {
+                if let Err(error) = stream.take(4097).read_to_string(&mut request) {
                     log::warn!("Failed to read Flatpak instance request: {error}");
                     continue;
                 }
-                handle_flatpak_instance_request(&app, &request);
+                if request.len() <= 4096 {
+                    handle_flatpak_instance_request(&app, &request);
+                }
             }
             Err(error) => {
                 log::warn!("Flatpak instance listener stopped: {error}");
@@ -1579,6 +1597,7 @@ pub fn run() {
                 show_main(app);
             }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .manage(QuickAddPending(Mutex::new(None)))
         .manage(CloseRequestHandled(AtomicBool::new(false)))
         .manage(GlobalQuickAddShortcutState(Mutex::new(None)))
@@ -1722,6 +1741,19 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if !is_flatpak() {
+                let registered = app.deep_link().register_all();
+                #[cfg(target_os = "linux")]
+                let corrected = linux_deep_link::correct_registered_handler(app);
+                #[cfg(target_os = "windows")]
+                let corrected: Result<(), std::io::Error> = Ok(());
+                if registered.is_err() || corrected.is_err() {
+                    log::warn!("Task link protocol registration unavailable");
+                }
+            }
+            let link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |_| show_main(&link_app));
             #[cfg(target_os = "macos")]
             let _ = RENDERER_RECOVERY_APP.set(app.handle().clone());
             ensure_data_file(&app.handle()).ok();
@@ -2503,6 +2535,26 @@ arch=x86_64
         );
         assert_eq!(
             flatpak_instance_request(["mindwtr"]),
+            FLATPAK_INSTANCE_REQUEST_SHOW
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn flatpak_instance_request_preserves_bounded_task_links() {
+        let link = "mindwtr://open?task=task%20%2F%3F%26";
+        assert_eq!(flatpak_instance_request(["mindwtr", link]), link);
+        assert_eq!(
+            flatpak_instance_request(["mindwtr", "https://example.com"]),
+            FLATPAK_INSTANCE_REQUEST_SHOW
+        );
+        assert_eq!(
+            flatpak_instance_request(["mindwtr", link, "extra"]),
+            FLATPAK_INSTANCE_REQUEST_SHOW
+        );
+        let oversized = format!("mindwtr://open?task={}", "a".repeat(4096));
+        assert_eq!(
+            flatpak_instance_request(["mindwtr", oversized.as_str()]),
             FLATPAK_INSTANCE_REQUEST_SHOW
         );
     }

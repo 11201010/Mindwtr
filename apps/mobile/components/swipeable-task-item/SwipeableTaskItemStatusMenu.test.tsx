@@ -1,6 +1,11 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SwipeableTaskItemStatusMenu } from './SwipeableTaskItemStatusMenu';
+
+const clipboard = vi.hoisted(() => ({ write: vi.fn(), toast: vi.fn() }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard.write }));
+vi.mock('../../contexts/toast-context', () => ({ useToast: () => ({ showToast: clipboard.toast }) }));
 
 vi.mock('react-native', () => ({
   Modal: ({ visible, children, ...props }: any) => visible
@@ -23,11 +28,11 @@ vi.mock('../../hooks/use-status-colors', () => ({
 
 vi.mock('./swipeable-task-item.styles', () => ({ styles: {} }));
 
-import { SwipeableTaskItemStatusMenu } from './SwipeableTaskItemStatusMenu';
 
 const baseProps = {
   visible: true,
   taskStatus: 'someday' as const,
+  taskId: 'task /?&#',
   onClose: vi.fn(),
   onStatusChange: vi.fn(),
   tc: { cardBg: '#fff', border: '#ddd', text: '#111' } as any,
@@ -35,6 +40,35 @@ const baseProps = {
 };
 
 describe('Someday task menu', () => {
+  beforeEach(() => { vi.clearAllMocks(); clipboard.write.mockResolvedValue(undefined); });
+
+  it.each([
+    ['Copy task link', 'mindwtr://open?task=task%20%2F%3F%26%23'],
+    ['Copy task ID', 'task /?&#'],
+  ])('copies %s from the actual menu without changing status', async (label, expected) => {
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<SwipeableTaskItemStatusMenu {...baseProps} />); });
+    const button = tree.root.findAllByType('Pressable' as never)
+      .find((node) => node.props.accessibilityLabel === label)!;
+    await act(async () => { button.props.onPress(); });
+    expect(clipboard.write).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(clipboard.toast).toHaveBeenCalledExactlyOnceWith({ message: 'Task copied to clipboard', tone: 'success' });
+    expect(baseProps.onClose).toHaveBeenCalledOnce();
+    expect(baseProps.onStatusChange).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it.each(['Copy task link', 'Copy task ID'])('reports clipboard failure for %s', async (label) => {
+    clipboard.write.mockRejectedValueOnce(new Error('Unavailable'));
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<SwipeableTaskItemStatusMenu {...baseProps} />); });
+    const button = tree.root.findAllByType('Pressable' as never)
+      .find((node) => node.props.accessibilityLabel === label)!;
+    await act(async () => { button.props.onPress(); });
+    expect(clipboard.toast).toHaveBeenCalledExactlyOnceWith({ message: 'Could not copy task', tone: 'error' });
+    expect(baseProps.onStatusChange).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
   it('opens the grouped project or area destination picker', () => {
     const onMoveToDestination = vi.fn();
     const onClose = vi.fn();

@@ -241,6 +241,7 @@ const serializeFocusViewState = (expandedSections: FocusExpandedSections, showDe
 export default function FocusScreen() {
   const onStartupLayout = useStartupScreenReady('focus');
   const { taskId, openToken, taskTab } = useLocalSearchParams<{ taskId?: string; openToken?: string; taskTab?: string }>();
+  const linkedTask = useTaskStore((state) => typeof taskId === 'string' ? state._tasksById.get(taskId) : undefined);
   const insets = useSafeAreaInsets();
   const { tasks, projects, sections: projectSections, areas, settings, updateTask, deleteTask, reorderFocusedTasks, updateSettings, highlightTaskId, setHighlightTask } = useTaskStore((state) => ({
     tasks: state.tasks,
@@ -716,15 +717,15 @@ export default function FocusScreen() {
     const nextTaskTab = resolveTaskRouteTab(taskTab);
     const openKey = `${taskId}:${typeof openToken === 'string' ? openToken : ''}:${nextTaskTab}`;
     if (lastOpenedFromNotificationRef.current === openKey) return;
-    const task = tasks.find((item) => item.id === taskId && !item.deletedAt);
-    if (!task) return;
+    const task = linkedTask;
+    if (!task || task.deletedAt) return;
     lastOpenedFromNotificationRef.current = openKey;
     setHighlightTask(task.id);
     setTaskModalDefaultTab(nextTaskTab);
     setTaskModalOpenKey(`route:${openKey}`);
     setEditingTask(task);
     setIsModalVisible(true);
-  }, [openToken, setHighlightTask, taskId, taskTab, tasks]);
+  }, [linkedTask, openToken, setHighlightTask, taskId, taskTab]);
 
   useEffect(() => {
     if (!highlightTaskId) return;
@@ -1961,6 +1962,7 @@ export default function FocusScreen() {
         key={taskModalOpenKey}
         visible={isModalVisible}
         task={editingTask}
+        readOnly={editingTask?.status === 'archived'}
         onClose={() => setIsModalVisible(false)}
         onSave={onSaveTask}
         defaultTab={taskModalDefaultTab}

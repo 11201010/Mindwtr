@@ -518,6 +518,18 @@ export function useRootLayoutExternalCapture({
                 });
             }
             router.replace(target ?? '/inbox');
+            if (entityPayload.kind === 'task') {
+                if (!target) {
+                    showToast({
+                        message: resolveText('task.linkNotFound', 'This task is not in this library. It may have been deleted or not synced to this device.'),
+                        tone: 'error',
+                    });
+                }
+                void logInfo('Task link route requested', {
+                    scope: 'routing',
+                    extra: { releaseCheck: 'v1.3.5/task-link-open', outcome: target ? 'opened' : 'missing' },
+                }).catch(() => undefined);
+            }
             return;
         }
         if (!canonicalDataReady) return;

@@ -841,6 +841,7 @@ function SwipeableTaskItemInner({
                 onBackdatedComplete={interactionDisabled || task.status === 'done'
                     ? undefined
                     : () => setCompletedAtPicker('complete')}
+                taskId={task.id}
                 taskStatus={task.status}
                 tc={tc}
                 t={t}

@@ -29,7 +29,7 @@ import {
 import { joinDateTime, splitDateTime } from '@mindwtr/core/date-draft';
 
 import { reportError } from '../../lib/report-error';
-import { copyTaskTitles } from '../../lib/task-clipboard';
+import { copyTaskReference, copyTaskTitles } from '../../lib/task-clipboard';
 import { cn } from '../../lib/utils';
 import { FocusStarIcon } from '../FocusStarIcon';
 import { Button } from '../ui/Button';
@@ -843,6 +843,17 @@ export function TaskQuickActionMenu({
                         onClose();
                     },
                 })}
+                {(['link', 'id'] as const).map((kind) => renderMenuAction({
+                    key: `copy-${kind}`,
+                    icon: <Copy className="h-4 w-4" />,
+                    label: kind === 'link'
+                        ? tFallback(t, 'task.copyTaskLink', 'Copy task link')
+                        : tFallback(t, 'task.copyTaskId', 'Copy task ID'),
+                    onClick: () => {
+                        void copyTaskReference(task.id, kind, t);
+                        onClose();
+                    },
+                }))}
                 {renderMenuAction({
                     icon: <Copy className="h-4 w-4" />,
                     label: duplicateLabel,

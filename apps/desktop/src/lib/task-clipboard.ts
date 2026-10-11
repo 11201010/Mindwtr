@@ -9,6 +9,37 @@ export async function copyTaskTitles(
     source: 'menu' | 'shortcut' = 'shortcut',
 ): Promise<void> {
     if (tasks.length === 0) return;
+    const text = tasks.map((task) => {
+        const description = includeDescription && task.description?.trim() ? `\n\n${task.description}` : '';
+        return task.title + description;
+    }).join('\n');
+    const message = includeDescription
+        ? translateWithFallback(t, 'list.taskCopied', 'Task copied to clipboard')
+        : tasks.length === 1
+            ? translateWithFallback(t, 'task.titleCopied', 'Title copied')
+            : translateWithFallback(t, 'task.titlesCopied', 'Titles copied');
+    await writeTaskClipboard(text, t, message, source);
+}
+
+export async function copyTaskReference(
+    taskId: string,
+    kind: 'link' | 'id',
+    t: (key: string) => string,
+): Promise<void> {
+    await writeTaskClipboard(
+        kind === 'link' ? `mindwtr://open?task=${encodeURIComponent(taskId)}` : taskId,
+        t,
+        translateWithFallback(t, 'list.taskCopied', 'Task copied to clipboard'),
+        'menu',
+    );
+}
+
+async function writeTaskClipboard(
+    text: string,
+    t: (key: string) => string,
+    message: string,
+    source: 'menu' | 'shortcut',
+): Promise<void> {
     const translate = (key: string, fallback: string) => translateWithFallback(t, key, fallback);
     const activation = typeof navigator !== 'undefined' ? navigator.userActivation : undefined;
     const diagnostic = {
@@ -20,21 +51,11 @@ export async function copyTaskTitles(
         clipboardAvailable: typeof navigator !== 'undefined' && typeof navigator.clipboard?.writeText === 'function',
     };
     try {
-        await navigator.clipboard.writeText(tasks.map((task) => {
-            const description = includeDescription && task.description?.trim() ? `\n\n${task.description}` : '';
-            return task.title + description;
-        }).join('\n'));
+        await navigator.clipboard.writeText(text);
         void logInfo('Task clipboard write completed', {
             scope: 'clipboard', extra: { ...diagnostic, outcome: 'copied' },
         }).catch(() => {});
-        useUiStore.getState().showToast(
-            includeDescription
-                ? translate('list.taskCopied', 'Task copied to clipboard')
-                : tasks.length === 1
-                    ? translate('task.titleCopied', 'Title copied')
-                    : translate('task.titlesCopied', 'Titles copied'),
-            'success',
-        );
+        useUiStore.getState().showToast(message, 'success');
     } catch (error) {
         const errorKind = !diagnostic.clipboardAvailable ? 'unavailable'
             : (error instanceof Error || error instanceof DOMException) && ['NotAllowedError', 'SecurityError', 'AbortError', 'TypeError'].includes(error.name)
