@@ -105,7 +105,7 @@ import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { PullSyncIndicator } from '@/components/PullSyncIndicator';
 import { useManualPullSync } from '@/hooks/use-manual-pull-sync';
 import { useReducedMotion } from '@/hooks/use-reduced-motion';
-import { getPomodoroPickerTasks, projectMatchesAreaFilterSelection } from '@mindwtr/core';
+import { projectMatchesAreaFilterSelection } from '@mindwtr/core';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import {
   buildFocusListLayoutFrames,
@@ -1076,10 +1076,14 @@ export default function FocusScreen() {
     hasAnyTasks: tasks.length > 0,
     t,
   });
-  const pomodoroTasks = useMemo(
-    () => getPomodoroPickerTasks({ focusedTasks, schedule, nextActions, reviewDue }),
-    [focusedTasks, schedule, nextActions, reviewDue],
-  );
+  const pomodoroTasks = useMemo(() => {
+    const byId = new Map<string, Task>();
+    [...focusedTasks, ...schedule, ...nextActions, ...reviewDue].forEach((task) => {
+      if (task.deletedAt) return;
+      byId.set(task.id, task);
+    });
+    return Array.from(byId.values());
+  }, [focusedTasks, schedule, nextActions, reviewDue]);
 
   const onEdit = useCallback((task: Task) => {
     setTaskModalDefaultTab('view');
