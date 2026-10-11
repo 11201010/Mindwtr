@@ -19,7 +19,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -320,12 +319,14 @@ const val COMPACT_TEXT_MAX_SCALE = 1.2f
 /** The factor that holds text at [maxScale] once the system [fontScale] passes it (RN's maxFontSizeMultiplier). */
 fun compactFontFactor(fontScale: Float, maxScale: Float = COMPACT_TEXT_MAX_SCALE): Float = if (fontScale <= maxScale) 1f else maxScale / fontScale
 
-/** RN's CompactText: this style with its size and line height capped at 1.2x the font scale. */
+/**
+ * RN's CompactText: this style with its size capped at 1.2x the font scale. RN's maxFontSizeMultiplier leaves the line height
+ * scaling with the system (S23 at 2.0: RN's pill is as tall as an uncapped line), so the line height here does too.
+ */
 @Composable
 fun TextStyle.compact(): TextStyle {
     val factor = compactFontFactor(LocalDensity.current.fontScale)
-    if (factor == 1f) return this
-    return copy(fontSize = fontSize * factor, lineHeight = if (lineHeight.isSpecified) lineHeight * factor else lineHeight)
+    return if (factor == 1f) this else copy(fontSize = fontSize * factor)
 }
 
 /** RN's type: the platform sans (Fonts.sans is 'normal' on Android), at RN's size, weight, and line height. */
