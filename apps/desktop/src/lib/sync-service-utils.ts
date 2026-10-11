@@ -99,21 +99,50 @@ const isPathWithin = (dir: string, path: string): boolean => {
     return Boolean(root) && (path === root || path.startsWith(`${root}/`));
 };
 
+// Every folder desktop has ever written attachment bytes into: imports, dropped
+// files and sync downloads (attachments), recordings (audio-captures) and pasted
+// images (quick-add-images).
+const ATTACHMENT_SOURCE_DIR_NAMES = [ATTACHMENTS_DIR_NAME, 'audio-captures', 'quick-add-images'];
+
 /**
  * SEC-07: which local paths this device may read bytes from for sync. An attachment `uri`
  * travels inside the synced document and an absolute path there survives the merge
  * sanitizer, so without this a hostile sync document makes the next cycle upload an
  * arbitrary local file to the remote. Every file attachment desktop creates is written
- * under the managed data dir (imports, dropped files, pasted images, audio captures);
- * files the user merely points at are `kind: 'link'` and never reach the transfer loop.
+ * into one of {@link ATTACHMENT_SOURCE_DIR_NAMES}; files the user merely points at are
+ * `kind: 'link'` and never reach the transfer loop.
+ *
+ * Only those folders are allowed, never the OS data dir or the profile root: on
+ * Windows/macOS `config/secrets.toml` lives in the profile next to them. The roots are
+ * the managed data dir (portable-aware, #855), the flat OS profile `<data>/mindwtr`
+ * (paths recorded before #1245 moved folders into `data/`; quick-add-images never moved)
+ * and the installed profile's `data/` (a portable copy sharing its paths).
  */
 export const createManagedAttachmentSourcePredicate = async (): Promise<(localPath: string) => boolean> => {
     const { dataDir } = await import('@tauri-apps/api/path');
     const { getManagedDataDir } = await import('./managed-paths');
-    const roots = await Promise.all([dataDir(), getManagedDataDir()]);
+    const { logWarn } = await import('./app-log');
+    const [osDataDir, managedDataDir] = await Promise.all([dataDir(), getManagedDataDir()]);
+    const trimRoot = (dir: string) => normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+    const osProfile = trimRoot(osDataDir) ? `${trimRoot(osDataDir)}/mindwtr` : '';
+    const profileRoots = [trimRoot(managedDataDir), osProfile, osProfile && `${osProfile}/data`]
+        .filter(Boolean);
+    const allowedDirs = profileRoots.flatMap((root) => ATTACHMENT_SOURCE_DIR_NAMES.map((name) => `${root}/${name}`));
+    let refusalLogged = false;
     return (localPath: string): boolean => {
         const normalized = normalizeAttachmentFsPath(stripFileScheme(localPath));
-        return roots.some((root) => isPathWithin(root, normalized));
+        const reason = normalized.split('/').some((segment) => segment === '.' || segment === '..')
+            ? 'dot-segment'
+            : allowedDirs.some((dir) => isPathWithin(dir, normalized)) ? null : 'outside-attachment-folders';
+        if (!reason) return true;
+        if (!refusalLogged) {
+            refusalLogged = true;
+            void logWarn('Attachment upload refused for a path outside the attachment folders', {
+                scope: 'sync',
+                extra: { releaseCheck: 'v1.3.5/attachment-source-guard', reason },
+            });
+        }
+        return false;
     };
 };
 
