@@ -4,7 +4,7 @@
 //
 // A restore replaces a whole library, so this check never runs in the development app: it reinstalls the harness's native
 // build (tech.dongdongbh.mindwtr.upgradetest, as check-upgrade-device.mjs does before each scenario) and works only on rows it
-// merges in itself (titles `d1…<run>`, tag d1test). The test backups are pushed to the phone's Download/mindwtr-test-d1/, the
+// merges in itself (titles `d1…<run>`, tag d1test). The test backups are pushed to the phone's Download/mtd1/, the
 // exports land there, and the folder is removed on exit. Steps (design D1 §7):
 //   E3 Merge backup (the system document picker), Undo from its toast, then Restore backup from the E1 file;
 //   E1 Export backup, CSV and TaskNotes through RN's folder picker (Use this folder, Allow); each file is pulled and read;
@@ -51,9 +51,10 @@ if (execFileSync(aapt2, ['dump', 'packagename', apk], { encoding: 'utf8' }).trim
 const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-d1-ui.xml';
-const PHONE_DIR = '/sdcard/Download/mindwtr-test-d1';
+// A short folder name: an Android property value holds at most 91 characters, and the picker's starting URI names it.
+const PHONE_DIR = '/sdcard/Download/mtd1';
 // The folder picker's starting place (EXTRA_INITIAL_URI takes a document URI, not a tree URI).
-const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmindwtr-test-d1';
+const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmtd1';
 const DB = 'files/SQLite/mindwtr.db';
 const PROPS = ['backup_stop', 'journal_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
 const work = resolve(app, 'android/build/data-check');
@@ -188,15 +189,15 @@ const pickDocument = async (name) => {
     }
     return fail(`the document picker did not show ${name}`);
 };
-/** RN's folder picker (ACTION_OPEN_DOCUMENT_TREE, opened in the test folder): Use this folder, then Allow when it asks. */
+/** RN's folder picker (ACTION_OPEN_DOCUMENT_TREE, opened in the test folder Download/mtd1): Use this folder, then Allow when it asks. */
 const useTestFolder = async () => {
     await until('the folder picker', otherAppFront, 15_000, 500);
     await sleep(1500);
     let nodes = await anyScreen();
-    // Opened somewhere else (the provider ignored the starting place): walk to Download › mindwtr-test-d1.
-    for (const folder of ['Download', 'mindwtr-test-d1']) {
+    // Opened somewhere else (the provider ignored the starting place): walk to Download › mtd1.
+    for (const folder of ['Download', 'mtd1']) {
         if (nodes.some((node) => node['resource-id']?.endsWith('breadcrumb_text') && node.text === folder)) continue;
-        if (folder === 'Download' && nodes.some((node) => node.text === 'mindwtr-test-d1' && node['resource-id']?.endsWith('breadcrumb_text'))) continue;
+        if (folder === 'Download' && nodes.some((node) => node.text === 'mtd1' && node['resource-id']?.endsWith('breadcrumb_text'))) continue;
         const entry = nodes.find((node) => node.text === folder && node['resource-id']?.endsWith('android:id/title'));
         if (!entry) continue;
         await tapAny(entry);
@@ -375,7 +376,7 @@ try {
     const zip = await exportFile('data-transfer-export-tasknotes', '-tasknotes.zip');
     const entries = execFileSync('unzip', ['-Z1', zip.local], { encoding: 'utf8' });
     check(entries.includes(`d1a${run}`), `(E1) ${zip.name} holds a TaskNotes file per task`);
-    console.log(`info - persisted grants naming the test folder: ${sh(`dumpsys activity permissions | grep -c 'mindwtr-test-d1' || true`)}`);
+    console.log(`info - persisted grants naming the test folder: ${sh(`dumpsys activity permissions | grep -c 'mtd1' || true`)}`);
 
     // ---- E2: no folder picked: RN's share fallback; nothing is created ----
     setProp('export_tree', '');
