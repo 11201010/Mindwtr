@@ -491,7 +491,7 @@ private struct MindwtrWidgetMetrics {
             return MindwtrWidgetMetrics(
                 headerSize: 17, dateSize: 11, sectionSize: 11, taskSize: 13,
                 detailSize: 10, actionSize: 34, rowSpacing: 2,
-                sectionSpacing: 6, padding: 14, taskRowVPadding: 1
+                sectionSpacing: 6, padding: 12, taskRowVPadding: 1
             )
         default:
             return MindwtrWidgetMetrics(
