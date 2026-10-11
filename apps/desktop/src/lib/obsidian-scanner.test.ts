@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     DEFAULT_OBSIDIAN_INBOX_FILE,
@@ -14,6 +14,9 @@ import {
     scanObsidianVault,
     type ObsidianScannerDependencies,
 } from './obsidian-scanner';
+import { logInfo } from './app-log';
+
+vi.mock('./app-log', () => ({ logInfo: vi.fn(async () => undefined) }));
 
 const fixtureRoot = join(
     dirname(fileURLToPath(import.meta.url)),
@@ -328,4 +331,20 @@ it('applies the same inline tag filter on full scans and live file reads', async
     const taskNotes = await scanObsidianVault({ vaultPath: fixtureRoot, enabled: true, requiredInlineTag: '#not-present' }, nodeFsDeps);
     expect(taskNotes.tasks).toHaveLength(3);
     expect(taskNotes.tasks.every((task) => task.format === 'tasknotes')).toBe(true);
+});
+
+it('logs the inline tag filter once per full scan with the total count', async () => {
+    vi.mocked(logInfo).mockClear();
+    const deps: ObsidianScannerDependencies = {
+        exists: async () => true,
+        readDir: async () => ['A.md', 'B.md', 'C.md'].map((name) => ({ name, isFile: true })),
+        readTextFile: async () => '- [ ] Action #task\n- [ ] Other',
+        stat: async (path) => ({ isFile: path.endsWith('.md'), isDirectory: !path.endsWith('.md'), size: 100, mtime: new Date('2026-10-07') }),
+    };
+    await scanObsidianVault({ vaultPath: '/Vault', enabled: true, requiredInlineTag: '#task' }, deps);
+
+    expect(logInfo).toHaveBeenCalledTimes(1);
+    expect(logInfo).toHaveBeenCalledWith('Obsidian inline tag filter applied', {
+        scope: 'obsidian', extra: { releaseCheck: 'v1.3.5/obsidian-inline-tag', count: 3 },
+    });
 });
