@@ -4255,6 +4255,7 @@ impl TaskMutationReadScope {
         project_id: Option<&str>,
         section_id: Option<&str>,
         area_id: Option<&str>,
+        include_focus_context: bool,
     ) -> Self {
         Self {
             task_id: Some(task_id.to_string()),
@@ -4262,6 +4263,7 @@ impl TaskMutationReadScope {
             section_id: Self::normalize_container_id(section_id),
             area_id: Self::normalize_container_id(area_id),
             include_target_containers: true,
+            include_focus_context,
             ..Self::default()
         }
     }
@@ -4617,7 +4619,12 @@ fn read_task_mutation_data(
         .unwrap_or_default();
 
     let mut focused_count = None;
-    if scope.include_focus_context {
+    if scope.include_focus_context
+        && (scope.task_id.is_none()
+            || target.as_ref().is_some_and(|task| {
+                task.get("isFocusedToday").and_then(Value::as_bool) != Some(true)
+            }))
+    {
         stats.statements += 1;
         let today = crate::local_query::local_wall(now)
             .map(|value| value.date())
@@ -4690,15 +4697,25 @@ fn read_task_mutation_data(
         stats.rows += 1;
         focused_count = Some(count.max(0) as u64);
 
-        let focus_project_id = scope.project_id.as_deref().or_else(|| {
-            scope.section_id.as_deref().and_then(|section_id| {
-                sections
-                    .iter()
-                    .find(|section| section.get("id").and_then(Value::as_str) == Some(section_id))
-                    .and_then(|section| section.get("projectId"))
-                    .and_then(Value::as_str)
+        let focus_section_id = scope
+            .section_id
+            .as_deref()
+            .or_else(|| target.as_ref()?.get("sectionId")?.as_str());
+        let focus_project_id = scope
+            .project_id
+            .as_deref()
+            .or_else(|| {
+                focus_section_id.and_then(|section_id| {
+                    sections
+                        .iter()
+                        .find(|section| {
+                            section.get("id").and_then(Value::as_str) == Some(section_id)
+                        })
+                        .and_then(|section| section.get("projectId"))
+                        .and_then(Value::as_str)
+                })
             })
-        });
+            .or(current_project_id);
         if let Some(project_id) = focus_project_id {
             if let Some(project) = projects
                 .iter()
@@ -4707,8 +4724,9 @@ fn read_task_mutation_data(
                 if project.get("isSequential").and_then(Value::as_bool) == Some(true) {
                     let section_scoped =
                         project.get("sequentialScope").and_then(Value::as_str) == Some("section");
-                    if section_scoped {
-                        if let Some(section_id) = scope.section_id.as_deref() {
+                    // A patch can move or clear its section before eligibility is checked.
+                    if section_scoped && scope.task_id.is_none() {
+                        if let Some(section_id) = focus_section_id {
                             append_scoped_task_rows(
                                 conn,
                                 "SELECT * FROM tasks
@@ -10633,6 +10651,88 @@ mod tests {
     }
 
     #[test]
+    fn patch_focus_scope_counts_only_new_stars_and_reads_current_sequential_chain() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SQLITE_SCHEMA).unwrap();
+        replace_data_in_transaction(&conn, serde_json::json!({
+            "tasks": [
+                {"id": "first", "title": "First", "status": "next", "projectId": "project", "sectionId": "section", "orderNum": 0},
+                {"id": "second", "title": "Second", "status": "next", "projectId": "project", "sectionId": "section", "orderNum": 1},
+                {"id": "unsectioned", "title": "Unsectioned", "status": "next", "projectId": "project", "orderNum": -1},
+                {"id": "focused", "title": "Focused", "status": "next", "isFocusedToday": true}
+            ],
+            "projects": [{"id": "project", "title": "Sequential", "status": "active", "isSequential": true, "sequentialScope": "section", "color": "#000000"}],
+            "sections": [{"id": "section", "title": "Section", "projectId": "project"}],
+            "areas": [], "people": [], "settings": {"gtd": {"focusTaskLimit": 3}}
+        })).unwrap();
+        let now = OffsetDateTime::now_utc();
+        for (id, requested) in [("second", false), ("focused", true), ("missing", true)] {
+            let scope = TaskMutationReadScope::patch(id, None, None, None, requested);
+            let (data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+            assert!(
+                data.get(TASK_MUTATION_FOCUSED_COUNT_KEY).is_none(),
+                "{id} {requested}"
+            );
+            assert!(data["tasks"].as_array().unwrap().len() <= 1);
+        }
+        let patch = serde_json::json!({"isFocusedToday": true});
+        for (id, eligible) in [("first", true), ("second", false)] {
+            let scope = TaskMutationReadScope::patch(id, None, None, None, true);
+            let (mut data, stats) = read_task_mutation_data(&conn, &scope, now).unwrap();
+            assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 1);
+            assert!(stats.task_rows <= 4);
+            assert!(data["tasks"].as_array().unwrap().len() >= 2);
+            let before = data.clone();
+            let result =
+                crate::local_api::patch_task_in_data(&mut data, id, patch.as_object().unwrap());
+            assert_eq!(result.is_ok(), eligible, "{id}");
+            if !eligible {
+                assert_eq!(result.unwrap_err(), "Focus limit of 3 reached");
+                assert_eq!(data, before);
+            }
+        }
+        let scope = TaskMutationReadScope::patch("first", None, None, None, true);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let before = data.clone();
+        let reordered = serde_json::json!({"isFocusedToday": true, "orderNum": 2});
+        let result = crate::local_api::patch_task_in_data(
+            &mut data,
+            "first",
+            reordered.as_object().unwrap(),
+        );
+        assert!(
+            result.is_err(),
+            "PATCH must judge sequential eligibility after applying the patch"
+        );
+        assert_eq!(data, before);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let before = data.clone();
+        let moved = serde_json::json!({"isFocusedToday": true, "sectionId": null});
+        let result =
+            crate::local_api::patch_task_in_data(&mut data, "first", moved.as_object().unwrap());
+        assert!(
+            result.is_err(),
+            "PATCH must load sequential candidates when clearing its section"
+        );
+        assert_eq!(data, before);
+        conn.execute(
+            "UPDATE projects SET status = 'someday' WHERE id = 'project'",
+            [],
+        )
+        .unwrap();
+        let scope = TaskMutationReadScope::patch("first", None, None, None, true);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let before = data.clone();
+        assert!(crate::local_api::patch_task_in_data(
+            &mut data,
+            "first",
+            patch.as_object().unwrap()
+        )
+        .is_err());
+        assert_eq!(data, before);
+    }
+
+    #[test]
     fn patch_scope_reads_current_and_requested_task_containers() {
         let conn = Connection::open_in_memory().expect("database");
         conn.execute_batch(SQLITE_SCHEMA).expect("schema");
@@ -10669,6 +10769,7 @@ mod tests {
             Some("project-b"),
             Some("section-b"),
             Some("area-b"),
+            false,
         );
         let (data, stats) = read_task_mutation_data(&conn, &scope, OffsetDateTime::now_utc())
             .expect("patch context");
@@ -10832,7 +10933,8 @@ mod tests {
                 let conn = Connection::open(db_path).expect("writer connection");
                 conn.busy_timeout(Duration::from_secs(5))
                     .expect("writer busy timeout");
-                let scope = TaskMutationReadScope::patch(task_id, Some("project-b"), None, None);
+                let scope =
+                    TaskMutationReadScope::patch(task_id, Some("project-b"), None, None, false);
                 let patch = serde_json::json!({ "projectId": "project-b" })
                     .as_object()
                     .expect("project patch")

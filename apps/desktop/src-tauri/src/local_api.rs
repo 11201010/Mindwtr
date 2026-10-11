@@ -850,6 +850,7 @@ pub(crate) fn api_error_response(error: String) -> ApiResponse {
     if error.starts_with("Task status conflict:")
         || error.starts_with("Project update conflict:")
         || error.starts_with("Area update conflict:")
+        || error.starts_with("Focus limit of ")
     {
         return ApiResponse::error(409, error);
     }
@@ -1194,6 +1195,7 @@ pub(crate) fn execute_operation(
                 body.get("projectId").and_then(Value::as_str),
                 body.get("sectionId").and_then(Value::as_str),
                 body.get("areaId").and_then(Value::as_str),
+                body.get("isFocusedToday").and_then(Value::as_bool) == Some(true),
             );
             let operation = LocalOperation::PatchTask {
                 id: id.clone(),
@@ -2847,8 +2849,37 @@ pub(crate) fn patch_task_in_data(
 ) -> Result<Value, String> {
     let device_id = device_id_from_data(data);
     let live_containers = LiveContainers::from_data(data);
+    let current = find_task(data, task_id).ok_or("Task not found")?;
+    let mut candidate = current.as_object().ok_or("Task is invalid")?.clone();
+    let star_turning_on = patch.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
+        && candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true);
+    apply_task_patch_with_containers(&mut candidate, patch, &device_id, &live_containers)?;
+    if star_turning_on {
+        if has_non_empty_string(&candidate, "deletedAt")
+            || has_non_empty_string(&candidate, "purgedAt")
+            || !matches!(
+                candidate.get("status").and_then(Value::as_str),
+                Some("inbox" | "next" | "waiting" | "someday")
+            )
+        {
+            candidate.insert("isFocusedToday".to_string(), Value::Bool(false));
+        } else {
+            normalize_created_task_focus(
+                &mut candidate,
+                data,
+                &now_iso(),
+                &crate::local_query::local_wall,
+            );
+        }
+        if candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true) {
+            let n = local_api_focus_task_limit(data);
+            log::warn!("Local API refused a Focus star over the limit extra.releaseCheck=v1.3.5/local-api-patch-focus-limit limit={n}");
+            return Err(format!("Focus limit of {n} reached"));
+        }
+    }
     update_task_in_data(data, task_id, |task| {
-        apply_task_patch_with_containers(task, patch, &device_id, &live_containers)
+        *task = candidate;
+        Ok(())
     })
 }
 
@@ -3957,6 +3988,7 @@ fn local_api_focus_candidate_is_sequential_first(
         .filter_map(|task| {
             let task = task.as_object()?.clone();
             if has_string_field(&Value::Object(task.clone()), "deletedAt")
+                || task.get("id") == candidate.get("id")
                 || task.get("projectId").and_then(Value::as_str) != Some(project_id)
                 || (section_scoped
                     && task.get("sectionId").and_then(Value::as_str) != candidate_section)
@@ -5179,6 +5211,137 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_api_patch_focus_limit_refuses_atomically_for_rest_and_mcp() {
+        use crate::storage::{
+            local_operation_test_commit, local_operation_test_seed, read_sqlite_data,
+        };
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let data = json!({
+            "tasks": (0..4).map(|index| json!({
+                "id": format!("task-{index}"), "title": "Original", "status": "next",
+                "isFocusedToday": index < 3, "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-10-11T12:00:00Z", "updatedAt": "2026-10-11T12:00:00Z"
+            })).collect::<Vec<_>>(),
+            "projects": [], "sections": [], "areas": [], "people": [],
+            "settings": {"deviceId": "device-a", "gtd": {"focusTaskLimit": 3}}
+        });
+        local_operation_test_seed(&mut conn, &data).unwrap();
+        let before = read_sqlite_data(&conn).unwrap();
+        let request = ApiRequest {
+            method: "PATCH".into(),
+            path: "/tasks/task-3".into(),
+            query: HashMap::new(),
+            headers: HashMap::new(),
+            body: serde_json::to_vec(&json!({"isFocusedToday": true, "title": "Changed"})).unwrap(),
+        };
+        let rest = operation_from_api_request(&request).unwrap().unwrap();
+        let input = json!({"id": "task-3", "isFocusedToday": true, "title": "Changed"});
+        let mcp =
+            crate::mcp_tools::operation("mindwtr_update_task", input.as_object().unwrap()).unwrap();
+        assert_eq!(rest, mcp);
+        for operation in [rest, mcp] {
+            let result = local_operation_test_commit(
+                &conn,
+                TaskMutationReadScope::patch("task-3", None, None, None, true),
+                |data| mutate_task_operation(data, &operation),
+            );
+            assert!(
+                result.is_err(),
+                "PATCH must refuse a fourth Focus star at limit 3"
+            );
+            let response = api_error_response(result.unwrap_err());
+            assert_eq!(response.status, 409);
+            assert_eq!(response.body["error"], "Focus limit of 3 reached");
+            assert_eq!(read_sqlite_data(&conn).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn local_api_patch_focus_limit_keeps_existing_stars_and_queues_local_tomorrow() {
+        use crate::storage::{local_operation_test_commit, local_operation_test_seed};
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let data = json!({
+            "tasks": (0..4).map(|index| json!({
+                "id": format!("task-{index}"), "title": "Original", "status": "next",
+                "isFocusedToday": index < 3, "tags": [], "contexts": [], "rev": 1,
+                "createdAt": "2026-10-11T12:00:00Z", "updatedAt": "2026-10-11T12:00:00Z"
+            })).collect::<Vec<_>>(),
+            "projects": [], "sections": [], "areas": [], "people": [],
+            "settings": {"deviceId": "device-a", "gtd": {"focusTaskLimit": 3}}
+        });
+        local_operation_test_seed(&mut conn, &data).unwrap();
+        let now = OffsetDateTime::now_utc();
+        let tomorrow = crate::local_query::local_wall(now)
+            .map(|wall| wall.date())
+            .unwrap_or_else(|| now.date())
+            .next_day()
+            .unwrap()
+            .to_string();
+        for (id, patch) in [
+            (
+                "task-0",
+                json!({"isFocusedToday": true, "title": "Kept star"}),
+            ),
+            (
+                "task-3",
+                json!({"isFocusedToday": true, "startTime": tomorrow}),
+            ),
+        ] {
+            let operation = LocalOperation::PatchTask {
+                id: id.into(),
+                body: patch.as_object().unwrap().clone(),
+            };
+            let persisted = local_operation_test_commit(
+                &conn,
+                TaskMutationReadScope::patch(id, None, None, None, true),
+                |data| mutate_task_operation(data, &operation),
+            )
+            .unwrap();
+            let task = find_task(&persisted, id).unwrap();
+            assert_eq!(task["isFocusedToday"], true);
+            assert_eq!(task["status"], "next");
+            assert_eq!(
+                local_api_focused_task_count(&persisted, now, &crate::local_query::local_wall),
+                3
+            );
+        }
+    }
+
+    #[test]
+    fn local_api_patch_focus_limit_matches_creation_eligibility_and_promotes_inbox() {
+        for (status, review, eligible) in [
+            ("inbox", None, true),
+            ("next", None, true),
+            ("waiting", Some("2000-01-01"), true),
+            ("someday", Some("2000-01-01"), true),
+            ("waiting", None, false),
+            ("someday", Some("9999-12-31"), false),
+            ("reference", Some("2000-01-01"), false),
+            ("done", None, false),
+            ("archived", None, false),
+        ] {
+            let mut data = empty_local_api_data();
+            data["tasks"] =
+                json!([{"id": "task", "title": "Original", "status": status, "reviewAt": review}]);
+            let before = data.clone();
+            let patch = json!({"isFocusedToday": true, "title": "Changed"});
+            let result = patch_task_in_data(&mut data, "task", patch.as_object().unwrap());
+            assert_eq!(result.is_ok(), eligible, "{status} {review:?}");
+            if eligible {
+                let task = result.unwrap();
+                assert_eq!(task["isFocusedToday"], true);
+                assert_eq!(
+                    task["status"],
+                    if status == "inbox" { "next" } else { status }
+                );
+            } else {
+                assert_eq!(result.unwrap_err(), "Focus limit of 3 reached");
+                assert_eq!(data, before);
+            }
+        }
+    }
+
+    #[test]
     fn mcp_shared_http_parser_preserves_http_10_and_rejects_malformed_versions() {
         for version in ["HTTP/1.0", "HTTP/1.1"] {
             let raw = format!("GET /tasks {version}\r\nHost: 127.0.0.1:3456\r\n\r\n");
@@ -5278,7 +5441,7 @@ mod tests {
         };
         local_operation_test_commit(
             &conn,
-            TaskMutationReadScope::patch(&id, None, None, None),
+            TaskMutationReadScope::patch(&id, None, None, None, false),
             |data| mutate_task_operation(data, &intervening),
         )
         .unwrap();
@@ -5296,7 +5459,7 @@ mod tests {
         assert_eq!(rest, mcp);
         local_operation_test_commit(
             &conn,
-            TaskMutationReadScope::patch(&id, None, None, None),
+            TaskMutationReadScope::patch(&id, None, None, None, false),
             |data| mutate_task_operation(data, &rest),
         )
         .unwrap();
@@ -5327,7 +5490,7 @@ mod tests {
         };
         assert!(local_operation_test_commit(
             &conn,
-            TaskMutationReadScope::patch(&id, None, None, None),
+            TaskMutationReadScope::patch(&id, None, None, None, false),
             |data| mutate_task_operation(data, &invalid)
         )
         .is_err());

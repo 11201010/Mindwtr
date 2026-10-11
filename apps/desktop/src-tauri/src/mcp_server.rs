@@ -508,9 +508,13 @@ pub(crate) fn handle_mcp_request(
                     }
                     Err(error) => {
                         let response = local_api::api_error_response(error);
+                        let error_message = response.body["error"].as_str().unwrap_or("");
                         let (code, message) = match response.status {
                             403 => ("read_only", "MCP access was revoked."),
                             404 => ("not_found", "Entity not found."),
+                            409 if error_message.starts_with("Focus limit of ") => {
+                                ("validation_error", error_message)
+                            }
                             400 | 409 => ("validation_error", "Invalid input or lifecycle conflict. Check the item in the desktop app."),
                             _ => ("internal_error", "Native operation failed. For writes, check the desktop app before retrying."),
                         };
@@ -735,6 +739,73 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn mcp_patch_focus_limit_preserves_exact_message() {
+        let mut data = json!({
+            "tasks": (0..4).map(|index| json!({
+                "id": format!("task-{index}"), "title": "Original", "status": "next",
+                "isFocusedToday": index < 3, "rev": 1,
+                "createdAt": "2026-10-11T12:00:00Z", "updatedAt": "2026-10-11T12:00:00Z"
+            })).collect::<Vec<_>>(),
+            "projects": [], "sections": [], "areas": [],
+            "settings": {"gtd": {"focusTaskLimit": 3}}
+        });
+        let before = data.clone();
+        let response = handle_mcp_request(
+            "fixture-token",
+            &access(true),
+            MCP_PORT,
+            request(
+                json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                    "name": "mindwtr_update_task",
+                    "arguments": {"id": "task-3", "isFocusedToday": true, "title": "Changed"}
+                }}),
+            ),
+            |operation| {
+                let LocalOperation::PatchTask { id, body } = operation else {
+                    panic!("task patch")
+                };
+                Ok(json!({"task": local_api::patch_task_in_data(&mut data, &id, &body)?}))
+            },
+        );
+        let result = &response.body["result"];
+        assert_eq!(result["isError"], true);
+        let message: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            message["error"], "Focus limit of 3 reached",
+            "MCP must preserve the Focus limit message"
+        );
+        assert_eq!(message["code"], "validation_error");
+        assert_eq!(data, before);
+    }
+
+    #[test]
+    fn mcp_patch_other_conflicts_keep_generic_message() {
+        let response = handle_mcp_request(
+            "fixture-token",
+            &access(true),
+            MCP_PORT,
+            request(
+                json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                    "name": "mindwtr_update_task", "arguments": {"id": "task", "status": "next"}
+                }}),
+            ),
+            |_| Err("Task status conflict: private fixture detail".into()),
+        );
+        let message: Value = serde_json::from_str(
+            response.body["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            message["error"],
+            "Invalid input or lifecycle conflict. Check the item in the desktop app."
+        );
+        assert_eq!(message["code"], "validation_error");
+    }
+
     fn fixture_listener(port: u16, token: String, allow_write: bool) -> LocalApiHandle {
         local_api::start_http_listener(port,allow_write,move |access,port,request| handle_mcp_request(&token,access,port,request,|operation| {
             let data=json!({"tasks":[{"id":"native-fixture-task","title":"Native MCP fixture","status":"inbox","tags":[],"contexts":[],"createdAt":"2026-10-05T12:00:00Z","updatedAt":"2026-10-05T12:00:00Z","rev":1}],"projects":[],"areas":[]});
