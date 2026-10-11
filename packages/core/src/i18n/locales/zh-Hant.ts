@@ -444,7 +444,7 @@ export const zhHant: Record<string, string> = {
         'taskEdit.statusLabel': '狀態',
         'taskEdit.quickAddTokenHint': '快速新增：{{token}}',
         'taskEdit.priorityLabel': '優先級',
-        'taskEdit.contextsLabel': '地點',
+        'taskEdit.contextsLabel': '情境',
         'taskEdit.contextsPlaceholder': '@家庭, @工作',
         'taskEdit.tagsLabel': '標籤',
         'taskEdit.tagsPlaceholder': '#緊急, #想法',
