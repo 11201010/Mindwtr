@@ -6,6 +6,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** RN's CompactText (constants/text-scale.ts): a control label grows with the system font scale up to 1.2x, no further. */
@@ -35,14 +36,18 @@ class CompactTextTest {
         }
     }
 
-    @Test fun theLineHeightIsRnsLineHeightTimesTheFontScaleInDp() {
-        // RN (backendOptionText, lineHeight 17): the line height grows linearly with the system scale, 34 dp at 2.0.
+    @Test fun theLineHeightIsRnsUncappedSpLineHeight() {
+        // RN (backendOptionText, lineHeight 17): the line height takes the system's sp scale uncapped while the size stops at
+        // 1.2x (S23 at 2.0: 17 sp is 31 dp, the pill's content). Compose scales an sp line height with its font size's ratio,
+        // so the line height is given in em of the shown size.
         for (scale in listOf(1f, 1.3f, 2f)) {
             val density = NonlinearDensity(scale)
             val style = rnText(13, 700, 17).compact(density)
-            assertEquals("font scale $scale", 17f * scale, with(density) { style.lineHeight.toDp() }.value, 0.01f)
+            val rn = with(density) { 17.sp.toDp() }.value
+            assertTrue("font scale $scale", style.lineHeight.isEm)
+            assertEquals("font scale $scale", rn, style.lineHeight.value * with(density) { style.fontSize.toDp() }.value, 0.01f)
         }
-        // RN's single line keeps its whole line height (RN's pill is 12 + 17 x scale + 2 dp tall): Compose's default trims a
+        // RN's single line keeps its whole line height (RN's pill is its padding and border around the whole line): Compose's default trims a
         // single line's spacing above and below, so the pill would shrink to the glyphs.
         assertEquals(LineHeightStyle.Trim.None, rnText(13, 700, 17).compact(NonlinearDensity(1f)).lineHeightStyle?.trim)
         // The size stays capped: 13 sp shown at 1.2x the base, whatever the scale.

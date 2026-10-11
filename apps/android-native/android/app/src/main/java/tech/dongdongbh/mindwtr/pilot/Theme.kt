@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -324,18 +324,18 @@ fun compactFontFactor(fontScale: Float, maxScale: Float = COMPACT_TEXT_MAX_SCALE
 
 /**
  * RN's CompactText: this style with its size capped at 1.2x the font scale (maxFontSizeMultiplier) and its line height RN's,
- * the style's value times the font scale in dp. RN scales a line height linearly and leaves it uncapped; Compose's sp grows
- * less than the scale on Android 14+, so an sp line height would be shorter than RN's (S23 at 2.0: pills 14 dp shorter).
+ * the system's sp scale of the style's value, uncapped (S23 at 2.0: 17 sp is 31 dp). Compose scales an sp line height by its
+ * font size's ratio, which the cap shrinks, so the line height is given in em of the size shown.
  */
 @Composable
 fun TextStyle.compact(): TextStyle = compact(LocalDensity.current)
 
 fun TextStyle.compact(density: Density): TextStyle {
     val factor = compactFontFactor(density.fontScale)
-    val line = if (lineHeight.isSpecified) with(density) { (lineHeight.value * density.fontScale).dp.toSp() } else lineHeight
+    val size = if (factor == 1f) fontSize else fontSize * factor
+    val line = if (lineHeight.isSp) with(density) { (lineHeight.toDp().value / size.toDp().value).em } else lineHeight
     // RN's single line keeps its whole line height, the glyphs centred in it; Compose's default trims it to the glyphs.
-    return copy(fontSize = if (factor == 1f) fontSize else fontSize * factor, lineHeight = line,
-        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None))
+    return copy(fontSize = size, lineHeight = line, lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None))
 }
 
 /** RN's type: the platform sans (Fonts.sans is 'normal' on Android), at RN's size, weight, and line height. */
