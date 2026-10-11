@@ -88,6 +88,7 @@ interface QuickCaptureSheetBodyProps {
   /** Passive parse read-out; rendered under the title input, above the chips. */
   preview?: React.ReactNode;
   prioritiesEnabled: boolean;
+  timeEstimatesEnabled: boolean;
   priorityLabel: string;
   selectedPriority: TaskPriority | null;
   projectLabel: string;
@@ -153,6 +154,7 @@ export function QuickCaptureSheetBody({
   optionsExpanded,
   preview,
   prioritiesEnabled,
+  timeEstimatesEnabled,
   priorityLabel,
   selectedPriority,
   projectLabel,
@@ -174,7 +176,7 @@ export function QuickCaptureSheetBody({
   // on a keyboard-shrunk sheet (#1120 follow-up). Resets per open on purpose.
   const [syntaxHelpVisible, setSyntaxHelpVisible] = React.useState(false);
   // The popup's text is core's (getQuickCaptureText), shared with the native popup.
-  const text = getQuickCaptureText(t, { priorities: prioritiesEnabled });
+  const text = getQuickCaptureText(t, { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled });
   const optionsToggleLabel = optionsExpanded ? text.hideOptions : text.more;
   const defaultProjectLabel = tFallback(t, 'taskEdit.projectLabel', 'Project');
   const focusLabel = getQuickCaptureFocusLabel(t, {

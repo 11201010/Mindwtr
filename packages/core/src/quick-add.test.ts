@@ -1803,4 +1803,22 @@ describe('explicit quick-add estimates (#1358)', () => {
             expect(parsed.props.timeEstimate).toBe(input.includes('45m') ? 'custom:45' : 'custom:90');
         }
     });
+
+    it('leaves the estimate syntax in the title while Time estimates is off', () => {
+        const options = buildQuickAddParseOptions({ features: { timeEstimates: false } });
+        expect(options.parseTimeEstimate).toBe(false);
+        for (const token of ['/estimate:45m', '/duration:1h30m']) {
+            const parsed = parseQuickAdd(`Write report ${token} /next`, undefined, undefined, undefined, options);
+            expect(parsed.title).toBe(`Write report ${token}`);
+            expect(parsed.props.timeEstimate).toBeUndefined();
+            expect(parsed.props.status).toBe('next');
+        }
+    });
+
+    it('still parses the estimate syntax while Time estimates is on or unset', () => {
+        expect(buildQuickAddParseOptions({ features: { timeEstimates: true } }).parseTimeEstimate).toBe(true);
+        expect(buildQuickAddParseOptions({}).parseTimeEstimate).toBe(true);
+        const parsed = parseQuickAdd('Write report /estimate:45m', undefined, undefined, undefined, buildQuickAddParseOptions({}));
+        expect(parsed.props.timeEstimate).toBe('custom:45');
+    });
 });

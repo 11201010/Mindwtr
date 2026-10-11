@@ -36,6 +36,7 @@ import {
   parseQuickCaptureContextQuery,
   planQuickCaptureSave,
   QUICK_CAPTURE_PRIORITY_OPTIONS,
+  resolveFeatureFlags,
   resolveQuickCaptureDefaultAreaId,
   safeFormatDate,
   safeParseDate,
@@ -1437,6 +1438,7 @@ export function QuickCaptureSheet({
         optionsExpanded={optionsExpanded}
         preview={previewEntries.length > 0 ? <QuickAddPreview entries={previewEntries} tc={tc} /> : null}
         prioritiesEnabled={prioritiesEnabled}
+        timeEstimatesEnabled={resolveFeatureFlags(settings).timeEstimates}
         priorityLabel={labels.priority}
         selectedPriority={priority}
         projectLabel={labels.project}

@@ -97,6 +97,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded={false}
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="Priority"
           projectLabel="Project"
           recording={false}
@@ -292,6 +293,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded={false}
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -376,6 +378,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded={false}
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -586,6 +589,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded={false}
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="High"
           projectLabel="Project"
           recording={false}
@@ -657,6 +661,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="High"
           projectLabel="Project"
           recording={false}
@@ -735,6 +740,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded={false}
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="Priority"
           projectLabel={longProjectName}
           projectSelected
@@ -798,6 +804,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded={false}
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="Priority"
           projectLabel="Very Long Project Label"
           recording={false}
@@ -874,6 +881,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded={false}
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -948,6 +956,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded={false}
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="Priority"
           projectLabel="Project"
           recording={false}
@@ -1019,6 +1028,7 @@ describe('Quick capture modal composition', () => {
           onValueChange={vi.fn()}
           optionsExpanded
           prioritiesEnabled
+          timeEstimatesEnabled
           priorityLabel="Priority"
           projectLabel="Inbox"
           recording={false}
@@ -1086,6 +1096,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -1157,6 +1168,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -1234,6 +1246,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded={optionsExpanded}
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Priority"
             projectLabel="Project"
             recording={false}
@@ -1363,6 +1376,7 @@ describe('Quick capture modal composition', () => {
             onValueChange={vi.fn()}
             optionsExpanded
             prioritiesEnabled
+            timeEstimatesEnabled
             priorityLabel="Medium"
             projectLabel="Project"
             recording={false}

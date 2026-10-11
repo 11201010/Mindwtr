@@ -682,7 +682,7 @@ export default function CaptureScreen() {
             </View>
           )}
           {showHelp && (
-            <Text style={[styles.help, { color: tc.secondaryText }]}>{formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled })}</Text>
+            <Text style={[styles.help, { color: tc.secondaryText }]}>{formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled })}</Text>
           )}
           {captureError ? (
             <Text

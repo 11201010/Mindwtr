@@ -80,12 +80,13 @@ export function CalendarTaskComposerModal({
   toRgba,
 }: CalendarTaskComposerModalProps) {
   const prioritiesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).priorities);
+  const timeEstimatesEnabled = useTaskStore((state) => resolveFeatureFlags(state.settings).timeEstimates);
   const [focusedTime, setFocusedTime] = React.useState<'start' | 'end' | null>(null);
   React.useEffect(() => {
     if (!composer) setFocusedTime(null);
   }, [composer]);
   const saveDisabled = isCalendarComposerSaveDisabled(composer);
-  const text = getCalendarComposerText(t, { priorities: prioritiesEnabled });
+  const text = getCalendarComposerText(t, { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled });
   const end = composer?.startAt ? new Date(composer.startAt.getTime() + composer.durationMinutes * 60_000) : null;
 
   return (

@@ -410,7 +410,7 @@ export function getQuickCaptureFocusLabel(t: TranslateFn, focus: { on: boolean; 
 }
 
 /** The popup's fixed text. */
-export function getQuickCaptureText(t: TranslateFn, flags: { priorities: boolean }) {
+export function getQuickCaptureText(t: TranslateFn, flags: { priorities: boolean; timeEstimates: boolean }) {
     return {
         title: t('nav.addTask'),
         close: t('common.close'),
@@ -422,7 +422,7 @@ export function getQuickCaptureText(t: TranslateFn, flags: { priorities: boolean
         notePlaceholder: t('taskEdit.descriptionPlaceholder'),
         focusChip: tFallback(t, 'agenda.title', 'Focus'),
         syntaxHelp: t('quickAdd.syntaxHelp'),
-        syntaxHelpText: formatQuickAddHelp(t('quickAdd.help'), { priorities: flags.priorities }),
+        syntaxHelpText: formatQuickAddHelp(t('quickAdd.help'), flags),
         // The shared "Custom…" without its trailing ellipsis, narrow enough for the chip row.
         customDate: t('recurrence.custom').replace(/[\s.…]+$/u, ''),
         addAnother: t('quickAdd.addAnother'),
@@ -712,7 +712,7 @@ export type QuickCaptureView = {
 export function buildQuickCaptureView(text: string, options: QuickCaptureOptions, context: QuickCaptureContext): QuickCaptureView {
     const { t } = context;
     const labels = getQuickCaptureLabels(options, context);
-    const copy = getQuickCaptureText(t, { priorities: labels.prioritiesEnabled });
+    const copy = getQuickCaptureText(t, { priorities: labels.prioritiesEnabled, timeEstimates: resolveFeatureFlags(context.settings).timeEstimates });
     const dueDate = options.dueDate ? new Date(options.dueDate) : null;
     return {
         options,

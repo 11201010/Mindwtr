@@ -57,7 +57,8 @@
   "timedDeadlineFinalRefinementNote": "Recaptured again from the real React Native screen after the issue-1328 readability refinement: deadline weeks use at least 260pt columns in the existing horizontal scroller, making existing task/event ranges visible; marker labels put the exact clock before the translated Due label, and marker rows no longer scroll horizontally. Only 20 marker text labels, 78 existing week range labels, and 20 corresponding style observations changed; frozen inputs and all non-presentation observations remain unchanged.",
   "timedDeadlineMonthPrefixNote": "Final compact month rows put exact clock and translated Due before the title, so truncating a long task title preserves the deadline clock. Real RN recapture changed only three Work-area month preview titles from Submit report · Due 3:00 PM to 3:00 PM · Due · Submit report. All other observations, including style hashes, remain unchanged.",
   "estimateHelpNote": "Recaptured from the React Native Calendar screen at 57432f209 after #1358 (a3b4de291) added /estimate:45m to quickAdd.help. Only the 20 composer help lines changed; inputs, style hashes and every other observation are unchanged.",
-  "estimateHelpRecaptureCommand": "cd apps/mobile && MINDWTR_CAPTURE_CALENDAR_VIEWS=1 TZ=UTC bunx vitest run components/views/calendar-view.parity.test.tsx -t \"replays every scenario\""
+  "estimateHelpRecaptureCommand": "cd apps/mobile && MINDWTR_CAPTURE_CALENDAR_VIEWS=1 TZ=UTC bunx vitest run components/views/calendar-view.parity.test.tsx -t \"replays every scenario\"",
+  "estimateFlagNote": "Recaptured from the React Native Calendar screen with the commit that gates the estimate quick-add syntax on Time estimates (#1358): only the 2 composer help lines of \"day: time estimates off\" changed (they drop /estimate:45m). Inputs, style hashes and every other observation are unchanged."
  },
  "timeZone": "America/New_York",
  "now": "2026-10-28T14:00:00.000Z",
@@ -15555,7 +15556,7 @@
      "×",
      "New task",
      "Existing task",
-     "Quick add supports /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+     "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
      "Start",
      "End",
      "5m",
@@ -15651,7 +15652,7 @@
      "×",
      "New task",
      "Existing task",
-     "Quick add supports /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+     "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
      "Start",
      "End",
      "5m",

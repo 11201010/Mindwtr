@@ -13,7 +13,8 @@ export function QuickAddSyntaxHint({ text }: { text: string }) {
     // composer all render this hint, and a new one must not be able to
     // advertise a disabled feature's token.
     const priorities = useTaskStore((state) => resolveFeatureFlags(state.settings).priorities);
-    const parts = formatQuickAddHelp(text, { priorities }).split(HINT_SEGMENT);
+    const timeEstimates = useTaskStore((state) => resolveFeatureFlags(state.settings).timeEstimates);
+    const parts = formatQuickAddHelp(text, { priorities, timeEstimates }).split(HINT_SEGMENT);
     return (
         <>
             {parts.map((part, index): ReactNode => {

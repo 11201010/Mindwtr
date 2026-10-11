@@ -1639,7 +1639,7 @@ export function createCalendarViewMethods(deps: CalendarViewDeps) {
                 start: formatCalendarComposerClockValue(state.startTimeValue, state.startAt, ctx.formatDate),
                 end: formatCalendarComposerClockValue(state.endTimeValue, state.startAt ? new Date(state.startAt.getTime() + state.durationMinutes * 60_000) : null, ctx.formatDate),
             },
-            text: getCalendarComposerText(ctx.t, { priorities: ctx.flags.priorities }),
+            text: getCalendarComposerText(ctx.t, ctx.flags),
             dateLabel: ctx.dates.shortDate(state.date),
             placeholders: getCalendarComposerPlaceholders(ctx.formatDate),
             durations: CALENDAR_TIME_ESTIMATE_OPTIONS.map((option) => ({

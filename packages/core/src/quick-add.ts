@@ -58,6 +58,9 @@ export interface QuickAddParseOptions {
     // title exactly like an unknown level does, and no priority is applied.
     // Follows the Priorities feature toggle. Default true. See #1107.
     parsePriority?: boolean;
+    // When false, `/estimate:` and `/duration:` are not parsed: the token stays
+    // in the title. Follows the Time estimates feature toggle. Default true (#1358).
+    parseTimeEstimate?: boolean;
 }
 
 // Single source of truth for the default-on semantics: only an explicit
@@ -104,6 +107,7 @@ export function buildQuickAddParseOptions(
         preserveText: settings?.quickAddAutoClean !== true,
         naturalLanguageDates: isNaturalLanguageDatesEnabled(settings),
         parsePriority: resolveFeatureFlags(settings).priorities,
+        parseTimeEstimate: resolveFeatureFlags(settings).timeEstimates,
     };
 }
 
@@ -977,7 +981,8 @@ export function parseQuickAdd(
 
     let timeEstimate: Task['timeEstimate'];
     let hasInvalidEstimateCommand = false;
-    working = working.replace(/(?:^|\s)\/(?:estimate|duration):([^\s]*)/gi, (raw, value: string) => {
+    // Feature off: no parse, no strip, as with `/priority:`.
+    if (options.parseTimeEstimate !== false) working = working.replace(/(?:^|\s)\/(?:estimate|duration):([^\s]*)/gi, (raw, value: string) => {
         const minutes = parseTimeEstimateInput(restoreEscapes(value));
         if (minutes === null) {
             hasInvalidEstimateCommand = true;
@@ -1205,12 +1210,14 @@ export function parseQuickAdd(
  * in all 18 locales (only the `<level>` placeholder and the separator are
  * translated), so one pattern covers every language, and a locale that ever
  * reworded the prefix simply keeps its full sentence rather than breaking.
- * The parser still accepts the token — only the advertisement goes away, in
- * line with the rest of the Priorities gating.
+ * `/estimate:45m` goes the same way while Time estimates is off (#1358).
  */
 const QUICK_ADD_PRIORITY_HELP_TOKEN = /\/priority:<[^>]*>(?:\s*[,،、]\s*|\s+)?/u;
+const QUICK_ADD_ESTIMATE_HELP_TOKEN = /\/estimate:45m(?:\s*[,،、]\s*|\s+)?/u;
 
-export function formatQuickAddHelp(help: string, flags: { priorities: boolean }): string {
-    if (flags.priorities) return help;
-    return help.replace(QUICK_ADD_PRIORITY_HELP_TOKEN, '');
+export function formatQuickAddHelp(help: string, flags: { priorities: boolean; timeEstimates: boolean }): string {
+    let text = help;
+    if (!flags.priorities) text = text.replace(QUICK_ADD_PRIORITY_HELP_TOKEN, '');
+    if (flags.timeEstimates === false) text = text.replace(QUICK_ADD_ESTIMATE_HELP_TOKEN, '');
+    return text;
 }
