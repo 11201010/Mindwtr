@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
+import { isProcessInboxReturningTask, useTaskStore, type Area, type Project, type Task } from '@mindwtr/core';
 import { useUiStore } from '../../../store/ui-store';
 import { useInboxProcessingController } from './useInboxProcessingController';
 
 type InboxControllerOptions = Parameters<typeof useInboxProcessingController>[0];
 type AddTask = InboxControllerOptions['addTask'];
 type UpdateTask = InboxControllerOptions['updateTask'];
+type InboxWizard = ReturnType<typeof useInboxProcessingController>['wizardProps'];
 
 const makeTask = (id: string, status: Task['status'] = 'inbox'): Task => ({
     id,
@@ -428,6 +429,55 @@ describe('useInboxProcessingController not-actionable destinations', () => {
             status: 'done',
             reviewAt: expect.stringContaining('2026-09-22'),
         }));
+    });
+});
+
+// An incubated item comes back when its review date arrives. Filing it to
+// Someday again must drop that overdue date, or it returns on every run.
+describe('useInboxProcessingController overdue review date on Someday', () => {
+    const returning = { ...makeTask('back', 'someday'), reviewAt: '2026-01-05' } as Task;
+
+    const renderController = (updateTask: UpdateTask) => renderHook(() => {
+        const [isProcessing, setIsProcessing] = useState(true);
+        return useInboxProcessingController({
+            t: (key) => key,
+            tasks: [returning],
+            projects: [],
+            areas: [],
+            settings: {},
+            addProject: async () => null,
+            addTask: async () => ({ success: true }),
+            updateTask,
+            deleteTask: async () => ({ success: true }),
+            allContexts: [],
+            allTags: [],
+            isProcessing,
+            setIsProcessing,
+        });
+    });
+
+    it.each([
+        ['guided', (wizard: InboxWizard) => wizard.handleConfirmSomeday()],
+        ['quick', (wizard: InboxWizard) => wizard.handleNotActionable('someday')],
+    ] as const)('clears it on the %s Someday path', async (mode, fileToSomeday) => {
+        const updateTask = vi.fn<UpdateTask>(async () => ({ success: true }));
+        const { result } = renderController(updateTask);
+
+        await waitFor(() => {
+            expect(result.current.wizardProps.processingTask?.id).toBe('back');
+        });
+        act(() => {
+            result.current.wizardProps.onModeChange(mode);
+        });
+        expect(isProcessInboxReturningTask(returning)).toBe(true);
+        await act(async () => {
+            await fileToSomeday(result.current.wizardProps);
+        });
+
+        expect(updateTask).toHaveBeenCalledTimes(1);
+        const updates = updateTask.mock.calls[0][1];
+        expect(updates).toMatchObject({ status: 'someday' });
+        expect(isProcessInboxReturningTask({ ...returning, ...updates })).toBe(false);
     });
 });
 

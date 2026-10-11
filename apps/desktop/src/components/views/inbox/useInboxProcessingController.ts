@@ -11,10 +11,10 @@ import {
     findSimilarTasks,
     goBackProcessInboxStep,
     isSelectableProjectForTaskAssignment,
+    isDueForReview,
     isProcessInboxReturningTask,
-    mergeParsedProcessInboxFields,
     parseProcessInboxTitleInput,
-    prepareProcessInboxDecision,
+    prepareProcessInboxCommit,
     setTaskViewSectionId,
     startProcessInboxSession,
     tFallback,
@@ -23,7 +23,6 @@ import {
     type Area,
     type Project,
     type ProcessInboxDecision,
-    type ProcessInboxDecisionDraft,
     type ProcessInboxWorkflowFields,
     type StoreActionResult,
     type Task,
@@ -277,106 +276,53 @@ export function useInboxProcessingController({
         ],
     );
 
-    const buildDecisionFields = useCallback((
-        overrides: ProcessInboxWorkflowFields = {},
-    ): ProcessInboxWorkflowFields => ({
-        projectId: draft.projectId || undefined,
-        areaId: draft.areaId || undefined,
-        contexts: selectedContexts,
-        tags: selectedTags,
-        priority: draft.priority || undefined,
-        energyLevel: draft.energyLevel || undefined,
-        assignedTo: draft.assignedTo.trim() || undefined,
-        timeEstimate: draft.timeEstimate || undefined,
-        ...buildScheduleUpdates(),
-        ...overrides,
-    }), [
-        buildScheduleUpdates,
-        draft.areaId,
-        draft.assignedTo,
-        draft.energyLevel,
-        draft.priority,
-        draft.projectId,
-        draft.timeEstimate,
-        selectedContexts,
-        selectedTags,
-    ]);
-
-    const prepareProcessingEdits = useCallback((
-        titleInput: string = draft.title,
-        fallbackTitle?: string,
-    ): {
-        taskUpdates: Partial<Task>;
-        parsedFields: ProcessInboxWorkflowFields;
-        explicitDateFields: ProcessInboxDecisionDraft['explicitDateFields'];
-    } | null => {
-        if (!processingTask) return null;
-        const parsed = titleInput === draft.title ? parsedTitle : parseProcessingTitle(titleInput);
-        const { invalidDateCommands } = parsed;
-        if (invalidDateCommands && invalidDateCommands.length > 0) {
-            showToast(`${t('quickAdd.invalidDateCommand')}: ${invalidDateCommands.join(', ')}`, 'error');
-            return null;
-        }
-        const trimmedTitle = parsed.title.trim();
-        const title = trimmedTitle.length > 0 ? trimmedTitle : (fallbackTitle ?? processingTask.title);
-        const description = [draft.description.trim(), parsed.props.description?.trim()]
-            .filter(Boolean)
-            .join('\n');
-        return {
-            taskUpdates: {
-                title,
-                description: description.length > 0 ? description : undefined,
-                ...(parsed.props.attachments
-                    ? { attachments: [...(processingTask.attachments ?? []), ...parsed.props.attachments] }
-                    : {}),
-                ...(parsed.props.isFocusedToday ? { isFocusedToday: true } : {}),
-            },
-            parsedFields: parsed.props,
-            explicitDateFields: {
-                ...(parsed.props.startTime ? { startTime: parsed.props.startTime } : {}),
-                ...(parsed.props.dueDate ? { dueDate: parsed.props.dueDate } : {}),
-                ...(parsed.props.reviewAt ? { reviewAt: parsed.props.reviewAt } : {}),
-            },
-        };
-    }, [draft.description, draft.title, parseProcessingTitle, parsedTitle, processingTask, showToast, t]);
-
     const applyWorkflowDecision = useCallback(async (
         decision: ProcessInboxDecision,
         options: {
             fields?: ProcessInboxWorkflowFields;
             titleInput?: string;
             fallbackTitle?: string;
+            clearStaleReviewAt?: boolean;
             advance?: boolean;
         } = {},
     ): Promise<boolean> => {
         if (!processingTask) return false;
-        const edits = decision.type === 'discard'
-            ? undefined
-            : prepareProcessingEdits(options.titleInput, options.fallbackTitle);
-        if (decision.type !== 'discard' && !edits) return false;
-        const fields = mergeParsedProcessInboxFields(
-            buildDecisionFields(options.fields),
-            edits?.parsedFields ?? {},
-        );
-        const dateControlFields: ProcessInboxDecisionDraft['dateControlFields'] = {
-            ...(dirtyScheduleFieldKeys.has('start') ? { startTime: fields.startTime } : {}),
-            ...(dirtyScheduleFieldKeys.has('due') ? { dueDate: fields.dueDate } : {}),
-            ...(dirtyScheduleFieldKeys.has('review') ? { reviewAt: fields.reviewAt } : {}),
-        };
-        const prepared = prepareProcessInboxDecision({
+        // The same draft-to-write builder the mobile modal uses, so both
+        // platforms write the same fields for the same input.
+        const prepared = prepareProcessInboxCommit({
             task: processingTask,
-            draft: {
-                fields,
-                explicitDateFields: edits?.explicitDateFields,
-                dateControlFields,
-                parsedFields: edits?.parsedFields,
-                taskUpdates: edits?.taskUpdates,
-            },
-            decision,
             plan: processInboxPlan,
+            decision,
+            title: draft.title,
+            description: draft.description,
+            parseTitle: (input) => (input === draft.title ? parsedTitle : parseProcessingTitle(input)),
+            selection: {
+                projectId: draft.projectId || null,
+                areaId: draft.areaId || null,
+                contexts: selectedContexts,
+                tags: selectedTags,
+                priority: draft.priority || undefined,
+                energyLevel: draft.energyLevel || undefined,
+                assignedTo: draft.assignedTo,
+                timeEstimate: draft.timeEstimate || undefined,
+            },
+            scheduleUpdates: buildScheduleUpdates(),
+            dirtyScheduleFields: new Set([
+                ...(dirtyScheduleFieldKeys.has('start') ? ['startTime' as const] : []),
+                ...(dirtyScheduleFieldKeys.has('due') ? ['dueDate' as const] : []),
+                ...(dirtyScheduleFieldKeys.has('review') ? ['reviewAt' as const] : []),
+            ]),
+            options: {
+                fields: options.fields,
+                titleOverride: options.titleInput,
+                fallbackTitle: options.fallbackTitle,
+                clearStaleReviewAt: options.clearStaleReviewAt,
+            },
         });
         if (!prepared.ok) {
-            if (prepared.reason === 'later-start-required') {
+            if (prepared.reason === 'invalid-date-command') {
+                showToast(`${t('quickAdd.invalidDateCommand')}: ${prepared.invalidDateCommands.join(', ')}`, 'error');
+            } else if (prepared.reason === 'later-start-required') {
                 showToast(tFallback(t, 'process.laterStartRequired', 'Choose a start date for Later.'), 'error');
             }
             return false;
@@ -406,14 +352,25 @@ export function useInboxProcessingController({
         }
     }, [
         applySessionTransition,
-        buildDecisionFields,
+        buildScheduleUpdates,
         deleteTask,
         dirtyScheduleFieldKeys,
+        draft.areaId,
+        draft.assignedTo,
+        draft.description,
+        draft.energyLevel,
+        draft.priority,
+        draft.projectId,
+        draft.timeEstimate,
+        draft.title,
         eligibleInboxTasks,
+        parseProcessingTitle,
+        parsedTitle,
         processInboxPlan,
-        prepareProcessingEdits,
         processingSession,
         processingTask,
+        selectedContexts,
+        selectedTags,
         showToast,
         t,
         updateTask,
@@ -460,7 +417,10 @@ export function useInboxProcessingController({
             goToStep('someday');
             return;
         }
-        await applyWorkflowDecision({ type: 'someday' }, { fields: buildSomedayFields() });
+        await applyWorkflowDecision({ type: 'someday' }, {
+            fields: buildSomedayFields(),
+            clearStaleReviewAt: isDueForReview(processingTask.reviewAt),
+        });
     }, [
         applyWorkflowDecision,
         buildSomedayFields,
@@ -480,7 +440,10 @@ export function useInboxProcessingController({
 
     const handleConfirmSomeday = useCallback(async () => {
         if (!processingTask) return;
-        await applyWorkflowDecision({ type: 'someday' }, { fields: buildSomedayFields() });
+        await applyWorkflowDecision({ type: 'someday' }, {
+            fields: buildSomedayFields(),
+            clearStaleReviewAt: isDueForReview(processingTask.reviewAt),
+        });
     }, [applyWorkflowDecision, buildSomedayFields, processingTask]);
 
     const handleIncubate = useCallback(async () => {
