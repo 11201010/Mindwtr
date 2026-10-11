@@ -515,4 +515,52 @@ describe('ProjectNextActionPromptProvider', () => {
             sectionId: 'section-1',
         });
     });
+
+    it('parses new next actions with the shared quick-add options', async () => {
+        const actual = await vi.importActual<typeof import('@mindwtr/core')>('@mindwtr/core');
+        parseNextActionInput.mockImplementationOnce(actual.parseProjectNextActionInput as never);
+        const settings = storeState.settings;
+        storeState.settings = { gtd: {}, features: { priorities: false, timeEstimates: false } };
+        try {
+            function Trigger() {
+                return (
+                    <Text
+                        accessibilityLabel="Open next action prompt"
+                        onPress={() => presentProjectNextActionPrompt({ ...currentTask, status: 'done' } as any)}
+                    >
+                        Open
+                    </Text>
+                );
+            }
+
+            let tree!: renderer.ReactTestRenderer;
+            await renderer.act(async () => {
+                tree = renderer.create(
+                    <ProjectNextActionPromptProvider>
+                        <Trigger />
+                    </ProjectNextActionPromptProvider>,
+                );
+                await Promise.resolve();
+            });
+            await renderer.act(async () => {
+                tree.root.find((node) => node.props.accessibilityLabel === 'Open next action prompt').props.onPress();
+                await Promise.resolve();
+            });
+            await renderer.act(async () => {
+                tree.root.find((node) => node.props.placeholder === 'New next action...').props.onChangeText('Call vendor /priority:high /estimate:45m');
+                await Promise.resolve();
+            });
+            await renderer.act(async () => {
+                tree.root.find((node) => flattenText(node.props?.children) === 'Add next action' && Boolean(node.props.onPress)).props.onPress();
+                await Promise.resolve();
+            });
+
+            expect(addTask).toHaveBeenCalledTimes(1);
+            const props = addTask.mock.calls[0][1];
+            expect(props).not.toHaveProperty('priority');
+            expect(props).not.toHaveProperty('timeEstimate');
+        } finally {
+            storeState.settings = settings;
+        }
+    });
 });
