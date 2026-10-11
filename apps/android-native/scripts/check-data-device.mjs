@@ -387,7 +387,9 @@ try {
     await tap(tagged(await screen(), 'data-transfer-export'));
     await until('the folder picker', otherAppFront, 15_000, 500);
     await sleep(1200);
-    sh('input keyevent KEYCODE_BACK');
+    // Back walks up the picker's folders first (it reopens in the last folder, Download/mtd1); it cancels at the top.
+    const pickerFront = () => front().includes('documentsui');
+    for (let step = 0; step < 8 && pickerFront(); step += 1) { sh('input keyevent KEYCODE_BACK'); await sleep(1200); }
     await until('the share sheet', () => sh('dumpsys activity activities').includes('act=android.intent.action.CHOOSER'), 15_000, 500);
     check(true, '(E2) a cancelled folder picker opens the share sheet');
     for (let step = 0; step < 3 && otherAppFront(); step += 1) { sh('input keyevent KEYCODE_BACK'); await sleep(1200); }
