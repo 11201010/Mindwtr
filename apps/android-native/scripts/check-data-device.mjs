@@ -372,7 +372,9 @@ try {
     check(allLogs().includes('"releaseCheck":"v1.3.5/android-backup-export"') && allLogs().includes('"route":"saf"'), '(E1) the export line says route=saf');
     const csv = await exportFile('data-transfer-export-csv', '.csv');
     const csvText = readFileSync(csv.local, 'utf8');
-    check(csvText.split('\n')[0].includes('title') && csvText.includes(`d1a${run}`), `(E1) ${csv.name} is Mindwtr CSV with this run's rows`);
+    // Core's header (mindwtr-csv-columns.ts) starts with its Title column; one line per live row of this run.
+    check(csvText.startsWith('Title,Description,Status,') && [`d1a${run}`, `d1b${run}`].every((title) => csvText.includes(`\n${title},`)),
+        `(E1) ${csv.name} is Mindwtr CSV with this run's rows`);
     const zip = await exportFile('data-transfer-export-tasknotes', '-tasknotes.zip');
     const entries = execFileSync('unzip', ['-Z1', zip.local], { encoding: 'utf8' });
     check(entries.includes(`d1a${run}`), `(E1) ${zip.name} holds a TaskNotes file per task`);
@@ -413,11 +415,20 @@ try {
     for (let step = 0; step < 10 && !tagged(nodes, 'recovery-snapshots-disclosure'); step += 1) nodes = await device.swipe(nodes, 'down');
     nodes = await tapExpecting(tagged(nodes, 'recovery-snapshots-disclosure') ?? fail('no Recovery snapshots card'),
         (current) => current.some((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.')), 'the snapshot rows');
-    const rows = nodes.filter((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.'));
-    const newest = [...snapshots()].sort().at(-1);
-    check(rows.length === Math.min(5, snapshots().length) && rows.every((row) => /\(data\..*\.snapshot\.json\)|data\..*\.snapshot\.json/.test(row['content-desc'] ?? '')),
-        `(snapshots) one row per snapshot on disk, TalkBack names each with its file: ${rows.length}`);
-    await tap(rows.find((row) => row['resource-id'].endsWith(newest)) ?? rows[0]);
+    // A dump holds only the rows on screen: gather them while scrolling down, then come back to the newest (the first row).
+    const snapshotRows = (current) => current.filter((node) => (node['resource-id'] ?? '').includes('recovery-snapshot-data.'));
+    const onDisk = snapshots();
+    const newest = [...onDisk].sort().at(-1);
+    const seen = new Map();
+    for (let step = 0; step < 6; step += 1) {
+        for (const row of snapshotRows(nodes)) seen.set(row['resource-id'], row['content-desc'] ?? '');
+        if (seen.size >= onDisk.length) break;
+        nodes = await device.swipe(nodes, 'down');
+    }
+    check(seen.size === Math.min(5, onDisk.length) && [...seen].every(([id, spoken]) => spoken.includes(id.slice(id.indexOf('recovery-snapshot-') + 'recovery-snapshot-'.length))),
+        `(snapshots) one row per snapshot on disk, TalkBack names each with its file: ${seen.size} of ${onDisk.length}`);
+    for (let step = 0; step < 6 && !snapshotRows(nodes).some((row) => row['resource-id'].endsWith(newest)); step += 1) nodes = await device.swipe(nodes, 'up');
+    await tap(snapshotRows(nodes).find((row) => row['resource-id'].endsWith(newest)) ?? fail(`no row for the newest snapshot ${newest}`));
     await confirmQuestion(en['settings.backupMobile.restoreRecoverySnapshot']);
     nodes = await toastWith(en['settings.backupMobile.restoreComplete']);
     check(!undoButton(nodes), '(snapshots) a snapshot restore offers no Undo, as RN');
@@ -447,12 +458,15 @@ try {
         for (const name of Object.keys(props)) setProp(name, '');
         const replays = replayLines().length;
         await launch();
-        const titles = liveTitles(label);
+        // The leftover result shows once, for RN's 5.6 s, right after the start: watch for it before the slow database reads.
+        if (landed) await toastWith(en['settings.mergeBackup'], 60_000);
         const mine = file.tasks.map((item) => item.title);
-        check(mine.every((title) => titles.filter((seen) => seen === title).length === (landed ? 1 : 0)), `(E4 ${label}) the merge ${landed ? 'landed once' : 'did not land'}`);
+        const settledAs = (titles) => mine.every((title) => titles.filter((seen) => seen === title).length === (landed ? 1 : 0));
+        let titles = [];
+        await until(`(E4 ${label}) the library to settle`, () => settledAs(titles = liveTitles(label)), 30_000, 2_000).catch(() => undefined);
+        check(settledAs(titles), `(E4 ${label}) the merge ${landed ? 'landed once' : 'did not land'}`);
         await until(`(E4 ${label}) the journal and the operation folder to empty`, () => journal().length === 0 && operations().length === 0, 30_000);
         if (expectReplay) check(replayLines().length > replays && replayLines().at(-1).includes('"outcome":"committed"'), `(E4 ${label}) the start replayed the commit: ${replayLines().at(-1)?.slice(replayLines().at(-1).indexOf('{'))}`);
-        if (landed) await toastWith(en['settings.mergeBackup'], 60_000);
         check(true, `(E4 ${label}) the journal and the operation folder are empty`);
     };
     await crash('after-snapshot', { backup_stop: 'after-snapshot' }, fixture(`d1-crash-1-${run}.json`, [task(`d1e${run}`)]), { landed: false });
