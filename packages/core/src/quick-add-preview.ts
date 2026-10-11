@@ -1,4 +1,5 @@
 import { hasTimeComponent, safeFormatDate, type DateFormatter } from './date';
+import { formatTimeEstimateLabel } from './calendar-scheduling';
 import { tFallback, type TranslateFn } from './i18n';
 import type { QuickAddResult } from './quick-add';
 import type { Area, Project } from './types';
@@ -18,6 +19,7 @@ export type QuickAddPreviewEntryKind =
     | 'person'
     | 'priority'
     | 'energy'
+    | 'estimate'
     | 'note'
     | 'link';
 
@@ -213,6 +215,16 @@ export function buildQuickAddPreviewEntries(
             kind: 'priority',
             label: tFallback(t, 'taskEdit.priorityLabel', 'Priority'),
             value: tFallback(t, `priority.${props.priority}`, props.priority),
+            tone: 'default',
+        });
+    }
+
+    if (props.timeEstimate) {
+        entries.push({
+            id: 'estimate',
+            kind: 'estimate',
+            label: tFallback(t, 'taskEdit.timeEstimateLabel', 'Time Estimate'),
+            value: formatTimeEstimateLabel(props.timeEstimate, { t }),
             tone: 'default',
         });
     }

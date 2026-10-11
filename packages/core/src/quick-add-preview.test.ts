@@ -63,6 +63,16 @@ describe('buildQuickAddPreviewEntries', () => {
         expect(entries.find((entry) => entry.kind === 'priority')?.label).toBe('Priority');
     });
 
+    it('formats custom estimates with the existing localized duration labels (#1358)', () => {
+        const parsed = parseQuickAdd('Write report /estimate:1h30m');
+        const translations: Record<string, string> = {
+            'taskEdit.timeEstimateLabel': 'Estimate',
+            'units.hoursMinutesShort': '{{hours}}h {{minutes}}m',
+        };
+        expect(buildQuickAddPreviewEntries(parsed, { t: (key) => translations[key] ?? key }))
+            .toContainEqual({ id: 'estimate', kind: 'estimate', label: 'Estimate', value: '1h 30m', tone: 'default' });
+    });
+
     it('flags every invalid date command as a warning chip', () => {
         const input = 'call mom /due:notaday';
         const parsed = parseQuickAdd(input, [], now);

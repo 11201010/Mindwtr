@@ -9,6 +9,7 @@ import { getActiveLanguage, getMonthNamesForLanguage, isActiveDateFormatDayFirst
 import type { Language } from './i18n/i18n-types';
 import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import { getPersonOptionNames } from './people';
+import { minutesToTimeEstimate, parseTimeEstimateInput } from './calendar-scheduling';
 
 // The live capture preview rides this module's barrel line
 // (`export * from './quick-add'`) rather than its own: Metro collapses subpath
@@ -247,8 +248,8 @@ const QUICK_ADD_FOCUS_COMMAND_PATTERN = String.raw`\*(?:\s+focus\b)?`;
 // would corrupt real text — `https://example.com/next-steps` is a link, not
 // a status.
 const QUICK_ADD_COMMAND_START = String.raw`(?:^|\s)`;
-const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b)|$)`;
-const QUICK_ADD_INLINE_CONTROL_BOUNDARY = String.raw`(?=\s(?:[@#+!%]|\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b))|$)`;
+const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b)|$)`;
+const QUICK_ADD_INLINE_CONTROL_BOUNDARY = String.raw`(?=\s(?:[@#+!%]|\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b))|$)`;
 const SIMPLE_TASK_TOKEN_RE = /[@#][\p{L}\p{N}_-]+/gu;
 const RICH_TASK_TOKEN_RE = new RegExp(
     String.raw`(?:^|\s)([@#](?![\s\p{L}\p{N}_-])[^@#+/!%]+?)${QUICK_ADD_INLINE_CONTROL_BOUNDARY}`,
@@ -974,6 +975,18 @@ export function parseQuickAdd(
         }
     }
 
+    let timeEstimate: Task['timeEstimate'];
+    let hasInvalidEstimateCommand = false;
+    working = working.replace(/(?:^|\s)\/(?:estimate|duration):([^\s]*)/gi, (raw, value: string) => {
+        const minutes = parseTimeEstimateInput(restoreEscapes(value));
+        if (minutes === null) {
+            hasInvalidEstimateCommand = true;
+            return raw;
+        }
+        timeEstimate = minutesToTimeEstimate(minutes);
+        return '';
+    });
+
     let energyLevel: TaskEnergyLevel | undefined;
     const energyMatch = working.match(/(?:^|\s)\/energy:([^\s/]+)/i);
     if (energyMatch) {
@@ -1151,7 +1164,8 @@ export function parseQuickAdd(
     // which is why preserve mode still hands back a titleWithoutDate that keeps
     // the prose intact.
     const title = restoreEscapes(working.replace(/\s{2,}/g, ' ').trim());
-    const rawDetectedDate = dueDate || hadExplicitDueCommand || options.naturalLanguageDates === false
+    // Invalid estimate text stays literal, including words such as "tomorrow".
+    const rawDetectedDate = dueDate || hadExplicitDueCommand || hasInvalidEstimateCommand || options.naturalLanguageDates === false
         ? undefined
         : detectTrailingDate(title, now);
     const detectedDate = rawDetectedDate && preserveText
@@ -1171,6 +1185,7 @@ export function parseQuickAdd(
     if (areaId) props.areaId = areaId;
     if (energyLevel) props.energyLevel = energyLevel;
     if (priority) props.priority = priority;
+    if (timeEstimate) props.timeEstimate = timeEstimate;
     if (assignedTo) props.assignedTo = assignedTo;
     if (focusToday) props.isFocusedToday = true;
 

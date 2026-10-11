@@ -162,7 +162,7 @@ export const huOverrides: Record<string, string> = {
     'nav.sectionArchive': 'Archívum',
     'accessibility.skipToContent': 'Ugrás a tartalomhoz',
     'accessibility.mainContent': 'Fő tartalom',
-    'quickAdd.help': 'A gyors hozzáadás támogatja a következőket: /start:<mikor>, /due:<mikor>, /review:<mikor>, /note:<szöveg>, /link:<url>, /energy:<szint>, /priority:<szint>, /next, /* focus, /area:<név> vagy !Terület, @kontextus, #címke, +Projekt, %Személy (vagy %"Teljes név"). A határidők csak dátumot tartalmaznak, hacsak nem ad meg időpontot is.',
+    'quickAdd.help': 'A gyors hozzáadás támogatja a következőket: /start:<mikor>, /due:<mikor>, /review:<mikor>, /estimate:45m, /note:<szöveg>, /link:<url>, /energy:<szint>, /priority:<szint>, /next, /* focus, /area:<név> vagy !Terület, @kontextus, #címke, +Projekt, %Személy (vagy %"Teljes név"). A határidők csak dátumot tartalmaznak, hacsak nem ad meg időpontot is.',
     'quickAdd.example': 'például: Anyu felhívása /due:tomorrow @telefon',
     'quickAdd.pastedImageTitle': 'Képernyőkép',
     'quickAdd.pastedImageSaving': 'Kép csatolása…',

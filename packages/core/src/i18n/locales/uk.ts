@@ -173,7 +173,7 @@ export const ukOverrides: Record<string, string> = {
     "nav.sectionArchive": "Архів",
     "accessibility.skipToContent": "Перейти до вмісту",
     "accessibility.mainContent": "Основний зміст",
-    "quickAdd.help": "Швидке додавання підтримує /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> або !Area, @context, #tag, +Project, %Person (або %\"Full Name\"). Терміни виконання залишаються лише датами, якщо ви не вказали час.",
+    "quickAdd.help": "Швидке додавання підтримує /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> або !Area, @context, #tag, +Project, %Person (або %\"Full Name\"). Терміни виконання залишаються лише датами, якщо ви не вказали час.",
     "quickAdd.example": "Наприклад: Зателефонувати мамі /due:tomorrow @phone",
     "quickAdd.pastedImageTitle": "Скріншот",
     "quickAdd.pastedImageSaving": "Додавання зображення...",

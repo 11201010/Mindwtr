@@ -253,6 +253,7 @@ vi.mock('../contexts/language-context', () => ({
       'taskEdit.noAreaOption': 'No Area',
       'taskEdit.priorityLabel': 'Priority',
       'taskEdit.projectLabel': 'Project',
+      'units.minutesShort': '{{minutes}}m',
     }[key] ?? key),
   }),
 }));
@@ -334,6 +335,18 @@ const contextScans = () => quickCaptureSpies.getQuickCaptureContextChoices.mock.
   .filter(([tasks]) => tasks === selectStore.getState().tasks).length;
 
 describe('QuickCaptureSheet save handling', () => {
+  it('previews and saves the exact typed custom estimate (#1358)', async () => {
+    addTask.mockResolvedValue({ success: true, id: 'task-1' });
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<QuickCaptureSheet visible openRequestId={1} initialValue="Write report /duration:45m" onClose={vi.fn()} />);
+    });
+    const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
+    expect(body.props.preview.props.entries).toContainEqual(expect.objectContaining({ kind: 'estimate', value: '45m' }));
+    await act(async () => { await body.props.handleSave(); });
+    expect(addTask).toHaveBeenCalledWith('Write report', expect.objectContaining({ timeEstimate: 'custom:45' }));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();

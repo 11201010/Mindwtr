@@ -109,7 +109,7 @@ export const plOverrides: Record<string, string> = {
         'nav.sectionLists': 'Listy',
         'nav.sectionOrganize': 'Organizuj',
         'nav.sectionArchive': 'Archiwum',
-        'quickAdd.help': 'Szybkie dodawanie obsługuje /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> lub !Area, @context, #tag, +Project, %Person (lub %"Full Name").',
+        'quickAdd.help': 'Szybkie dodawanie obsługuje /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> lub !Area, @context, #tag, +Project, %Person (lub %"Full Name").',
         'quickAdd.example': 'Przykład: Zadzwoń do mamy /due:tomorrow @phone',
         'quickAdd.inlineHint': 'Spróbuj: Zadzwoń do mamy /due:tomorrow 5pm @phone #family',
         'quickAdd.syntaxHelp': 'Pomoc składni szybkiego dodawania',

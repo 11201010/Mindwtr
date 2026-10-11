@@ -40,6 +40,8 @@ describe('formatQuickAddHelp', () => {
             const source = strings['quickAdd.help'];
             expect(source, locale).toBeTruthy();
             expect(source, locale).toContain('/priority:');
+            expect(source, locale).toContain('/estimate:45m');
+            expect(source.match(/\/estimate:/g), locale).toHaveLength(1);
             const stripped = formatQuickAddHelp(source, { priorities: false });
             expect(stripped, locale).not.toContain('/priority:');
             // Only the token goes: neighbouring commands survive and no doubled

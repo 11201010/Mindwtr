@@ -164,7 +164,7 @@ export const daOverrides: Record<string, string> = {
     'accessibility.skipToContent': 'Gå til indhold',
     'accessibility.mainContent': 'Hovedindhold',
     'quickAdd.help':
-        'Hurtig tilføjelse understøtter /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> eller !Area, @context, #tag, +Project, %Person (eller %"Full Name"). Forfaldsdatoer forbliver uden klokkeslæt, medmindre du angiver et tidspunkt.',
+        'Hurtig tilføjelse understøtter /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> eller !Area, @context, #tag, +Project, %Person (eller %"Full Name"). Forfaldsdatoer forbliver uden klokkeslæt, medmindre du angiver et tidspunkt.',
     'quickAdd.example': 'f.eks. Ring til mor /due:tomorrow @phone',
     'quickAdd.pastedImageTitle': 'Skærmbillede',
     'quickAdd.pastedImageSaving': 'Vedhæfter billede...',

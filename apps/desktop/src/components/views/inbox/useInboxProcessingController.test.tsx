@@ -712,8 +712,12 @@ describe('useInboxProcessingController title grammar', () => {
         });
     });
 
-    it('applies the quick-add tokens typed into the title to the clarified task', async () => {
-        const updateTask = vi.fn(async () => ({ success: true }));
+    it.each([
+        { token: '/estimate:45m', selected: undefined, estimate: 'custom:45' },
+        { token: '/duration:1h30m', selected: '2hr', estimate: '2hr' },
+        { token: '/estimate:tomorrow', selected: undefined, estimate: undefined },
+    ] as const)('applies quick-add tokens while respecting the estimate selection: $token', async ({ token, selected, estimate }) => {
+        const updateTask = vi.fn<UpdateTask>(async () => ({ success: true }));
         const { result } = renderController(updateTask);
 
         await waitFor(() => {
@@ -722,9 +726,10 @@ describe('useInboxProcessingController title grammar', () => {
 
         act(() => {
             result.current.wizardProps.toggleContext('@office');
+            if (selected) result.current.wizardProps.setField('timeEstimate', selected);
             result.current.wizardProps.setField(
                 'title',
-                'Call Alice @phone #urgent !Work /due:2026-09-01',
+                `Call Alice @phone #urgent !Work /due:2026-09-01 ${token}`,
             );
         });
         await act(async () => {
@@ -733,12 +738,13 @@ describe('useInboxProcessingController title grammar', () => {
 
         expect(updateTask).toHaveBeenCalledWith('one', expect.objectContaining({
             status: 'next',
-            title: 'Call Alice',
+            title: estimate ? 'Call Alice' : `Call Alice ${token}`,
             // The typed context joins the chip the user toggled; it never wins alone.
             contexts: ['@office', '@phone'],
             tags: ['#urgent'],
             areaId: 'a1',
         }));
+        expect(updateTask.mock.calls[0][1].timeEstimate).toBe(estimate);
         expect(updateTask).toHaveBeenCalledWith('one', expect.objectContaining({
             dueDate: expect.stringContaining('2026-09-01'),
         }));
