@@ -275,7 +275,7 @@ const measure = async () => {
     console.log(`heap limits: dalvik.vm.heapgrowthlimit=${sh('getprop dalvik.vm.heapgrowthlimit')} heapsize=${sh('getprop dalvik.vm.heapsize')}; ${sh('grep MemTotal /proc/meminfo')}`);
     for (const mib of (process.env.D1_MEASURE_SIZES ?? '8,16,24,32,48').split(',').map(Number)) {
         const note = 'x'.repeat(64 * 1024);
-        const tasks = Array.from({ length: Math.round(mib * 16) }, (_, index) => task(`d1m${index}${run}`, { notes: note }));
+        const tasks = Array.from({ length: Math.round(mib * 16) }, (_, index) => task(`d1m${index}${run}`, { description: note }));
         const file = fixture(`d1-measure-${mib}-${run}.json`, tasks);
         push(file);
         if (sh(`pm list packages ${PKG}`).split('\n').some((line) => line.trim() === `package:${PKG}`)) sh(`pm uninstall ${PKG}`);
@@ -336,7 +336,7 @@ try {
     check(snapshots().length === 0 && journal().length === 0, 'a fresh library: no recovery snapshot, an empty journal');
 
     // ---- E3: Merge backup, Undo, Restore backup ----
-    const a = fixture(`d1-merge-a-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { notes: '日本語 🦉' })]);
+    const a = fixture(`d1-merge-a-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { description: '日本語 🦉' })]);
     push(a);
     await merge(a);
     await confirmQuestion(en['settings.mergeBackup']);
@@ -354,7 +354,7 @@ try {
     await confirmQuestion(en['settings.mergeBackup']);
     await toastWith(en['settings.mergeBackup']);
     check(liveTitles('remerge').length === 0, '(E3) merging the undone file again keeps its rows deleted, as RN\'s merge does');
-    const a2 = fixture(`d1-merge-a2-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { notes: '日本語 🦉' })]);
+    const a2 = fixture(`d1-merge-a2-${run}.json`, [task(`d1a${run}`), task(`d1b${run}`, { description: '日本語 🦉' })]);
     push(a2);
     await merge(a2);
     await confirmQuestion(en['settings.mergeBackup']);
@@ -368,7 +368,7 @@ try {
     const db = pullDb('export');
     const ids = sqlite(db, 'SELECT id FROM tasks ORDER BY id').map((row) => row.id);
     check(JSON.stringify(exported.tasks.map((item) => item.id).sort()) === JSON.stringify(ids), `(E1) ${json.name} holds every task the library holds (${ids.length})`);
-    check(exported.tasks.find((item) => item.title === `d1b${run}` && !item.deletedAt)?.notes === '日本語 🦉', '(E1) the export keeps the notes\' text byte for byte');
+    check(exported.tasks.find((item) => item.title === `d1b${run}` && !item.deletedAt)?.description === '日本語 🦉', '(E1) the export keeps the description text byte for byte');
     check(allLogs().includes('"releaseCheck":"v1.3.5/android-backup-export"') && allLogs().includes('"route":"saf"'), '(E1) the export line says route=saf');
     const csv = await exportFile('data-transfer-export-csv', '.csv');
     const csvText = readFileSync(csv.local, 'utf8');
