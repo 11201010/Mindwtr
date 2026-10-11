@@ -1031,6 +1031,18 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
 
     const handleSync = (options?: SyncSettingsActionOptions): Promise<void> => runSync(host.params(), options);
 
+    const discardSupersededActivationProof = (sequence: number): boolean => {
+        if (sequence === backendWrites) return false;
+        try {
+            void Promise.resolve(logInfo('Sync activation proof superseded by a later backend selection', {
+                scope: 'sync-settings', extra: {
+                    releaseCheck: 'v1.3.5/sync-setup-stale-proof', outcome: 'superseded',
+                },
+            })).catch(() => undefined);
+        } catch { /* A diagnostic sink must not restore a superseded selection. */ }
+        return true;
+    };
+
     /**
      * `p` is the screen as the action that asked for this sync saw it;
      * `insecureWarned` says that action already warned about an insecure URL.
@@ -1216,6 +1228,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     && provenCloudProvider !== 'cloudkit'
             );
             if (needsActivationProbe) {
+                const activationSequence = backendWrites;
                 void logInfo('Sync backend selected; running the verification sync to activate it', {
                     scope: 'sync',
                     extra: {
@@ -1242,6 +1255,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     effectiveBackend === 'file' ? effectiveSyncPath || undefined : undefined,
                     { activationProbe: true, manual: true, configOverride }
                 );
+                if (discardSupersededActivationProof(activationSequence)) return;
                 if (probeResult.skipped === 'offline' || core.isLikelyOfflineSyncError(probeResult.error)) {
                     const serverUnreachable = probeResult.skipped === 'offline' && probeResult.offlineCause === 'request';
                     showToast({
@@ -1323,6 +1337,8 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     throw new Error(probeResult.error || 'Sync setup could not be verified');
                 }
                 await commitProvenSyncConfiguration(p, configOverride);
+                // The activation commit advances the selection counter once itself.
+                if (discardSupersededActivationProof(activationSequence + 1)) return;
                 if (activationCleanupDeferred) {
                     if (activationCleanupDeferred === 'file') showFileSyncLockFeedback('cleanup');
                     else showRemoteFenceFeedback('cleanup');

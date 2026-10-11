@@ -478,6 +478,68 @@ describe('sync settings transport', () => {
         }
     });
 
+    it.each(['successful sync', 'encrypted remote', 'after activation commit'] as const)(
+        'keeps a later Off selection authoritative after activation completes (%s)', async (phase) => {
+            const { transport, storage, host, syncs } = setup([]);
+            storage.set(SYNC_BACKEND_KEY, 'off');
+            storage.set(SYNC_PATH_KEY, 'file:///sync/data.json');
+            await transport.load().done;
+            let release!: () => void;
+            let entered!: () => void;
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            const started = new Promise<void>((resolve) => { entered = resolve; });
+            host.performSync = async (_path, options) => runSerializedSyncDocumentOperation(async () => {
+                syncs.push(options);
+                if (options.activationProbe) { entered(); await held; }
+                return phase === 'encrypted remote'
+                    ? { success: false, activationProof: 'remote-encrypted-no-key' }
+                    : { success: true };
+            });
+            let off: Promise<void> | undefined;
+            host.reconcileBackgroundSync = async () => {
+                if (phase === 'after activation commit' && !off) off = transport.handleSelectSyncBackend('off');
+            };
+            const logged = vi.spyOn(host, 'logInfo');
+            const activation = transport.handleSelectSyncBackend('file');
+            await started;
+            if (phase !== 'after activation commit') off = transport.handleSelectSyncBackend('off');
+            try {
+                release();
+                await activation;
+                await expect(off).resolves.toBeUndefined();
+                expect(storage.get(SYNC_BACKEND_KEY)).toBe('off');
+                expect(transport.getState()).toMatchObject({ syncBackend: 'off', isSyncing: false });
+                expect(transport.getProven()).toEqual({ backend: 'off', cloudProvider: 'selfhosted', pending: false });
+                expect(syncs).toEqual([
+                    { activationProbe: true, manual: true, configOverride: { backend: 'file', syncPath: 'file:///sync/data.json', syncPathBookmark: null } },
+                ]);
+                expect(logged).toHaveBeenCalledWith('Sync activation proof superseded by a later backend selection', {
+                    scope: 'sync-settings', extra: {
+                        releaseCheck: 'v1.3.5/sync-setup-stale-proof', outcome: 'superseded',
+                    },
+                });
+            } finally {
+                release();
+                await off?.catch(() => undefined);
+                await activation;
+            }
+        },
+    );
+
+    it('activates a current encrypted-remote proof without a follow-on sync', async () => {
+        const { transport, storage, syncs, toasts } = setup([
+            { success: false, activationProof: 'remote-encrypted-no-key' },
+        ]);
+        storage.set(SYNC_BACKEND_KEY, 'off');
+        storage.set(SYNC_PATH_KEY, 'file:///sync/data.json');
+        await transport.load().done;
+        await transport.handleSelectSyncBackend('file');
+        expect(storage.get(SYNC_BACKEND_KEY)).toBe('file');
+        expect(transport.getProven()).toEqual({ backend: 'file', cloudProvider: 'selfhosted', pending: false });
+        expect(syncs).toHaveLength(1);
+        expect(toasts).toContainEqual(expect.objectContaining({ tone: 'warning', message: 'settings.syncEncryptionRemoteEncrypted' }));
+    });
+
     it('keeps a later selection visible while an admitted Off write commits, then activates that selection', async () => {
         const { transport, storage, secrets, host, syncs } = setup([]);
         storage.set(SYNC_BACKEND_KEY, 'webdav');
