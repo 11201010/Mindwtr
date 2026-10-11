@@ -1250,6 +1250,29 @@ describe('CalendarView', () => {
         expect(storeMocks.taskStoreState.updateTask).not.toHaveBeenCalled();
     });
 
+    it('refuses a calendar drop that would start the task after its timed due date', async () => {
+        const showToast = vi.fn<ShowToast>();
+        useUiStore.setState({ showToast });
+        storeMocks.taskStoreState.tasks = [makeTask({ id: 'mixed-drop', startTime: '2026-04-03T09:00:00', dueDate: '2026-04-03T12:30:00' })];
+        let controller: ReturnType<typeof useDesktopCalendarController> | undefined;
+        render(<LanguageProvider><DesktopControllerHost onResult={(value) => { controller = value; }} /></LanguageProvider>);
+        await flushCalendarEffects();
+        await act(async () => {
+            await controller!.updateTaskDateFromDrop('mixed-drop', new Date(2026, 3, 6), 'scheduled');
+            await controller!.updateTaskStartTimeFromDrop('mixed-drop', new Date(2026, 3, 6, 9), 'scheduled');
+        });
+        expect(storeMocks.taskStoreState.updateTask).not.toHaveBeenCalled();
+        expect(showToast).toHaveBeenCalledTimes(2);
+        expect(showToast).toHaveBeenCalledWith('Could not update dates. Check the date range and try again.', 'error');
+
+        await act(async () => {
+            await controller!.updateTaskDateFromDrop('mixed-drop', new Date(2026, 3, 2), 'scheduled');
+        });
+        expect(storeMocks.taskStoreState.updateTask).toHaveBeenCalledWith('mixed-drop', {
+            startTime: new Date(2026, 3, 2, 9).toISOString(),
+        });
+    });
+
     it('keeps completion, cancellation and projected read-only rules on the marker layer', async () => {
         window.history.replaceState(null, '', '/?calendarView=week&calendarDate=2026-04-09');
         storeMocks.taskStoreState.tasks = [
