@@ -13,6 +13,13 @@
      "the copilot: one part, then all, typing clears what was applied",
      "the copilot with time estimates off: an estimate alone suggests nothing"
     ]
+   },
+   {
+    "commit": "2946f8b54591c3d76acaf52834b72614de1b4ab4",
+    "reason": "#1358 (a3b4de291) added /estimate:45m to quickAdd.help; only the help text changed.",
+    "scenarios": [
+     "the syntax help and the fixed default area"
+    ]
    }
   ]
  },
@@ -4298,7 +4305,7 @@
      "texts": [
       "Add Task",
       "?",
-      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
       "Cancel",
       "Save & edit",
       "Save"
@@ -4339,7 +4346,7 @@
      "texts": [
       "Add Task",
       "?",
-      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
       "Cancel",
       "Save & edit",
       "Save"
@@ -4420,7 +4427,7 @@
      "texts": [
       "Add Task",
       "?",
-      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
+      "Quick add supports /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> or !Area, @context, #tag, +Project, %Person (or %\"Full Name\"). Due dates stay date-only unless you include a time.",
       "Cancel",
       "Save & edit",
       "Save"
