@@ -53,8 +53,8 @@ const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'coverage', '__tests__', 'di
  * shrink: add the key to en.ts, delete the line here.
  *
  * These are whole features that never got i18n keys at all, not stragglers — the
- * Obsidian view (35), the People manager (11), saved filters (8), the Pomodoro
- * phase labels (3). Translating them is its own task; adding them to en.ts alone
+ * Obsidian view (35), the People manager (11), saved filters (8).
+ * Translating them is its own task; adding them to en.ts alone
  * would break locale parity for the five full-parity locales.
  */
 const KNOWN_MISSING_KEYS = new Set([
@@ -110,9 +110,6 @@ const KNOWN_MISSING_KEYS = new Set([
     'people.openReference',
     'people.referenceLink',
     'people.referencePlaceholder',
-    'pomodoro.phaseBreak',
-    'pomodoro.phaseFocus',
-    'pomodoro.switchPhase',
     'projects.expandSidebar',
     'projects.sequenceMode',
     'savedFilters.defaultName',
