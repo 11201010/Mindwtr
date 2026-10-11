@@ -40,7 +40,7 @@ const serializeHiddenExternalCalendarIds = (ids: Iterable<string>): string => (
     JSON.stringify([...ids].sort())
 );
 
-const readHiddenExternalCalendarIds = (): { serialized: string; value: Set<string> } => {
+export const readHiddenExternalCalendarIds = (): { serialized: string; value: Set<string> } => {
     if (typeof window === 'undefined') {
         return { serialized: '[]', value: new Set() };
     }

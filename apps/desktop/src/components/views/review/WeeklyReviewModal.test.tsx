@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetForTests, useTaskStore, type Task } from '@mindwtr/core';
 
 import { WeeklyReviewGuideModal } from './WeeklyReviewModal';
+import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
+import { useCalendarExternalEvents } from '../calendar/use-calendar-external-events';
 
 vi.mock('../../../contexts/language-context', () => ({
     useLanguage: () => ({
@@ -42,7 +44,7 @@ vi.mock('../../../contexts/language-context', () => ({
 }));
 
 vi.mock('../../../lib/external-calendar-events', () => ({
-    fetchExternalCalendarEvents: vi.fn(async () => ({ events: [], warnings: [] })),
+    fetchExternalCalendarEvents: vi.fn(async () => ({ calendars: [], events: [], warnings: [] })),
     summarizeExternalCalendarWarnings: vi.fn(() => null),
 }));
 
@@ -88,6 +90,7 @@ describe('WeeklyReviewGuideModal', () => {
         vi.useRealTimers();
         resetForTests();
         window.localStorage.clear();
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({ calendars: [], events: [], warnings: [] });
         useTaskStore.setState(initialTaskState, true);
         useTaskStore.setState({
             _allTasks: [],
@@ -113,6 +116,58 @@ describe('WeeklyReviewGuideModal', () => {
 
         expect(screen.getByRole('heading', { level: 2, name: 'Review Complete!' })).toBeInTheDocument();
         expect(screen.queryByText('This week')).not.toBeInTheDocument();
+    });
+
+    it('honors calendar toggles and disabled sources when loading the calendar step', async () => {
+        const visibleRange = { start: new Date(), end: new Date() };
+        const calendars = ['visible', 'feed', 'feed#category', 'macos:work', 'disabled'].map((id) => ({
+            id, name: id, url: '', enabled: id !== 'disabled',
+        }));
+        const start = new Date();
+        const end = new Date(start.getTime() + 60 * 60 * 1000);
+        const events = calendars.map((calendar) => ({
+            id: `${calendar.id}-event`, sourceId: calendar.id, title: `${calendar.id} appointment`,
+            start: start.toISOString(), end: end.toISOString(), allDay: false,
+        }));
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({ calendars, events, warnings: [] });
+        const mainCalendar = renderHook(() => useCalendarExternalEvents({ filterQuery: '', visibleRange }));
+        await waitFor(() => expect(mainCalendar.result.current.externalCalendars).toHaveLength(5));
+        act(() => {
+            for (const id of ['feed', 'feed#category', 'macos:work']) mainCalendar.result.current.toggleExternalCalendar(id);
+        });
+        mainCalendar.unmount();
+
+        useTaskStore.setState({ _allTasks: [makeTask({ status: 'inbox' })] });
+        render(<WeeklyReviewGuideModal onClose={vi.fn()} />);
+        await act(async () => {});
+        fireEvent.click(screen.getByRole('button', { name: 'review.nextStepBtn' }));
+        await waitFor(() => expect(screen.getByText('visible appointment')).toBeInTheDocument());
+        const expand = screen.queryByRole('button', { name: '+3 common.more' });
+        if (expand) fireEvent.click(expand);
+        for (const id of ['feed', 'feed#category', 'macos:work', 'disabled']) {
+            expect(screen.queryByText(`${id} appointment`)).not.toBeInTheDocument();
+        }
+        expect(window.localStorage.getItem('mindwtr.calendar.hiddenExternalCalendars')).toBe(
+            JSON.stringify(['feed', 'feed#category', 'macos:work']),
+        );
+    });
+
+    it('skips the calendar step when every calendar is switched off', async () => {
+        useTaskStore.setState({ _allTasks: [makeTask({ status: 'inbox' })] });
+        window.localStorage.setItem('mindwtr.calendar.hiddenExternalCalendars', JSON.stringify(['macos:work']));
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValue({
+            calendars: [{ id: 'macos:work', name: 'Work', url: '', enabled: true }],
+            events: [{
+                id: 'work-event', sourceId: 'macos:work', title: 'Hidden appointment',
+                start: new Date().toISOString(), end: new Date(Date.now() + 60 * 60 * 1000).toISOString(), allDay: false,
+            }],
+            warnings: [],
+        });
+        render(<WeeklyReviewGuideModal onClose={vi.fn()} />);
+        await act(async () => {});
+        act(() => useTaskStore.setState({ _allTasks: [] }));
+        expect(screen.getByRole('heading', { level: 2, name: 'Review Complete!' })).toBeInTheDocument();
+        expect(screen.queryByText('Hidden appointment')).not.toBeInTheDocument();
     });
 
     it('offers sharing only from the final reflection without finishing the review', () => {

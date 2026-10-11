@@ -4,6 +4,7 @@ import {
     buildReviewSteps,
     createAIProvider,
     DEFAULT_AREA_COLOR,
+    filterCalendarEventsForAreas,
     filterReviewSuggestionsToKnownIds,
     formatI18nTemplate,
     formatTimeSpentLabel,
@@ -45,6 +46,7 @@ import { useUiStore } from '../../../store/ui-store';
 import { getWorkspaceCache } from '../../../lib/workspace-cache';
 import { ShareCardDialog } from '../../ShareCardDialog';
 import { runAfterTaskEditExit } from '../../Task/task-edit-session';
+import { readHiddenExternalCalendarIds } from '../calendar/use-calendar-external-events';
 
 type ReviewStep = 'inbox' | 'stale' | 'calendar' | 'waiting' | 'contexts' | 'projects' | 'someday' | 'completed';
 type ReviewStepDefinition = {
@@ -296,9 +298,11 @@ export function WeeklyReviewGuideModal({ onClose }: WeeklyReviewGuideModalProps)
                 const rangeEnd = new Date(rangeStart);
                 rangeEnd.setDate(rangeEnd.getDate() + 7);
                 rangeEnd.setMilliseconds(-1);
-                const { events, warnings } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
+                const { calendars, events, warnings } = await fetchExternalCalendarEvents(rangeStart, rangeEnd);
                 if (cancelled) return;
-                setExternalCalendarEvents(events);
+                const hiddenIds = readHiddenExternalCalendarIds().value;
+                setExternalCalendarEvents(filterCalendarEventsForAreas(events, calendars, { included: [], excluded: [] }, [])
+                    .filter((event) => !hiddenIds.has(event.sourceId)));
                 setExternalCalendarError(summarizeExternalCalendarWarnings(warnings));
             } catch (error) {
                 if (cancelled) return;
