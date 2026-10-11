@@ -14,7 +14,7 @@ import { useVisibleTaskContext } from '@/hooks/use-visible-tasks';
 import { openContextsScreen, openProjectScreen } from '@/lib/task-meta-navigation';
 import { TaskEditModal } from '../task-edit-modal';
 import { getBulkMoveStatusOptions } from '../task-list/TaskListBulkBar';
-import { useTaskListSelection } from '../use-task-list-selection';
+import { usePruneSelectionToVisible, useTaskListSelection } from '../use-task-list-selection';
 import { settleStoreAction } from '../store-action-result';
 import { TaskListView } from '../task-list-view';
 import { DeferredProjectsSection } from './deferred-projects-section';
@@ -78,6 +78,8 @@ export function WaitingView() {
     t,
     tasksById,
   });
+  const visibleTaskIds = useMemo(() => filteredWaitingTasks.map((task) => task.id), [filteredWaitingTasks]);
+  usePruneSelectionToVisible(selection.setMultiSelectedIds, visibleTaskIds);
   const bulkMoveStatusOptions = useMemo(() => getBulkMoveStatusOptions('waiting'), []);
 
   const handleStatusChange = (task: Task, status: TaskStatus) => {
