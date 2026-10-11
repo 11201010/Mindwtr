@@ -8,6 +8,7 @@ import {
     getRetainedTaskContexts,
     getUsedTaskTokens,
     isSelectableProjectForTaskAssignment,
+    parseBulkOrganizeTokenInput,
     safeParseDate,
     serializeTaskDraftTokens,
     tFallback,
@@ -44,6 +45,20 @@ type TaskBulkOrganizeModalProps = {
     titleFallback?: string;
     onApply: (input: BulkOrganizeTaskUpdateInput) => Promise<void> | void;
     onCancel: () => void;
+};
+
+/**
+ * Commas and newlines separate tokens. A segment whose every word carries the
+ * prefix ("@home @work") is a space-separated list, read with the parser mobile
+ * uses; any other segment is one label that may contain spaces (#1344).
+ */
+const parseTokenInput = (value: string, field: 'contexts' | 'tags'): string[] => {
+    const prefix = field === 'contexts' ? '@' : '#';
+    return Array.from(new Set(value.split(/[,\n]/).flatMap((segment) => (
+        segment.trim().split(/\s+/).every((word) => word.startsWith(prefix))
+            ? parseBulkOrganizeTokenInput(segment, prefix)
+            : serializeTaskDraftTokens(segment, field)
+    ))));
 };
 
 const STATUS_OPTIONS: BulkOrganizeStatus[] = ['next', 'waiting', 'someday', 'reference', 'done'];
@@ -256,8 +271,8 @@ export function TaskBulkOrganizeModal({
         }
 
         const input: BulkOrganizeTaskUpdateInput = {
-            contexts: serializeTaskDraftTokens(contextsInput.replace(/\n/g, ','), 'contexts'),
-            tags: serializeTaskDraftTokens(tagsInput.replace(/\n/g, ','), 'tags'),
+            contexts: parseTokenInput(contextsInput, 'contexts'),
+            tags: parseTokenInput(tagsInput, 'tags'),
         };
 
         if (status !== KEEP_VALUE) input.status = status;
