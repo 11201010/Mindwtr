@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { DOMParser } from '@xmldom/xmldom';
 import { parseWebdavAttachmentInventory } from '../../../packages/core/src/webdav-attachment-inventory';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -76,7 +77,7 @@ describe('URL Polyfill Shim', () => {
     });
 
     test('fallback accepts Synology mod_dav namespaces and root-relative audio paths (#1342)', () => {
-        const xml = readFileSync(new originalURL('./__fixtures__/synology-webdav-inventory.xml', import.meta.url), 'utf8');
+        const xml = readFileSync(fileURLToPath(new originalURL('./__fixtures__/synology-webdav-inventory.xml', import.meta.url).href), 'utf8');
         globalThis.URL = undefined as unknown as typeof URL;
         loadFreshUrlPolyfill();
         expect(parseWebdavAttachmentInventory(xml,
