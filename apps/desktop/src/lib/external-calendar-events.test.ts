@@ -215,6 +215,33 @@ describe('external calendar events', () => {
         expect(result.events[0].start.slice(0, 10)).toBe('2026-01-01');
     });
 
+    it('refuses a feed whose raw body or gunzip output exceeds 20 MiB and still loads the others', async () => {
+        getCalendarsMock.mockResolvedValue([
+            { id: 'bomb', name: 'Bomb', url: 'https://calendar.example/bomb.ics', enabled: true },
+            { id: 'huge', name: 'Huge', url: 'https://calendar.example/huge.ics', enabled: true },
+            { id: 'work', name: 'Work', url: 'https://calendar.example/work.ics', enabled: true },
+        ]);
+        const oversized = workIcs + ' '.repeat(20 * 1024 * 1024);
+        const bomb = gzipSync(strToU8(oversized));
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/bomb.ics')) return new Response(bomb.slice().buffer as ArrayBuffer, { status: 200 });
+            if (url.endsWith('/huge.ics')) return new Response(oversized, { status: 200 });
+            return new Response(workIcs, { status: 200 });
+        });
+
+        const result = await fetchExternalCalendarEvents(
+            new Date('2026-04-26T00:00:00.000Z'),
+            new Date('2026-04-27T00:00:00.000Z'),
+        );
+
+        expect(result.warnings).toEqual([
+            'Failed to load "Bomb": Response exceeds the 20971520 byte download limit',
+            'Failed to load "Huge": Response exceeds the 20971520 byte download limit',
+        ]);
+        expect(result.events.map((event) => event.title)).toEqual(['Team Meeting']);
+    });
+
     it('loads local ICS calendar files through the desktop calendar read command', async () => {
         isTauriRuntimeMock.mockReturnValue(true);
         invokeMock.mockResolvedValue(workIcs);

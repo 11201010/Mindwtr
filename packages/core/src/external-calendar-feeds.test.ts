@@ -24,7 +24,7 @@ const ics = (events: [string, string, string][]) => [
 function device(options: {
     storage?: Record<string, string>;
     platform?: string;
-    feeds?: Record<string, string | 'hang' | { status: number }>;
+    feeds?: Record<string, string | 'hang' | { status: number } | Response>;
     files?: Record<string, string>;
     calendars?: DeviceCalendar[];
     events?: DeviceCalendarEvent[];
@@ -48,6 +48,7 @@ function device(options: {
                     init?.signal?.addEventListener('abort', () => reject(init.signal!.reason ?? new Error('aborted')));
                 });
             }
+            if (feed instanceof Response) return feed;
             if (feed === undefined || typeof feed !== 'string') return { ok: false, status: typeof feed === 'object' ? feed.status : 404, text: async () => '' };
             return { ok: true, status: 200, text: async () => feed };
         }) as unknown as typeof fetch,
@@ -123,6 +124,26 @@ describe('external calendar feeds behind the host ports', () => {
         const result = await feeds.fetchExternalCalendarEvents(...SEPT, { onFeedError: (calendarId) => { failed.push(calendarId); } });
         expect(result.events).toHaveLength(1);
         expect(failed).toEqual(['broken', 'missing-file']);
+    });
+
+    it('refuses a feed or local file over 20 MiB and still loads the others', async () => {
+        const oversized = ics([['big', '20260910T090000Z', 'Big']]) + ' '.repeat(20 * 1024 * 1024);
+        const { feeds } = device({
+            storage: { [EXTERNAL_CALENDARS_KEY]: JSON.stringify([
+                feed('huge', 'https://example.com/huge.ics'),
+                feed('huge-file', 'file:///huge.ics'),
+                feed('team', 'https://example.com/team.ics'),
+            ]) },
+            feeds: {
+                'https://example.com/huge.ics': new Response(oversized),
+                'https://example.com/team.ics': ics([['t1', '20260910T090000Z', 'Planning']]),
+            },
+            files: { 'file:///huge.ics': oversized },
+        });
+        const failed: string[] = [];
+        const result = await feeds.fetchExternalCalendarEvents(...SEPT, { onFeedError: (calendarId) => { failed.push(calendarId); } });
+        expect(failed).toEqual(['huge', 'huge-file']);
+        expect(result.events.map((event) => event.title)).toEqual(['Planning']);
     });
 
     it('gives up on a feed after 15 s without failing the others', async () => {

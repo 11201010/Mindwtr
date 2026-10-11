@@ -22,6 +22,7 @@
  */
 import { hasCalendarPushTaskMarker } from './calendar-scheduling';
 import { normalizeExternalCalendarColor } from './external-calendar-colors';
+import { readResponseText, ResponseTooLargeError } from './http-utils';
 import { isMindwtrMirrorCalendar, mergeExternalCalendarSources, type ExternalCalendarSourceResult } from './external-calendar-ingestion';
 import { expandCategoryCalendars, parseIcsWithMetadata, type ExternalCalendarEvent, type ExternalCalendarSubscription } from './ics';
 import { isSandboxMode } from './sandbox';
@@ -33,6 +34,8 @@ export const SYSTEM_CALENDAR_SETTINGS_KEY = 'mindwtr-system-calendar-settings';
 const SYSTEM_CALENDAR_SOURCE_PREFIX = 'system';
 /** Each feed's read, as React Native has always bounded it. */
 export const EXTERNAL_CALENDAR_FEED_TIMEOUT_MS = 15_000;
+/** Largest feed (raw or after gunzip) a refresh reads; a bigger one fails on its own. */
+export const EXTERNAL_CALENDAR_FEED_MAX_BYTES = 20 * 1024 * 1024;
 /** The Calendar screen reloads its external calendars on focus and on return to the app, at most once a second. */
 export const EXTERNAL_CALENDAR_REFRESH_THROTTLE_MS = 1_000;
 
@@ -438,6 +441,8 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
             throwIfAborted(signal);
             const text = await host.readLocalFile(url, signal);
             throwIfAborted(signal);
+            // ponytail: the host reads the whole file first; this only keeps the parser bounded.
+            if (text.length > EXTERNAL_CALENDAR_FEED_MAX_BYTES) throw new ResponseTooLargeError(EXTERNAL_CALENDAR_FEED_MAX_BYTES);
             return text;
         }
 
@@ -459,7 +464,7 @@ export function createExternalCalendarFeeds(host: ExternalCalendarFeedsHost) {
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}`);
             }
-            return await res.text();
+            return await readResponseText(res, EXTERNAL_CALENDAR_FEED_MAX_BYTES, controller?.signal ?? signal);
         } finally {
             if (timeout) clearTimeout(timeout);
             if (signal && onAbort) {
