@@ -790,6 +790,12 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
   }
 
   const { diagnostics, recurring: recurringRequests, oneShot: oneShotRequests } = plan;
+  if (plan.shifted.length > 0) {
+    logNotificationInfo('Minute-shifted reminder alarms kept until they ring', {
+      releaseCheck: 'v1.3.5/reminder-shifted-minute-kept',
+      count: plan.shifted.length,
+    });
+  }
 
   // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
   // alarm cap) aborts the cycle. Whatever was created before that point is live in

@@ -242,6 +242,52 @@ describe('mobile reminder alarms', () => {
         expect(plan({ tasks: [task('far', { dueDate: '2026-09-30T10:00:00.000Z' })] }).topUpDelayMs).toBe(24 * 60 * 60 * 1000);
     });
 
+    it('keeps a reminder moved past a taken minute armed until it rings, across a top-up', async () => {
+        // Android's library refuses a second alarm in a minute it already holds.
+        const taken = new Set<string>();
+        const { port, calls } = recordingPort([], { next: 1 });
+        const recordedSchedule = port.scheduleAlarm;
+        port.scheduleAlarm = async (details) => {
+            const minute = String(details.fire_date).slice(0, 16);
+            if (taken.has(minute)) throw new Error('duplicate alarm set at date');
+            taken.add(minute);
+            return recordedSchedule(details);
+        };
+        const tasks = [
+            task('a', { dueDate: '2026-09-28T11:00:00.000Z' }),
+            // Its key moves on to the due reminder once the start time passes.
+            task('b', { startTime: '2026-09-28T11:00:00.000Z', dueDate: '2026-09-28T12:00:00.000Z' }),
+            task('c', { dueDate: '2026-09-28T11:00:00.000Z' }),
+        ];
+        const alarms = new Map<string, ReminderAlarmEntry>();
+        const cycle = async (now: string) => {
+            const result = plan({ tasks, alarms, now: new Date(now) });
+            await scheduleReminderAlarms(result, alarms, port);
+            await cancelUnrequestedReminderAlarms(result, alarms, port);
+            return result;
+        };
+        await cycle('2026-09-28T10:00:00.000Z');
+        const armed = Object.fromEntries(Array.from(alarms, ([key, entry]) => [key, entry.id]));
+        expect(Array.from(taken).sort()).toEqual(['2026-09-28T11:00', '2026-09-28T11:01', '2026-09-28T11:02']);
+
+        calls.length = 0;
+        // The top-up 5 s after the 11:00 alarm rang.
+        const topUp = await cycle('2026-09-28T11:00:05.000Z');
+        const deleted = calls.filter(([kind]) => kind === 'deleteAlarm').map(([, id]) => id);
+        expect(deleted).toEqual([armed['task:a']]);
+        expect(alarms.get('task:b')?.id).toBe(armed['task:b']);
+        expect(alarms.get('task:c')?.id).toBe(armed['task:c']);
+        // The next cycle runs 5 s after the moved 11:01 alarm rings.
+        expect(topUp.topUpDelayMs).toBe(60_000);
+
+        calls.length = 0;
+        await cycle('2026-09-28T11:01:05.000Z');
+        // b rang at 11:01; its due reminder is armed now. c still waits for 11:02.
+        expect(calls.filter(([kind]) => kind === 'deleteAlarm').map(([, id]) => id)).toEqual([armed['task:b']]);
+        expect(alarms.get('task:c')?.id).toBe(armed['task:c']);
+        expect(alarms.get('task:b')?.signature).toContain('2026-09-28T12:00:00.000Z');
+    });
+
     it('keys a repeating alarm by its local time of day and weekday', () => {
         const config = { title: 'Weekly review', message: 'Body', fireAt: new Date('2026-09-29T18:30:00.000Z'), repeatInterval: 'weekly' as const };
         expect(JSON.parse(buildReminderAlarmSignature(config)).fireAt).toBe('weekly:2:18:30');

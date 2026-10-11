@@ -1,7 +1,7 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_REMINDER_ALARMS=1 MINDWTR_CAPTURE_REMINDER_ALARMS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run lib/notification-service-local.parity.test.ts",
-  "capturedAt": "6704d646bf7b934113f4416655aa92fbf0d436c9",
+  "capturedAt": "176e66d34eaa26890257a92ffa7382d6cb138ea8",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except the reminder alarm and notification open parity harnesses and their fixtures.",
   "rendering": "lib/notification-service-local.ts run for real under fake timers (Date, setTimeout) with TZ=UTC. The store, the system language and the alarm library are replaced: parseDate is toISOString, scheduleAlarm answers from the cycle's `answers` and then with ids counting up from 100, getScheduledAlarms answers []. Stored language and translations are core's real English. Android starts with notification permission granted; iOS grants through requestPermissions. Each cycle is one startLocalMobileNotifications call (the first starts the service, later ones run a cycle while running) or, for trigger `exact`, one rescheduleLocalAlarmsAsExact call. `calls` records, in order, every alarm library call, AsyncStorage write, setTimeout delay and log line (message and extra)."
  },
@@ -20112,7 +20112,7 @@
      [
       "setItem",
       "mindwtr:local:alarms:v1",
-      "{\"task:t-busy\":{\"id\":31,\"signature\":\"{\\\"title\\\":\\\"Task t-busy\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T11:00:30.500Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-busy\\\"}}\"}}"
+      "{\"task:t-busy\":{\"id\":31,\"signature\":\"{\\\"title\\\":\\\"Task t-busy\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T11:00:30.500Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-busy\\\"}}\",\"fireAtMs\":1790593350000}}"
      ],
      [
       "logInfo",
@@ -20160,7 +20160,8 @@
     "alarms": {
      "task:t-busy": {
       "id": 31,
-      "signature": "{\"title\":\"Task t-busy\",\"message\":\"Due date reminders\",\"fireAt\":\"2026-09-28T11:00:30.500Z\",\"repeatInterval\":\"once\",\"hasSnoozeAction\":true,\"hasCompleteAction\":true,\"data\":{\"kind\":\"task-reminder\",\"taskId\":\"t-busy\"}}"
+      "signature": "{\"title\":\"Task t-busy\",\"message\":\"Due date reminders\",\"fireAt\":\"2026-09-28T11:00:30.500Z\",\"repeatInterval\":\"once\",\"hasSnoozeAction\":true,\"hasCompleteAction\":true,\"data\":{\"kind\":\"task-reminder\",\"taskId\":\"t-busy\"}}",
+      "fireAtMs": 1790593350000
      }
     },
     "error": null

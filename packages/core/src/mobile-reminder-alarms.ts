@@ -71,7 +71,8 @@ export type ReminderAlarmConfig = {
     data?: Record<string, string>;
 };
 
-export type ReminderAlarmEntry = { id: number; signature?: string; pending?: true };
+/** `fireAtMs`: when a taken minute moved the alarm later than its signature's time. */
+export type ReminderAlarmEntry = { id: number; signature?: string; pending?: true; fireAtMs?: number };
 
 export type ReminderAlarmRequest = { key: string; config: ReminderAlarmConfig; signature: string };
 
@@ -96,7 +97,13 @@ export function readReminderAlarmMap(raw: string | null): Map<string, ReminderAl
         const id = Number(value.id);
         if (!Number.isFinite(id)) continue;
         const signature = typeof value.signature === 'string' ? value.signature : undefined;
-        map.set(key, { id: Math.floor(id), signature, ...(value.pending === true ? { pending: true as const } : {}) });
+        const fireAtMs = Number(value.fireAtMs);
+        map.set(key, {
+            id: Math.floor(id),
+            signature,
+            ...(value.pending === true ? { pending: true as const } : {}),
+            ...(value.fireAtMs !== undefined && Number.isFinite(fireAtMs) ? { fireAtMs } : {}),
+        });
     }
     return map;
 }
@@ -208,8 +215,13 @@ export type ReminderAlarmPlan = {
     recurring: ReminderAlarmRequest[];
     /** Task and project reminders, soonest first and capped. */
     oneShot: ReminderAlarmRequest[];
-    /** Requested keys whose held alarm already matches. */
+    /** Held keys left alone: requested ones whose alarm already matches, and the `shifted` ones. */
     keep: string[];
+    /**
+     * Held alarms a taken minute moved later, whose reminder time has passed but which have not
+     * rung yet. Each stays until it rings, even when its key now names a later reminder.
+     */
+    shifted: string[];
     /** Requested keys to make (again): missing, changed or pending. */
     schedule: string[];
     /** Held keys that are not requested. */
@@ -295,6 +307,7 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
             recurring: [],
             oneShot: [],
             keep: [],
+            shifted: [],
             schedule: [],
             cancel: held,
             reasons: Object.fromEntries(held.map((key) => [key, 'withdrawn' as const])),
@@ -312,19 +325,27 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
     });
     const recurring = requests.filter((request) => request.repeatInterval).map(toReminderAlarmRequest);
     const oneShot = requests.filter((request) => !request.repeatInterval).map(toReminderAlarmRequest);
-    const requested = new Set<string>();
-    const keep: string[] = [];
-    const schedule: string[] = [];
-    for (const request of [...recurring, ...oneShot]) {
-        requested.add(request.key);
-        (isReminderAlarmCurrent(input.alarms.get(request.key), request.signature) ? keep : schedule).push(request.key);
-    }
-    const cancel = held.filter((key) => !requested.has(key));
+    const requested = new Set([...recurring, ...oneShot].map((request) => request.key));
     const context = {
         diagnostics,
         tasks: new Map(input.tasks.map((task) => [task.id, task])),
         projects: new Map(input.projects.map((project) => [project.id, project])),
     };
+    const nowMs = input.now.getTime();
+    const shifted = held.filter((key) => {
+        const entry = input.alarms.get(key)!;
+        const signedFireAtMs = getSignedFireAtMs(entry);
+        return entry.pending !== true && entry.fireAtMs !== undefined && entry.fireAtMs > nowMs
+            && signedFireAtMs !== null && signedFireAtMs <= nowMs
+            && getActiveCancelReason(key, entry, requested.has(key), context) === 'expired';
+    });
+    const keep = held.filter((key) => shifted.includes(key) && !requested.has(key));
+    const schedule: string[] = [];
+    for (const request of [...recurring, ...oneShot]) {
+        const current = shifted.includes(request.key) || isReminderAlarmCurrent(input.alarms.get(request.key), request.signature);
+        (current ? keep : schedule).push(request.key);
+    }
+    const cancel = held.filter((key) => !requested.has(key) && !shifted.includes(key));
     const reasons: Record<string, ReminderAlarmCancelReason> = {};
     for (const key of [...schedule, ...cancel]) {
         const entry = input.alarms.get(key);
@@ -335,10 +356,15 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
         recurring,
         oneShot,
         keep,
+        shifted,
         schedule,
         cancel,
         reasons,
-        topUpDelayMs: getOneShotTopUpDelayMs(oneShot.map((request) => request.config.fireAt.getTime()), input.now.getTime()),
+        topUpDelayMs: getOneShotTopUpDelayMs(
+            [...oneShot.map((request) => request.config.fireAt.getTime()), ...shifted.map((key) => input.alarms.get(key)!.fireAtMs!)]
+                .sort((left, right) => left - right),
+            nowMs,
+        ),
         diagnostics,
     };
 }
@@ -421,7 +447,7 @@ async function scheduleReminderAlarm(
     plan: ReminderAlarmPlan,
 ): Promise<void> {
     const { key, config, signature } = request;
-    if (isReminderAlarmCurrent(alarms.get(key), signature)) return;
+    if (plan.shifted.includes(key) || isReminderAlarmCurrent(alarms.get(key), signature)) return;
 
     await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
 
@@ -430,6 +456,7 @@ async function scheduleReminderAlarm(
     const detailsBase = buildReminderAlarmDetails(key, config);
 
     let scheduledId: number | null = null;
+    let retryCount = 0;
     let lastError: unknown = null;
 
     for (let retry = 0; retry <= MAX_DUPLICATE_ALARM_RETRIES; retry += 1) {
@@ -445,6 +472,7 @@ async function scheduleReminderAlarm(
                 return;
             }
             scheduledId = Math.floor(id);
+            retryCount = retry;
             port.logInfo('Alarm scheduled', {
                 alarmKey: key,
                 alarmId: scheduledId,
@@ -468,7 +496,8 @@ async function scheduleReminderAlarm(
         return;
     }
 
-    alarms.set(key, { id: scheduledId, signature });
+    const scheduledFireAt = getDuplicateAlarmRetryFireAt(baseFireAt, retryCount);
+    alarms.set(key, { id: scheduledId, signature, ...(retryCount > 0 ? { fireAtMs: scheduledFireAt.getTime() } : {}) });
 }
 
 async function scheduleReminderAlarmBatches(
@@ -498,7 +527,7 @@ export async function scheduleReminderAlarms(
     await scheduleReminderAlarmBatches(alarms, plan, port);
 }
 
-/** Cancels every held alarm the plan does not request, as `alarms` stands now. */
+/** Cancels every held alarm the plan does not request or keep, as `alarms` stands now. */
 export async function cancelUnrequestedReminderAlarms(
     plan: ReminderAlarmPlan,
     alarms: Map<string, ReminderAlarmEntry>,
@@ -506,7 +535,7 @@ export async function cancelUnrequestedReminderAlarms(
 ): Promise<void> {
     const requested = new Set([...plan.recurring, ...plan.oneShot].map((request) => request.key));
     for (const key of Array.from(alarms.keys())) {
-        if (requested.has(key)) continue;
+        if (requested.has(key) || plan.shifted.includes(key)) continue;
         await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
     }
 }
