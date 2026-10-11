@@ -36,7 +36,7 @@ In MCP client configurations using `npx`, add `"--allow-scripts=better-sqlite3"`
 
 Default database locations. The installed Windows and macOS apps keep the database in a `data` subfolder from version 1.3.2 on; Linux and the portable builds are unchanged. The server looks in both places, so it finds the database either way.
 
-- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`)
+- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`; Snap: `~/snap/mindwtr/current/.local/share/mindwtr/mindwtr.db`)
 - macOS, 1.3.2 and later: `~/Library/Application Support/mindwtr/data/mindwtr.db`
 - macOS, 1.3.1 and earlier: `~/Library/Application Support/mindwtr/mindwtr.db`
 - Windows, 1.3.2 and later: `%APPDATA%\mindwtr\data\mindwtr.db`
