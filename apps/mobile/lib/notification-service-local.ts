@@ -28,9 +28,11 @@ import {
   isPomodoroAlarmScheduleSuperseded,
   isPomodoroAlarmUnchanged,
   isPomodoroNativeAlarm,
+  isReminderOwnerGone,
   planReminderAlarms,
   POMODORO_ALARM_STORAGE_KEY,
   readPomodoroAlarmEntry,
+  readNativeAlarmData,
   readReminderAlarmMap,
   REMINDER_ALARM_MAP_STORAGE_KEY,
   REMINDER_NOTIFICATION_CHANNEL,
@@ -107,6 +109,7 @@ const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 const SERIALIZED_RESCHEDULE_RELEASE_CHECK = 'v1.3.4/serialized-reminder-cycles';
 const STALE_REMINDER_GUARD_RELEASE_CHECK = 'v1.3.4/stale-reminder-guard';
 const DELIVERED_REMINDER_RELEASE_CHECK = 'v1.3.4/delivered-reminder-withdrawn';
+const REMINDER_BOOT_RECOVERY_RELEASE_CHECK = 'v1.3.5/reminder-boot-recovery';
 const DELIVERED_REMINDERS_STORAGE_KEY = 'mindwtr:local:delivered-reminders:v1';
 // The platforms cannot tell JS whether a notification is still in the tray, so an
 // entry is forgotten this long after its reminder's time (the native app's bound).
@@ -545,6 +548,57 @@ async function deleteStaleNativeAlarms(api: AlarmNotificationsApi): Promise<void
   }
 }
 
+// Persisted signatures describe library DB rows, not AlarmManager state after reboot.
+async function rearmRetainedNativeAlarms(api: AlarmNotificationsApi): Promise<void> {
+  if (Platform.OS !== 'android' || !loadedAlarmMap) return;
+  const native = NativeModules.RNAlarmNotification as {
+    rearmAlarms?: (ids: number[]) => Promise<{
+      requested: number; rearmed: number; skipped: number; failed: number;
+      bootEnabled: boolean; exactAllowed: boolean;
+    }>;
+  } | undefined;
+  if (typeof native?.rearmAlarms !== 'function') {
+    if (isLoggingEnabled()) logNotificationInfo('Reminder boot recovery unavailable', { releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK, outcome: 'unavailable' });
+    return;
+  }
+  try {
+    if (typeof api.getScheduledAlarms !== 'function') throw new Error('inventory unavailable');
+    const rows = await api.getScheduledAlarms();
+    if (!Array.isArray(rows)) throw new Error('inventory unreadable');
+    const { settings, tasks, projects } = useTaskStore.getState();
+    if (!hasActiveMobileNotificationFeature(settings)) return;
+    const taskMap = new Map(tasks.map((task) => [task.id, task]));
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const ids = new Set(Array.from(alarmMap, ([key, entry]) => (
+      isReminderOwnerGone(key, taskMap, projectMap) ? 0 : entry.id
+    )).filter((id) => Number.isSafeInteger(id) && id > 0));
+    const stale = new Set(findStaleNativeReminderAlarms({ rows, trackedIds: ids, tasks, projects, now: new Date() }).map(({ id }) => id));
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const id = Number(row.id);
+      if (isPomodoroNativeAlarm(row)) {
+        ids.delete(id);
+        continue;
+      }
+      const data = readNativeAlarmData(row.data);
+      if (Number.isSafeInteger(id) && id > 0 && !stale.has(id) && row.scheduleType === 'once'
+        && areTaskRemindersEnabled(settings)
+        && data.kind?.startsWith('task-') && data.alarmKey?.startsWith('task:')
+        && !taskMap.get(data.alarmKey.slice('task:'.length).replace(/:r\d+$/, ''))?.suppressMindwtrReminders
+        && !isReminderOwnerGone(data.alarmKey, taskMap, projectMap)) ids.add(id);
+    }
+    const result = await native.rearmAlarms(Array.from(ids));
+    if (isLoggingEnabled()) logNotificationInfo('Reminder boot recovery complete', {
+      releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK,
+      requested: result.requested, rearmed: result.rearmed, skipped: result.skipped, failed: result.failed,
+      bootEnabled: result.bootEnabled, exactAllowed: result.exactAllowed,
+      outcome: result.failed > 0 || (result.rearmed > 0 && !result.bootEnabled) ? 'incomplete' : 'rearmed',
+    });
+  } catch {
+    if (isLoggingEnabled()) logNotificationWarn('Reminder boot recovery failed', { releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK, outcome: 'failed' });
+  }
+}
+
 const getDeliveredNotificationModule = (): DeliveredNotificationModule | undefined => (
   (NativeModules as Record<string, unknown>).RNAlarmNotification as DeliveredNotificationModule | undefined
 );
@@ -757,6 +811,7 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     projects: new Map(projects.map((project) => [project.id, project])),
   }, now.getTime());
   await collapseDeliveredReminderThreads(api);
+  if (options.deleteStale) await rearmRetainedNativeAlarms(api);
   if (!taskRemindersEnabled) {
     const morningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:morning');
     const eveningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:evening');

@@ -575,7 +575,7 @@ export function shouldRescheduleReminderAlarms(state: ReminderStoreSnapshot, pre
 }
 
 /** An Android alarm row's `key==>value;;` data (or an object), as strings. */
-function readNativeAlarmData(value: unknown): Record<string, string> {
+export function readNativeAlarmData(value: unknown): Record<string, string> {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]));
     }

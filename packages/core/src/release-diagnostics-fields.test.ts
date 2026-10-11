@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // reminder-boot-recovery: native scheduling acknowledgments, not a DB-row inventory count.
+    'requested', 'rearmed', 'skipped', 'failed', 'bootEnabled', 'exactAllowed',
     // renderer-navigation: fixed route categories, a runtime token, and coarse library sizes.
     'rendererRun', 'navigationSequence', 'previousView', 'nextView', 'actualView',
     'taskCountBucket', 'projectCountBucket', 'trashCountBucket', 'historyCountBucket',

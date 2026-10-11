@@ -31,7 +31,9 @@ const {
   mockRestorePersistentCaptureNotification,
   mockIsLoggingEnabled,
   mockLogInfo,
+  mockLogWarn,
   mockPlatform,
+  mockNativeModule,
   mockPermissionsAndroidCheck,
   mockPermissionsAndroidRequest,
 } = vi.hoisted(() => ({
@@ -67,6 +69,8 @@ const {
   mockRestorePersistentCaptureNotification: vi.fn(),
   mockIsLoggingEnabled: vi.fn(() => true),
   mockLogInfo: vi.fn(async () => undefined),
+  mockLogWarn: vi.fn(async () => undefined),
+  mockNativeModule: {} as { rearmAlarms?: ReturnType<typeof vi.fn> },
   mockPlatform: {
     OS: 'android',
     Version: 34,
@@ -104,7 +108,7 @@ vi.mock('react-native', () => ({
       return { remove: () => undefined };
     }
   },
-  NativeModules: {},
+  NativeModules: { RNAlarmNotification: mockNativeModule },
   PermissionsAndroid: {
     PERMISSIONS: { POST_NOTIFICATIONS: 'POST_NOTIFICATIONS' },
     RESULTS: { GRANTED: 'granted', NEVER_ASK_AGAIN: 'never_ask_again' },
@@ -159,7 +163,7 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
 vi.mock('./app-log', () => ({
   isLoggingEnabled: mockIsLoggingEnabled,
   logInfo: mockLogInfo,
-  logWarn: vi.fn(async () => undefined),
+  logWarn: mockLogWarn,
 }));
 
 vi.mock('@/modules/notification-open-intents', () => ({
@@ -184,6 +188,8 @@ describe('notification-service-local', () => {
     mockAsyncStorageRemoveItem.mockReset();
     mockAsyncStorageSetItem.mockReset();
     mockStoreSubscribe.mockClear();
+    mockLogWarn.mockClear();
+    delete mockNativeModule.rearmAlarms;
     mockStoreState.settings = {};
     mockStoreState.tasks = [];
     mockStoreState.projects = [];
@@ -694,6 +700,111 @@ describe('notification-service-local', () => {
       await startLocalMobileNotifications();
 
       expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(7);
+    });
+  });
+
+  describe('boot recovery', () => {
+    const successfulRecovery = { requested: 1, rearmed: 1, skipped: 0, failed: 0, bootEnabled: true, exactAllowed: true };
+    beforeEach(() => {
+      mockNativeModule.rearmAlarms = vi.fn(async () => successfulRecovery);
+      mockStoreState.tasks = [{ id: 'live', title: 'Live', dueDate: new Date(Date.now() + 3600000).toISOString() }];
+    });
+
+    it('rearms unchanged retained rows and live snoozes after pruning, without recreating them', async () => {
+      await startLocalMobileNotifications();
+      const row = (id: number, data: string, scheduleType = 'once') => ({ id, data, scheduleType, year: 2099, month: 1, day: 1, hour: 9, minute: 0, second: 0 });
+      mockAlarmGetScheduledAlarms.mockResolvedValue([
+        row(99, 'kind==>task-due;;alarmKey==>task:live;;'),
+        row(100, 'kind==>task-due;;alarmKey==>task:live;;'),
+        row(101, 'kind==>task-due;;alarmKey==>task:gone;;'),
+        row(102, 'kind==>pomodoro;;'),
+        row(103, 'unknown==>value;;'),
+        row(104, 'kind==>daily-digest;;alarmKey==>digest:morning;;', 'repeat'),
+      ]);
+      mockAlarmScheduleAlarm.mockClear();
+      mockNativeModule.rearmAlarms!.mockClear();
+      await startLocalMobileNotifications();
+      expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledExactlyOnceWith([99, 100]);
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(101);
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(104);
+      expect(mockAlarmDeleteAlarm.mock.invocationCallOrder.at(-1)).toBeLessThan(mockNativeModule.rearmAlarms!.mock.invocationCallOrder[0]);
+    });
+
+    it('recovers a persisted unchanged signature on cold startup without allocating a new row', async () => {
+      installPomodoroStorage();
+      await startLocalMobileNotifications();
+      __localNotificationTestUtils.resetForTests();
+      mockAlarmScheduleAlarm.mockClear();
+      mockNativeModule.rearmAlarms!.mockClear();
+      await startLocalMobileNotifications();
+      expect(mockAlarmScheduleAlarm).not.toHaveBeenCalled();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledExactlyOnceWith([99]);
+      expect(__localNotificationTestUtils.getAlarmMapSnapshot().get('task:live')?.id).toBe(99);
+    });
+
+    it('holds the serial queue through native recovery', async () => {
+      const first = deferred<typeof successfulRecovery>();
+      mockNativeModule.rearmAlarms!.mockReturnValueOnce(first.promise);
+      const start = startLocalMobileNotifications();
+      await vi.waitFor(() => expect(mockNativeModule.rearmAlarms).toHaveBeenCalledTimes(1));
+      const second = startLocalMobileNotifications();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledTimes(1);
+      first.resolve(successfulRecovery);
+      await Promise.all([start, second]);
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledTimes(2);
+      expect(mockAlarmScheduleAlarm).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs actual partial native errors and retries on the next start', async () => {
+      mockNativeModule.rearmAlarms!.mockResolvedValue({ ...successfulRecovery, rearmed: 0, failed: 1 });
+      await startLocalMobileNotifications();
+      expect(mockLogInfo).toHaveBeenCalledWith('[Local Notifications] Reminder boot recovery complete', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.5/reminder-boot-recovery', ...successfulRecovery, rearmed: 0, failed: 1, outcome: 'incomplete' },
+      }));
+      mockNativeModule.rearmAlarms!.mockResolvedValue(successfulRecovery);
+      await startLocalMobileNotifications();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps an older native build working and identifies unavailable recovery', async () => {
+      delete mockNativeModule.rearmAlarms;
+      await expect(startLocalMobileNotifications()).resolves.toBeUndefined();
+      expect(mockLogInfo).toHaveBeenCalledWith('[Local Notifications] Reminder boot recovery unavailable', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.5/reminder-boot-recovery', outcome: 'unavailable' },
+      }));
+    });
+
+    it('does not rearm when notification features are disabled', async () => {
+      mockStoreState.settings = { notificationsEnabled: false, dailyDigestMorningEnabled: false, dailyDigestEveningEnabled: false, weeklyReviewEnabled: false };
+      await startLocalMobileNotifications();
+      expect(mockNativeModule.rearmAlarms).not.toHaveBeenCalled();
+    });
+
+    it('does not rearm task snoozes when only daily digest is enabled', async () => {
+      mockStoreState.settings = { notificationsEnabled: false, dailyDigestMorningEnabled: true, dailyDigestMorningTime: '09:00', dailyDigestEveningEnabled: false };
+      mockAlarmGetScheduledAlarms.mockResolvedValue([{ id: 100, data: 'kind==>task-due;;alarmKey==>task:live;;', scheduleType: 'once', year: 2099, month: 1, day: 1, hour: 9, minute: 0, second: 0 }]);
+      await startLocalMobileNotifications();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledExactlyOnceWith([99]);
+    });
+
+    it('reports native rejection without exposing the error and retries on the next start', async () => {
+      mockNativeModule.rearmAlarms!.mockRejectedValueOnce(new Error('PRIVATE TASK CONTENT'));
+      await expect(startLocalMobileNotifications()).resolves.toBeUndefined();
+      expect(mockLogWarn).toHaveBeenCalledWith('[Local Notifications] Reminder boot recovery failed', expect.objectContaining({
+        extra: { releaseCheck: 'v1.3.5/reminder-boot-recovery', outcome: 'failed' },
+      }));
+      expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain('PRIVATE TASK CONTENT');
+      await startLocalMobileNotifications();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalledTimes(2);
+    });
+
+    it('respects diagnostic logging opt-out while recovering', async () => {
+      mockIsLoggingEnabled.mockReturnValue(false);
+      await startLocalMobileNotifications();
+      expect(mockNativeModule.rearmAlarms).toHaveBeenCalled();
+      expect((mockLogInfo.mock.calls as unknown as [string, unknown][]).some(([message]) => String(message).includes('Reminder boot recovery'))).toBe(false);
     });
   });
 

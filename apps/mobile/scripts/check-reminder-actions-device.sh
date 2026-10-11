@@ -35,3 +35,5 @@ run_test() {
 run_test testNotificationActions
 run_test testSeedDurableQueue
 run_test testReplayDurableQueue
+
+run_test testBootRecovery

@@ -1509,6 +1509,7 @@
     "reactivateArchivedProject",
     "readGtdTaskOpenMode",
     "readImportSource",
+    "readNativeAlarmData",
     "readResponseBody",
     "readResponseText",
     "reaffirmRemoteEncryptionNoKey",
