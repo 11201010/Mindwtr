@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -332,7 +333,9 @@ fun TextStyle.compact(): TextStyle = compact(LocalDensity.current)
 fun TextStyle.compact(density: Density): TextStyle {
     val factor = compactFontFactor(density.fontScale)
     val line = if (lineHeight.isSpecified) with(density) { (lineHeight.value * density.fontScale).dp.toSp() } else lineHeight
-    return copy(fontSize = if (factor == 1f) fontSize else fontSize * factor, lineHeight = line)
+    // RN's single line keeps its whole line height, the glyphs centred in it; Compose's default trims it to the glyphs.
+    return copy(fontSize = if (factor == 1f) fontSize else fontSize * factor, lineHeight = line,
+        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None))
 }
 
 /** RN's type: the platform sans (Fonts.sans is 'normal' on Android), at RN's size, weight, and line height. */

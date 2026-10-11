@@ -1,5 +1,6 @@
 package tech.dongdongbh.mindwtr.pilot
 
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -41,6 +42,9 @@ class CompactTextTest {
             val style = rnText(13, 700, 17).compact(density)
             assertEquals("font scale $scale", 17f * scale, with(density) { style.lineHeight.toDp() }.value, 0.01f)
         }
+        // RN's single line keeps its whole line height (RN's pill is 12 + 17 x scale + 2 dp tall): Compose's default trims a
+        // single line's spacing above and below, so the pill would shrink to the glyphs.
+        assertEquals(LineHeightStyle.Trim.None, rnText(13, 700, 17).compact(NonlinearDensity(1f)).lineHeightStyle?.trim)
         // The size stays capped: 13 sp shown at 1.2x the base, whatever the scale.
         assertEquals(13f * 1.2f / 2f, rnText(13, 700, 17).compact(NonlinearDensity(2f)).fontSize.value, 0.01f)
     }
