@@ -52,7 +52,8 @@ const ACTIVITY = `${PKG}/${PKG}.MainActivity`;
 const TAG = 'MindwtrNativeDev';
 const UI_FILE = '/data/local/tmp/mindwtr-d1-ui.xml';
 const PHONE_DIR = '/sdcard/Download/mindwtr-test-d1';
-const TREE = 'content://com.android.externalstorage.documents/tree/primary%3ADownload%2Fmindwtr-test-d1';
+// The folder picker's starting place (EXTRA_INITIAL_URI takes a document URI, not a tree URI).
+const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmindwtr-test-d1';
 const DB = 'files/SQLite/mindwtr.db';
 const PROPS = ['backup_stop', 'journal_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
 const work = resolve(app, 'android/build/data-check');
@@ -192,6 +193,16 @@ const useTestFolder = async () => {
     await until('the folder picker', otherAppFront, 15_000, 500);
     await sleep(1500);
     let nodes = await anyScreen();
+    // Opened somewhere else (the provider ignored the starting place): walk to Download › mindwtr-test-d1.
+    for (const folder of ['Download', 'mindwtr-test-d1']) {
+        if (nodes.some((node) => node['resource-id']?.endsWith('breadcrumb_text') && node.text === folder)) continue;
+        if (folder === 'Download' && nodes.some((node) => node.text === 'mindwtr-test-d1' && node['resource-id']?.endsWith('breadcrumb_text'))) continue;
+        const entry = nodes.find((node) => node.text === folder && node['resource-id']?.endsWith('android:id/title'));
+        if (!entry) continue;
+        await tapAny(entry);
+        await sleep(1500);
+        nodes = await anyScreen();
+    }
     const use = nodes.find((node) => /use this folder/i.test(node.text ?? '') && node.enabled !== 'false');
     if (!use) fail(`the folder picker shows no "Use this folder" (${nodes.map((node) => node.text).filter(Boolean).slice(0, 12).join(' | ')})`);
     await tapAny(use);
