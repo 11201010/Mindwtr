@@ -827,8 +827,10 @@ try {
     device.launch(RN_ACTIVITY);
     if (c3FixesOnly) {
         await setNight('no');
-        await shootCalendarReload('rn', true);
+        // Settings › Calendar first: RN's Calendar reads the subscriptions RN's Settings › Calendar copies to the device.
         await shootPillsFontScale('rn', true, RN_ACTIVITY);
+        device.launch(RN_ACTIVITY);
+        await shootCalendarReload('rn', true);
     }
     for (const mode of c3FixesOnly ? [] : ['no', 'yes']) {
         await setNight(mode);
@@ -872,8 +874,9 @@ try {
     await setNight('no');
     device.launch(NATIVE_ACTIVITY);
     if (c3FixesOnly) {
-        await shootCalendarReload('native', false);
         await shootPillsFontScale('native', false, NATIVE_ACTIVITY);
+        device.launch(NATIVE_ACTIVITY);
+        await shootCalendarReload('native', false);
     }
     for (const mode of c3FixesOnly ? [] : ['no', 'yes']) {
         if (mode === 'yes') await setNight('yes');
