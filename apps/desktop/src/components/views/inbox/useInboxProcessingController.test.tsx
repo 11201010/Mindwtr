@@ -749,6 +749,31 @@ describe('useInboxProcessingController title grammar', () => {
             dueDate: expect.stringContaining('2026-09-01'),
         }));
     });
+
+    // The priority, energy, and person controls are hidden by default.
+    it('saves typed priority, energy, and person while their controls are hidden', async () => {
+        const updateTask = vi.fn<UpdateTask>(async () => ({ success: true }));
+        const { result } = renderController(updateTask);
+
+        await waitFor(() => {
+            expect(result.current.wizardProps.processingTask?.id).toBe('one');
+        });
+
+        act(() => {
+            result.current.wizardProps.setField('title', 'Call bank /priority:high /energy:low %Alice');
+        });
+        await act(async () => {
+            await result.current.wizardProps.handleSetProject(null);
+        });
+
+        expect(updateTask).toHaveBeenCalledWith('one', expect.objectContaining({
+            status: 'next',
+            title: 'Call bank',
+            priority: 'high',
+            energyLevel: 'low',
+            assignedTo: 'Alice',
+        }));
+    });
 });
 
 // The inline person create awaited `addPerson` and threw the `Person | null`

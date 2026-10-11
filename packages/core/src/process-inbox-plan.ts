@@ -1,6 +1,10 @@
 import { resolveFeatureFlags } from './resolve-feature-flags';
 import { resolveProcessInboxContainerFields } from './process-inbox-workflow';
-import type { ProcessInboxWorkflowEvent, ProcessInboxWorkflowFields } from './process-inbox-workflow';
+import type {
+    ParsedProcessInboxTitleFields,
+    ProcessInboxWorkflowEvent,
+    ProcessInboxWorkflowFields,
+} from './process-inbox-workflow';
 import type { AppData, Task, TaskEditorFieldId } from './types';
 
 export type ProcessInboxPlanField = Extract<
@@ -117,6 +121,9 @@ export type ProcessInboxDecisionDraft = {
     /** Visible date controls touched during this decision. Property presence
      * matters: `undefined` means the user explicitly cleared that control. */
     dateControlFields?: Partial<Pick<ProcessInboxWorkflowFields, 'startTime' | 'dueDate' | 'reviewAt'>>;
+    /** Tokens parsed from the title. A typed priority, energy, person, or
+     * estimate is explicit input, so it survives a hidden control. */
+    parsedFields?: ParsedProcessInboxTitleFields;
     /** Explicit task edits that do not belong to destination policy (for
      * example a cleaned title, appended link, or Today focus token). */
     taskUpdates?: Partial<Task>;
@@ -177,6 +184,16 @@ function resolveActionFields(
         ...(plan.visibleFields.reviewAt ? { reviewAt: fields.reviewAt } : {}),
         ...explicitDateFields,
     };
+}
+
+const TITLE_SINGLE_VALUE_FIELDS = ['priority', 'energyLevel', 'assignedTo', 'timeEstimate'] as const;
+
+/** The merged value of each single-value field the title typed. The merge
+ * already settled token-versus-picker precedence, so read it from `fields`. */
+function resolveTypedTaskUpdates(draft: ProcessInboxDecisionDraft): Partial<Task> | undefined {
+    const typed = TITLE_SINGLE_VALUE_FIELDS.filter((field) => draft.parsedFields?.[field]);
+    if (typed.length === 0) return draft.taskUpdates;
+    return Object.assign({ ...draft.taskUpdates }, ...typed.map((field) => ({ [field]: draft.fields[field] })));
 }
 
 function resolveExplicitDateFields(draft: ProcessInboxDecisionDraft): ProcessInboxWorkflowFields {
@@ -263,7 +280,7 @@ export function prepareProcessInboxDecision({
     return {
         ok: true,
         event,
-        taskUpdates: event.type === 'discard' ? undefined : draft.taskUpdates,
+        taskUpdates: event.type === 'discard' ? undefined : resolveTypedTaskUpdates(draft),
         resetFields,
     };
 }

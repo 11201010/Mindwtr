@@ -30,6 +30,7 @@ import {
     type ProcessInboxAnswers,
 } from './process-inbox-model';
 import { resolveProcessInboxPlan } from './process-inbox-plan';
+import { buildQuickAddParseOptions, parseProcessInboxTitleInput } from './quick-add';
 import { resetForTests } from './store';
 import type { Task } from './types';
 
@@ -309,5 +310,37 @@ describe('captured RN note and date controls', () => {
             if (oldTz === undefined) delete process.env.TZ;
             else process.env.TZ = oldTz;
         }
+    });
+});
+
+// Priority, energy, and person controls are hidden by default, so the typed
+// tokens are the only way the user said anything. They must reach the write.
+describe('typed single-value tokens with hidden controls', () => {
+    const title = 'Call bank /priority:high /energy:low %Alice';
+    const commit = (settings: Parameters<typeof resolveProcessInboxPlan>[0], decision: 'next' | 'someday') => {
+        const task = { id: 'inbox', title, status: 'inbox' } as Task;
+        const parseOptions = buildQuickAddParseOptions(settings);
+        return prepareProcessInboxCommit({ task, plan: resolveProcessInboxPlan(settings),
+            decision: { type: decision }, title, description: '',
+            parseTitle: (input) => parseProcessInboxTitleInput(input, { parseOptions }),
+            selection: { projectId: null, areaId: null, contexts: [], tags: [], priority: undefined,
+                energyLevel: undefined, assignedTo: '', timeEstimate: undefined },
+            scheduleUpdates: {}, dirtyScheduleFields: new Set() });
+    };
+    const write = (prepared: ReturnType<typeof commit>) => {
+        if (!prepared.ok || prepared.event.type === 'discard') throw new Error('Expected an update');
+        return { ...prepared.event.fields, ...prepared.taskUpdates };
+    };
+
+    it.each(['next', 'someday'] as const)('saves typed priority, energy, and person on %s with default settings', (decision) => {
+        expect(write(commit(undefined, decision))).toMatchObject({
+            title: 'Call bank', priority: 'high', energyLevel: 'low', assignedTo: 'Alice',
+        });
+    });
+
+    it('never writes a priority while Priorities are turned off', () => {
+        const written = write(commit({ features: { priorities: false } } as never, 'next'));
+        expect(written).not.toHaveProperty('priority');
+        expect(written).toMatchObject({ energyLevel: 'low', assignedTo: 'Alice' });
     });
 });

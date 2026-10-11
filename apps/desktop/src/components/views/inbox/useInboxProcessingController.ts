@@ -369,10 +369,8 @@ export function useInboxProcessingController({
                 fields,
                 explicitDateFields: edits?.explicitDateFields,
                 dateControlFields,
-                // Explicit estimate syntax survives a hidden estimate control.
-                taskUpdates: edits?.parsedFields.timeEstimate
-                    ? { ...edits.taskUpdates, timeEstimate: fields.timeEstimate }
-                    : edits?.taskUpdates,
+                parsedFields: edits?.parsedFields,
+                taskUpdates: edits?.taskUpdates,
             },
             decision,
             plan: processInboxPlan,
