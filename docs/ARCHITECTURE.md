@@ -8,6 +8,7 @@ Mindwtr is a local-first GTD system built as a Bun workspace monorepo. The share
   Shared domain model, Zustand store, quick-add parsing, recurrence, sync/merge, storage adapters, and shared tests.
 - `apps/desktop`
   Tauri + React shell. Uses the shared core store with desktop-specific UI state, native dialogs, filesystem access, and SQLite-backed persistence.
+  The Rust side also hosts the optional Local API (`local_api.rs`), a REST server for scripts and the MCP helper's API mode. The built-in MCP server (`mcp_server.rs`) runs in the same process, over authenticated streamable HTTP on `127.0.0.1:8722`. Its tools (`mcp_tools.rs`) only adapt arguments and call the same Local API operations; `local_query.rs` holds the task queries both share.
 - `apps/mobile`
   Expo + React Native shell. Reuses the core store and sync logic with mobile-specific storage, navigation, notifications, and calendar integrations.
 - `apps/cloud`
@@ -37,7 +38,7 @@ Mindwtr prefers explicit repair and merge logic in the app layer over hard datab
 
 ## Sync model
 
-Sync is optional and backend-agnostic. Supported backends include file sync, WebDAV, Dropbox in supported builds, and the self-hosted cloud server.
+Sync is optional and backend-agnostic. Supported backends include file sync, WebDAV, Dropbox in supported builds, the self-hosted cloud server, and CloudKit (iCloud) in the Apple builds.
 
 Important properties:
 
