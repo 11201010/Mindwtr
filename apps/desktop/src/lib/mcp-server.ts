@@ -53,7 +53,7 @@ export function getMcpConnectionDetails(status: McpServerStatus): string | null 
     if (!status.enabled || !status.running || !status.token || status.url !== `http://127.0.0.1:${MCP_SERVER_PORT}/mcp`) return null;
     return JSON.stringify({
         mcpServers: {
-            mindwtr: { url: status.url, headers: { Authorization: `Bearer ${status.token}` } },
+            mindwtr: { type: 'http', url: status.url, headers: { Authorization: `Bearer ${status.token}` } },
         },
     }, null, 2);
 }

@@ -44,7 +44,7 @@ describe('managed MCP adapter', () => {
     it('copies URL and bearer configuration only for a running loopback server', () => {
         const details = getMcpConnectionDetails(status);
         expect(JSON.parse(details!)).toEqual({
-            mcpServers: { mindwtr: { url: status.url, headers: { Authorization: 'Bearer private-token' } } },
+            mcpServers: { mindwtr: { type: 'http', url: status.url, headers: { Authorization: 'Bearer private-token' } } },
         });
         for (const patch of [
             { enabled: false }, { running: false }, { token: null }, { url: 'http://external.example/mcp' },
