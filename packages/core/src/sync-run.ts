@@ -22,7 +22,7 @@ import type {
     SyncRunStorage,
     SyncRunStoreBridge,
 } from './sync-run-ports';
-import { SyncRemoteWriteConflict } from './sync-run-ports';
+import { SyncRemoteWriteConflict, type SyncFollowUpReason } from './sync-run-ports';
 import { LocalSyncAbort, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
 import { hasFreshAttachmentCleanupWork } from './attachment-cleanup';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
@@ -791,23 +791,33 @@ class SharedSyncRunMachine {
             // delayed availability without rewriting an otherwise valid run.
             this.notifier.logWarning('Failed to release remote sync mutation fence', error);
             const retryAfterMs = lease.retryAfterMs();
-            this.requestFollowUpAfter(retryAfterMs);
+            this.requestFollowUpAfter(retryAfterMs, 'remote-fence-release');
             return retryAfterMs;
         }
     }
 
-    private requestFollowUp(): void {
-        if (this.options.activationProbe) return;
-        this.hooks.requestFollowUp();
+    private notifyFollowUp(reason: SyncFollowUpReason, data?: AppData, previousData?: AppData | null): void {
+        try {
+            this.notifier.onDiagnostic?.({ event: 'follow-up-requested', followUpReason: reason,
+                data, previousData, extra: { step: this.state.step } });
+        } catch { /* Diagnostics must not change queue decisions. */ }
     }
 
-    private requestFollowUpAfter(delayMs: number): void {
+    private requestFollowUp(reason: SyncFollowUpReason, data?: AppData, previousData?: AppData | null): void {
+        if (this.options.activationProbe) return;
+        this.hooks.requestFollowUp();
+        this.notifyFollowUp(reason, data, previousData);
+    }
+
+    private requestFollowUpAfter(delayMs: number, reason: SyncFollowUpReason): void {
         if (this.options.activationProbe) return;
         if (this.hooks.requestFollowUpAfter) {
             this.hooks.requestFollowUpAfter(delayMs);
+            this.notifyFollowUp(reason);
             return;
         }
         this.hooks.requestFollowUp();
+        this.notifyFollowUp(reason);
     }
 
     private attachmentHelpers(
@@ -849,7 +859,7 @@ class SharedSyncRunMachine {
             acceptCoveredSnapshot: expectedData && this.hooks.acceptCoveredSnapshot
                 ? () => this.acceptCoveredLocalSnapshot(expectedData)
                 : undefined,
-            requestFollowUp: () => this.requestFollowUp(),
+            requestFollowUp: () => this.requestFollowUp('stale-local'),
             onStale: this.hooks.onStaleSnapshot
                 ? (details) => this.hooks.onStaleSnapshot?.({ ...details, step: this.state.step })
                 : undefined,
@@ -1149,7 +1159,7 @@ class SharedSyncRunMachine {
         } catch (error) {
             if (error instanceof SyncRemoteWriteConflict) {
                 // Another device wrote between readRemote and writeRemote; retry next cycle.
-                this.requestFollowUp();
+                this.requestFollowUp('remote-conflict');
                 throw new LocalSyncAbort('remote-write-conflict', error.message);
             }
             throw error;
@@ -1163,7 +1173,7 @@ class SharedSyncRunMachine {
         state.lastRemoteWriteMergedServerData = serverMergedRemoteData;
         if (serverMergedRemoteData) {
             state.remoteDataForCompare = null;
-            this.requestFollowUp();
+            this.requestFollowUp('server-contribution', data, previousRemoteData);
         } else {
             state.remoteDataForCompare = remoteDocument;
         }
@@ -2031,6 +2041,7 @@ class SharedSyncRunMachine {
             if (!this.options.activationProbe && retryAttempt < 1) {
                 if (this.hooks.requestFileSyncLockBusyFollowUpAfter) {
                     this.hooks.requestFileSyncLockBusyFollowUpAfter(error.retryAfterMs, retryAttempt + 1);
+                    this.notifyFollowUp('file-lock-busy');
                 }
             }
             return {
@@ -2044,7 +2055,7 @@ class SharedSyncRunMachine {
             // Attributable in the log: a holder with seconds left is a dead lease
             // (a live one renews every ttl/3), not a device actively syncing.
             this.notifier.logWarning('Remote sync location is reserved; retrying after the lease lapses', error);
-            if (!this.options.activationProbe) this.requestFollowUpAfter(error.retryAfterMs);
+            if (!this.options.activationProbe) this.requestFollowUpAfter(error.retryAfterMs, 'remote-fence-busy');
             return {
                 success: true,
                 skipped: 'remoteFenceBusy',

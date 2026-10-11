@@ -13,6 +13,10 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // mobile-sync-follow-up: fixed request class, one aggregate comparison; no IDs, values or paths.
+    'requestClass', 'comparison',
+    'outgoingTasksSig', 'outgoingProjectsSig', 'outgoingSectionsSig', 'outgoingAreasSig', 'outgoingPeopleSig', 'outgoingSettingsSig',
+    'priorRemoteTasksSig', 'priorRemoteProjectsSig', 'priorRemoteSectionsSig', 'priorRemoteAreasSig', 'priorRemotePeopleSig', 'priorRemoteSettingsSig',
     // reminder-boot-recovery: native scheduling acknowledgments, not a DB-row inventory count.
     'requested', 'rearmed', 'skipped', 'failed', 'bootEnabled', 'exactAllowed',
     // renderer-navigation: fixed route categories, a runtime token, and coarse library sizes.

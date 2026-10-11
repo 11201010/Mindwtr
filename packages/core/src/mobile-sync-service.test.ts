@@ -9,8 +9,9 @@ import { SyncRemoteWriteConflict } from './sync-run-ports';
 import { performSyncCycle } from './sync';
 import { createSyncEncryptionStateStore, readSyncLocationScope } from './sync-encryption-local-state';
 import { createWebdavCapabilityProofStore } from './webdav-capability-proof';
-import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY } from './sync-storage-keys';
+import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY, CLOUD_URL_KEY, CLOUD_TOKEN_KEY } from './sync-storage-keys';
 import type { AppData } from './types';
+import * as payloadTrace from './sync-payload-trace';
 
 const emptyData = (): AppData => ({
   tasks: [],
@@ -47,7 +48,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
     setItem: vi.fn(async (key: string, value: string) => { values.set(key, value); }),
     removeItem: vi.fn(async (key: string) => { values.delete(key); }),
   };
-  const logs: Array<{ level: string; message: string; extra?: Record<string, string> }> = [];
+  const logs: Array<{ level: string; message: string; extra?: Record<string, string>; force?: boolean }> = [];
   const syncErrors: string[] = [];
   const store = {
     lastDataChangeAt: 1,
@@ -89,7 +90,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
       saveData: async (data) => { saved.push(data); },
     },
     log: {
-      info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra }); },
+      info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra, force: context?.force }); },
       warn: (message, context) => { logs.push({ level: 'warn', message, extra: context?.extra }); },
       syncError: async (error, context) => {
         syncErrors.push(`${error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)} ${context.url ?? ''}`);
@@ -179,6 +180,61 @@ const WEBDAV_VALUES = {
 };
 
 describe('mobile sync service behind fake ports', () => {
+  it('bounds forced follow-up receipts and one large-store comparison without changing queue or writes', async () => {
+    const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted',
+      [CLOUD_URL_KEY]: 'https://private.example.com', }, secrets: { [CLOUD_TOKEN_KEY]: 'private-credential' } });
+    fake.store.settings = { diagnostics: { loggingEnabled: false } };
+    const outgoing = { ...emptyData(), tasks: Array.from({ length: 5000 }, (_, i) => ({
+      id: `private-id-${i}`, title: 'private task text', status: 'inbox', tags: [], contexts: [],
+      createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+    })), settings: { theme: 'dark', syncPreferences: { appearance: true },
+      appearance: { fontFamily: 'private font value' } } } as AppData;
+    const remote = { ...outgoing, settings: { ...outgoing.settings, theme: 'light' } } as AppData;
+    fake.host.localData.getData = async () => outgoing;
+    fake.host.core!.getInMemoryAppDataSnapshot = () => outgoing;
+    fake.host.core!.cloudGetJson = vi.fn(async () => remote) as never;
+    const put = vi.fn(async () => ({ fingerprint: 'opaque', serverMergedRemoteData: true }));
+    fake.host.core!.cloudPutJson = put as never;
+    fake.host.core!.performSyncCycle = vi.fn(async (io) => {
+      await io.readLocal();
+      await io.readRemote();
+      io.onStep?.('write-remote');
+      await io.writeRemote(outgoing);
+      return { status: 'success', stats: emptyStats, data: outgoing } as never;
+    });
+    const signatures = vi.spyOn(payloadTrace, 'buildSyncPayloadSurfaceTraceExtra');
+    const forced: typeof fake.logs = [];
+    const originalInfo = fake.host.log.info;
+    fake.host.log.info = (message, context) => {
+      if (context?.force) forced.push({ level: 'info', message, extra: context.extra, force: true });
+      return originalInfo(message, context);
+    };
+    const service = createMobileSyncService(fake.host);
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        await expect(service.performMobileSync(undefined, { manual: true })).resolves.toMatchObject({ success: true });
+        service.__mobileSyncTestUtils.clearFollowUpForTests();
+      }
+      expect(put).toHaveBeenCalledTimes(4);
+      expect(fake.saved).toHaveLength(4); // One existing sync-status save per cycle.
+      expect(fake.logs.filter((line) => line.message === 'Sync follow-up scheduled')).toHaveLength(4);
+      expect(forced).toHaveLength(2);
+      expect(forced[0].extra).toMatchObject({ reason: 'server-contribution', backend: 'cloud', step: 'write-remote',
+        requestClass: 'manual', outcome: 'requested' });
+      expect(forced[1].extra).toMatchObject({ comparison: 'captured' });
+      expect(forced[1].extra?.outgoingSettingsSig).not.toBe(forced[1].extra?.priorRemoteSettingsSig);
+      expect(forced[1].extra?.outgoingTasksSig).toBe(forced[1].extra?.priorRemoteTasksSig);
+      expect(signatures).toHaveBeenCalledTimes(2);
+      const receiptText = JSON.stringify(forced);
+      for (const secret of ['private task text', 'private-id-', 'private font value', 'private.example.com', 'private-credential']) {
+        expect(receiptText).not.toContain(secret);
+      }
+    } finally {
+      service.__mobileSyncTestUtils.clearFollowUpForTests();
+      signatures.mockRestore();
+    }
+  });
+
   it('reports each backend configuration from the stored keys', async () => {
     const off = createMobileSyncService(createFakeHost().host);
     await expect(off.getMobileSyncConfigurationStatus()).resolves.toEqual({ backend: 'off', configured: false });
@@ -379,9 +435,17 @@ describe('mobile sync service behind fake ports', () => {
       configOverride: { backend: 'webdav', webdav: { url: 'https://other.example.com', username: '', password: '' } },
     });
 
-    expect(proof).toEqual({ success: true, skipped: 'requeued' });
-    release();
-    await active;
+    try {
+      expect(proof).toEqual({ success: true, skipped: 'requeued' });
+      expect(fake.logs).toContainEqual(expect.objectContaining({ force: true,
+        extra: expect.objectContaining({ releaseCheck: 'v1.3.5/mobile-sync-follow-up',
+          reason: 'busy-request', backend: 'webdav', step: 'read-check', requestClass: 'auto', outcome: 'requested' }),
+      }));
+    } finally {
+      release();
+      await active;
+      await service.waitForMobileSyncIdle();
+    }
   });
 
   it('treats a lifecycle abort as a success and queues a follow-up', async () => {
@@ -397,8 +461,30 @@ describe('mobile sync service behind fake ports', () => {
 
     expect(result).toEqual({ success: true });
     expect(fake.logs.some((line) => line.message === 'Sync aborted by app lifecycle transition')).toBe(true);
+    expect(fake.logs).toContainEqual(expect.objectContaining({ force: true,
+      extra: expect.objectContaining({ releaseCheck: 'v1.3.5/mobile-sync-follow-up',
+        reason: 'lifecycle', backend: 'webdav', requestClass: 'auto', outcome: 'requested' }),
+    }));
     await service.waitForMobileSyncIdle();
     expect(performSyncCycle).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps lifecycle follow-up work when the forced diagnostic cannot be written', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    const originalInfo = fake.host.log.info;
+    fake.host.log.info = (message, context) => {
+      if (message === 'Mobile sync follow-up decision') return Promise.reject(new Error('log unavailable'));
+      return originalInfo(message, context);
+    };
+    const service = createMobileSyncService(fake.host);
+    const cycle = vi.mocked(fake.host.core!.performSyncCycle!);
+    cycle.mockImplementationOnce(async () => {
+      service.abortMobileSync();
+      throw new Error('aborted');
+    });
+    await expect(service.performMobileSync()).resolves.toEqual({ success: true });
+    await service.waitForMobileSyncIdle();
+    expect(cycle).toHaveBeenCalledTimes(2);
   });
 
   it('ends a cycle the background run abandons at its deadline as a failure, with no follow-up', async () => {

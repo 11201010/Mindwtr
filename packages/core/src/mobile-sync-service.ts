@@ -16,7 +16,7 @@ import type { SyncCryptoPrimitives, SyncKeyMaterial } from './sync-crypto';
 import { acquireSyncRemoteMutationFence, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS } from './sync-remote-fence';
 import { createDropboxSyncRemoteMutationFencePort, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl } from './sync-remote-fence-providers';
 import { clearIdleSyncCycleSnapshot, runSharedSyncCycle } from './sync-run';
-import { SyncRemoteWriteConflict, type SyncEncryptionPosture, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage } from './sync-run-ports';
+import { SyncRemoteWriteConflict, type SyncEncryptionPosture, type SyncFollowUpReason, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage } from './sync-run-ports';
 import { createSyncBackendIO, type FileSyncReadResult, type SyncBackendContext, type SyncTransport } from './sync-backend-io';
 import type { SyncBackendIO } from './sync-run-ports';
 import { createSyncOrchestrator } from './sync-orchestrator';
@@ -29,7 +29,7 @@ import { deleteDropboxFileVersioned, downloadDropboxAppData, DropboxFileNotFound
 import { hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, normalizeCloudUrl, normalizeWebdavUrl, persistExternalCalendars as persistExternalCalendarsForSync } from './sync-helpers';
 import { buildFastSyncScope, parseFastSyncState, serializeFastSyncState, type FastSyncState } from './sync-fast-sync';
 import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, createAbortableFetch, getInMemoryAppDataSnapshot, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
-import { buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
+import { buildSyncPayloadSurfaceTraceExtra, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
 import { isLikelyOfflineSyncError, isRemoteSyncBackend, SYNC_FILE_NAME, SyncFileLockUnavailableError, type SyncBackend } from './sync-service-utils';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { decodeUriSafe } from './async-utils';
@@ -551,6 +551,32 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     void log.info(message, { scope: 'sync', extra });
   };
 
+  const followUpReceipts = new Set<string>();
+  let previousCycleRequestedContribution = false;
+  let contributionComparisonCaptured = false;
+  let activeFollowUpContext: { backend: SyncBackend; step: string } | null = null;
+  const logFollowUpDecision = (
+    reason: SyncFollowUpReason | 'lifecycle' | 'busy-request',
+    backend: string,
+    step: string,
+    request: Pick<MobileSyncRequest, 'manual' | 'activationProbe'>,
+    suppressed = !allowQueuedFollowUp,
+    extra: Record<string, string> = {},
+  ): void => {
+    try {
+      if (core.isSandboxMode() && !isSyncPayloadTraceEnabled(core.useTaskStore.getState().settings)) return;
+      const requestClass = request.activationProbe ? 'probe' : request.manual ? 'manual' : 'auto';
+      const receipt = `${reason}:${requestClass}:${extra.comparison ?? ''}`;
+      if (followUpReceipts.has(receipt)) return;
+      followUpReceipts.add(receipt);
+      void Promise.resolve(log.info('Mobile sync follow-up decision', {
+        scope: 'sync', force: true,
+        extra: { releaseCheck: 'v1.3.5/mobile-sync-follow-up', reason, backend, step, requestClass,
+          outcome: suppressed ? 'suppressed' : 'requested', ...extra },
+      })).catch(() => {});
+    } catch { /* Diagnostics must not change queue decisions. */ }
+  };
+
   const resolveCloudProvider = (value: string | null): CloudProvider => (
     normalizeCoreCloudProvider(value, { allowDropbox: dropboxSyncEnabled })
   );
@@ -970,6 +996,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
 
     async run(): Promise<MobileSyncResult> {
       const backend = this.backend;
+      activeFollowUpContext = { backend, step: 'setup' };
       logSyncInfo('Sync start', { backend });
       logSyncInfo('Sync diagnostic start', { backend });
       let result: MobileSyncResult;
@@ -1023,7 +1050,9 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         }
         throw error;
       } finally {
+        previousCycleRequestedContribution = this.requestedServerContribution;
         fileSyncLockCleanupDeferred = await this.releaseResources();
+        activeFollowUpContext = null;
       }
       return result.success && fileSyncLockCleanupDeferred
         ? { ...result, fileSyncLockDeferred: 'cleanup' }
@@ -1376,6 +1405,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       return {
         setStep: (step) => {
           this.lastStep = step;
+          if (activeFollowUpContext) activeFollowUpContext.step = step;
           const nowMs = Date.now();
           const sinceLastStepMs = lastStepStartedAtMs > 0 ? nowMs - lastStepStartedAtMs : 0;
           lastStepStartedAtMs = nowMs;
@@ -1418,8 +1448,28 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       };
     }
 
+    private requestedServerContribution = false;
+
     private handleDiagnosticEvent(event: SyncRunDiagnosticEvent): void {
       const backend = this.backend;
+      if (event.event === 'follow-up-requested' && event.followUpReason) {
+        const extra: Record<string, string> = {};
+        if (event.followUpReason === 'server-contribution') {
+          this.requestedServerContribution = true;
+          if (allowQueuedFollowUp && previousCycleRequestedContribution && !contributionComparisonCaptured && event.data) {
+            contributionComparisonCaptured = true;
+            // One comparison per service, only after a repeated contribution; no IDs, values or paths.
+            try {
+              Object.assign(extra, buildSyncPayloadSurfaceTraceExtra(event.data, 'outgoing'));
+              if (event.previousData) Object.assign(extra, buildSyncPayloadSurfaceTraceExtra(event.previousData, 'priorRemote'));
+              extra.comparison = event.previousData ? 'captured' : 'prior-remote-unavailable';
+            } catch { extra.comparison = 'unavailable'; }
+          }
+        }
+        logFollowUpDecision(event.followUpReason, backend, this.lastStep,
+          { manual: this.manual, activationProbe: this.activationProbe }, !allowQueuedFollowUp, extra);
+        return;
+      }
       if (event.event === 'flush') {
         this.logPhaseDiagnostic('flush');
         return;
@@ -1862,6 +1912,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
               aborted: 'lifecycle',
             });
             this.queueFollowUp();
+            logFollowUpDecision('lifecycle', this.backend, context.step,
+              { manual: this.manual, activationProbe: this.activationProbe });
             return { success: true };
           }
           return null;
@@ -2509,6 +2561,10 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       return { success: true, skipped: 'disabled' };
     }
     const wasInFlight = mobileSyncOrchestrator.getState().inFlight;
+    if (wasInFlight) {
+      logFollowUpDecision('busy-request', activeFollowUpContext?.backend ?? 'unknown',
+        activeFollowUpContext?.step ?? 'setup', options ?? {}, !allowQueuedFollowUp || options?.activationProbe === true);
+    }
     if (wasInFlight && (!allowQueuedFollowUp || options?.activationProbe)) {
       // A caller-owned invocation cannot queue work beyond its current owner.
       // A session-only activation config must also observe its own proof.
@@ -2558,6 +2614,10 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       activeMobileSyncAbortController = null;
       activeMobileSyncAbortReason = null;
       fatalCleanupError = null;
+      followUpReceipts.clear();
+      previousCycleRequestedContribution = false;
+      contributionComparisonCaptured = false;
+      activeFollowUpContext = null;
     },
     getWebdavSyncBlockedUntil() {
       return webdavSyncRateLimitController.getBlockedUntil();

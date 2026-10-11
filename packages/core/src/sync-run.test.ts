@@ -4,6 +4,7 @@ import type { AppData, Project, Task } from './types';
 import type {
     SyncBackendIO,
     SyncRunNotifier,
+    SyncRunDiagnosticEvent,
     SyncRunPlatformHooks,
     SyncRunPolicy,
     SyncRunAttachmentHelpers,
@@ -105,6 +106,7 @@ const createHarness = (config: HarnessConfig = {}) => {
         warnings: [] as { message: string; error?: unknown }[],
         infos: [] as { message: string; extra?: Record<string, string> }[],
         diagnostics: [] as string[],
+        diagnosticEvents: [] as SyncRunDiagnosticEvent[],
         uiErrors: [] as (string | null)[],
         callOrder: [] as string[],
     };
@@ -163,7 +165,7 @@ const createHarness = (config: HarnessConfig = {}) => {
         sanitizeLogMessage: (message) => message,
         logSyncError: vi.fn(async () => '/tmp/sync-error.log'),
         logMergeSummary: vi.fn(),
-        onDiagnostic: (event) => harness.diagnostics.push(event.event),
+        onDiagnostic: (event) => { harness.diagnostics.push(event.event); harness.diagnosticEvents.push(event); },
     };
 
     const hooks: SyncRunPlatformHooks = {
@@ -1640,7 +1642,7 @@ describe('runSharedSyncCycle', () => {
     });
 
     it('defers a busy fence without recording an error or touching data', async () => {
-        const { io, storage, hooks, run } = createHarness({
+        const { harness, io, storage, hooks, run } = createHarness({
             io: {
                 acquireRemoteMutationFence: vi.fn(async () => {
                     throw new SyncRemoteMutationFenceBusyError(5_000);
@@ -1657,6 +1659,9 @@ describe('runSharedSyncCycle', () => {
             retryAfterMs: 5_000,
         });
         expect(hooks.requestFollowUpAfter).toHaveBeenCalledWith(5_000);
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested', followUpReason: 'remote-fence-busy',
+        }));
         expect(io.readRemote).not.toHaveBeenCalled();
         expect(io.writeRemote).not.toHaveBeenCalled();
         expect(storage.persistLocal).not.toHaveBeenCalled();
@@ -1666,7 +1671,7 @@ describe('runSharedSyncCycle', () => {
 
     it('defers a busy File Sync lock with a bounded follow-up and no persisted error', async () => {
         const requestFileSyncLockBusyFollowUpAfter = vi.fn();
-        const { io, storage, hooks, run } = createHarness({
+        const { harness, io, storage, hooks, run } = createHarness({
             backend: 'file',
             hooks: {
                 setupCycle: vi.fn(async () => {
@@ -1685,6 +1690,9 @@ describe('runSharedSyncCycle', () => {
             retryAfterMs: 5_000,
         });
         expect(requestFileSyncLockBusyFollowUpAfter).toHaveBeenCalledWith(5_000, 1);
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested', followUpReason: 'file-lock-busy',
+        }));
         expect(hooks.requestFollowUpAfter).not.toHaveBeenCalled();
         expect(io.readRemote).not.toHaveBeenCalled();
         expect(storage.persistLocal).not.toHaveBeenCalled();
@@ -1794,7 +1802,7 @@ describe('runSharedSyncCycle', () => {
             release: vi.fn().mockRejectedValue(new Error('Dropbox versioned file delete timed out')),
             retryAfterMs: vi.fn(() => 12_345),
         });
-        const { hooks, run } = createHarness({
+        const { harness, hooks, run } = createHarness({
             io: { acquireRemoteMutationFence: vi.fn().mockResolvedValue(lease) },
         });
 
@@ -1806,6 +1814,9 @@ describe('runSharedSyncCycle', () => {
             retryAfterMs: 12_345,
         });
         expect(hooks.requestFollowUpAfter).toHaveBeenCalledWith(12_345);
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested', followUpReason: 'remote-fence-release',
+        }));
         expect(hooks.finalizeErrorStatus).not.toHaveBeenCalled();
     });
 
@@ -2109,6 +2120,26 @@ describe('runSharedSyncCycle', () => {
         expect(result.success).toBe(true);
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(harness.fastStates.size).toBe(0);
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested',
+            followUpReason: 'server-contribution',
+            data: expect.objectContaining({ tasks: expect.any(Array) }),
+        }));
+    });
+
+    it('keeps the server-contribution queue and write count when its diagnostic observer throws', async () => {
+        const { notifier, io, hooks, run } = createHarness({
+            remote: createData([createTask('t-remote', 'Remote task')]),
+            io: { writeRemote: vi.fn(async () => ({ fingerprint: 'fp-1', serverMergedRemoteData: true })) },
+        });
+        const original = notifier.onDiagnostic!;
+        notifier.onDiagnostic = (event) => {
+            if (event.event === 'follow-up-requested') throw new Error('diagnostic unavailable');
+            original(event);
+        };
+        await expect(run()).resolves.toMatchObject({ success: true });
+        expect(hooks.requestFollowUp).toHaveBeenCalledTimes(1);
+        expect(io.writeRemote).toHaveBeenCalledTimes(1);
     });
 
     it('requeues on a remote write conflict and clears the pending-remote-write flag', async () => {
@@ -2128,6 +2159,9 @@ describe('runSharedSyncCycle', () => {
         expect(result).toMatchObject({ success: true, skipped: 'requeued' });
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(harness.persisted.settings.pendingRemoteWriteAt).toBeUndefined();
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested', followUpReason: 'remote-conflict',
+        }));
         expect(harness.diagnostics).toContain('requeued');
         // Desktop has no diagnostics sink: the requeue must also reach the plain
         // log with its reason, or a never-converging activation probe is invisible.
@@ -2472,6 +2506,9 @@ describe('runSharedSyncCycle', () => {
         expect(result).toMatchObject({ success: true, skipped: 'requeued' });
         expect(hooks.requestFollowUp).toHaveBeenCalled();
         expect(staleEvents.length).toBeGreaterThan(0);
+        expect(harness.diagnosticEvents).toContainEqual(expect.objectContaining({
+            event: 'follow-up-requested', followUpReason: 'stale-local',
+        }));
     });
 
     it('does not silently drop a local write that lands during the first local read (#910)', async () => {
