@@ -61,6 +61,7 @@ import { useThemeTokens } from '@/hooks/use-theme-tokens';
 import { useToast } from '@/contexts/toast-context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAndroidKeyboardInset, useKeyboardInset } from '../lib/use-android-keyboard-inset';
+import { useQuickCaptureKeyboardDiagnostics } from '../lib/use-quick-capture-keyboard-diagnostics';
 import { logError, logWarn } from '../lib/app-log';
 import { createMobileRecoverySnapshot } from '../lib/recovery-snapshot';
 import { openTaskScreen } from '@/lib/task-meta-navigation';
@@ -462,6 +463,11 @@ export function QuickCaptureSheet({
   const [optionsExpanded, setOptionsExpanded] = useState(false);
   const [androidKeyboardAvoidingEnabled, setAndroidKeyboardAvoidingEnabled] = useState(true);
   const androidKeyboardInset = useAndroidKeyboardInset(visible);
+  const { onModalShow, onAutoFocusRequest, onInputFocus, onInputBlur } = useQuickCaptureKeyboardDiagnostics({
+    visible, openRequestId, inputRef,
+    appliedInset: androidKeyboardAvoidingEnabled ? androidKeyboardInset : 0,
+    avoidanceEnabled: androidKeyboardAvoidingEnabled, expanded: optionsExpanded, autoRecord: Boolean(autoRecord),
+  });
   // The picker overlays render outside the KeyboardAvoidingView, so iOS needs
   // the measured inset too — only the sheet body is keyboard-avoided (#891).
   const overlayKeyboardInset = useKeyboardInset(visible);
@@ -861,10 +867,11 @@ export function QuickCaptureSheet({
     clearInitialFocusTimer();
     initialFocusTimerRef.current = setTimeout(() => {
       initialFocusTimerRef.current = null;
+      onAutoFocusRequest();
       inputRef.current?.focus();
     }, 120);
     return clearInitialFocusTimer;
-  }, [autoRecord, clearInitialFocusTimer, openRequestId, resetDraftState, visible]);
+  }, [autoRecord, onAutoFocusRequest, clearInitialFocusTimer, openRequestId, resetDraftState, visible]);
 
   useEffect(() => {
     if (prioritiesEnabled) return;
@@ -1398,6 +1405,9 @@ export function QuickCaptureSheet({
         }}
         insetsBottom={insets.bottom}
         inputRef={inputRef}
+        onModalShow={onModalShow}
+        onInputFocus={onInputFocus}
+        onInputBlur={onInputBlur}
         keyboardAvoidingEnabled={androidKeyboardAvoidingEnabled}
         androidKeyboardInset={androidKeyboardInset}
         noteValue={noteValue}

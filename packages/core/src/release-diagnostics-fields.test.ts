@@ -180,6 +180,13 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'source', 'play', 'badge', 'notice', 'diagnostics', 'channel', 'request', 'optedOut',
     // android-installer-source (v1.3.5) reuses source above.
     'installer',
+    // Android quick-capture IME observations (#1347): geometry and lifecycle only.
+    'captureRun', 'captureAttempt', 'phase', 'appliedInset', 'avoidanceEnabled',
+    'expanded', 'autoRecord', 'inputMounted', 'focusTracked',
+    'windowWidth', 'windowHeight', 'screenWidth', 'screenHeight',
+    'imeVisible', 'imeMetricsX', 'imeMetricsY', 'imeMetricsWidth', 'imeMetricsHeight',
+    'imeEventX', 'imeEventY', 'imeEventWidth', 'imeEventHeight',
+    'inputX', 'inputY', 'inputWidth', 'inputHeight', 'inputBottom',
 ];
 
 describe('release diagnostics field names', () => {

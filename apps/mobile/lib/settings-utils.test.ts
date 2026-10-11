@@ -38,7 +38,7 @@ describe('App Store listings with the maintained RN fallback URL', () => {
         runInNewContext(source, context);
         expect(context.module.exports.URL.name).toBe('FallbackURL');
         vi.stubGlobal('URL', context.module.exports.URL);
-        const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({
+        const fetcher = vi.fn(async () => new Response(JSON.stringify({
             results: [{ version: '1.2.0', trackViewUrl: listing }],
         })));
         expect(await fetchAppStoreInfo('tech.example.mindwtr.dev', fetcher)).toEqual({

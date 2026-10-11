@@ -97,7 +97,7 @@ vi.mock('@/lib/task-meta-navigation', () => ({
   openTaskScreen: (...args: unknown[]) => { navigationLog.entries.push(['openTaskScreen', ...args]); },
 }));
 vi.mock('@/lib/recovery-snapshot', () => ({ createMobileRecoverySnapshot: async () => 'data.snapshot.json' }));
-vi.mock('@/lib/app-log', () => ({ logError: vi.fn(), logInfo: vi.fn(), logWarn: vi.fn() }));
+vi.mock('@/lib/app-log', () => ({ logError: vi.fn(), logInfo: vi.fn(), logWarn: vi.fn(), isLoggingEnabled: () => false }));
 vi.mock('expo-document-picker', () => ({ getDocumentAsync: vi.fn() }));
 vi.mock('expo-file-system', () => ({
   File: class {

@@ -40,6 +40,9 @@ const flattenStyle = (style: unknown): Record<string, any> => {
 describe('Quick capture modal composition', () => {
   it('announces saving and disables save and dismissal controls while a submission is active', () => {
     const handleClose = vi.fn();
+    const onModalShow = vi.fn();
+    const onInputFocus = vi.fn();
+    const onInputBlur = vi.fn();
     let tree!: ReturnType<typeof create>;
     const t = (key: string) => ({
       'common.close': 'Close',
@@ -70,6 +73,9 @@ describe('Quick capture modal composition', () => {
           handleSave={vi.fn()}
           insetsBottom={0}
           inputRef={{ current: null }}
+          onModalShow={onModalShow}
+          onInputFocus={onInputFocus}
+          onInputBlur={onInputBlur}
           noteValue=""
           onNoteChange={vi.fn()}
           onOpenAreaPicker={vi.fn()}
@@ -108,6 +114,15 @@ describe('Quick capture modal composition', () => {
     });
 
     const controls = tree.root.findAllByType(TouchableOpacity);
+    act(() => {
+      tree.root.findByType(Modal).props.onShow();
+      const titleInput = tree.root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Task title');
+      titleInput!.props.onFocus({ nativeEvent: { text: 'private task' } });
+      titleInput!.props.onBlur({ nativeEvent: { text: 'private task' } });
+    });
+    expect(onModalShow).toHaveBeenCalledExactlyOnceWith();
+    expect(onInputFocus).toHaveBeenCalledOnce();
+    expect(onInputBlur).toHaveBeenCalledOnce();
     const closeControls = controls.filter((node) => node.props.accessibilityLabel === 'Close');
     const save = controls.find((node) => node.props.accessibilityLabel === 'Save');
     expect(closeControls.length).toBeGreaterThan(0);

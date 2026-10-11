@@ -59,6 +59,9 @@ interface QuickCaptureSheetBodyProps {
   handleSaveAndEdit?: () => void;
   insetsBottom: number;
   inputRef: RefObject<TextInput | null>;
+  onModalShow?: () => void;
+  onInputFocus?: () => void;
+  onInputBlur?: () => void;
   keyboardAvoidingEnabled?: boolean;
   androidKeyboardInset?: number;
   noteValue: string;
@@ -122,6 +125,9 @@ export function QuickCaptureSheetBody({
   handleSaveAndEdit,
   insetsBottom,
   inputRef,
+  onModalShow,
+  onInputFocus,
+  onInputBlur,
   keyboardAvoidingEnabled = true,
   androidKeyboardInset = 0,
   noteValue,
@@ -228,6 +234,7 @@ export function QuickCaptureSheetBody({
   return (
     <Modal
       visible={visible}
+      onShow={onModalShow}
       transparent
       // Transparent Android modal animations can blend stale frames on some tablet GPUs.
       animationType={Platform.OS === 'android' ? 'none' : 'slide'}
@@ -297,6 +304,8 @@ export function QuickCaptureSheetBody({
                 placeholderTextColor={tc.secondaryText}
                 value={value}
                 onChangeText={onValueChange}
+                onFocus={onInputFocus}
+                onBlur={onInputBlur}
                 editable={!saving}
                 accessibilityState={{ busy: saving, disabled: saving }}
                 accessibilityLabel={t('quickAdd.inputLabel')}

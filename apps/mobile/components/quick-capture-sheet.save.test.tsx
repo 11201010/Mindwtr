@@ -8,6 +8,7 @@ import {
   subscribeQuickCaptureSubmissionFailure,
 } from './quick-capture-sheet';
 import { ANDROID_ACTIVITY_SESSION_TTL_MS } from '@/lib/android-activity-session';
+import * as appLog from '@/lib/app-log';
 
 const selectedAreaIdForNewTasksMock = vi.hoisted(() => ({ current: undefined as string | null | undefined }));
 const audioHookMock = vi.hoisted(() => ({ params: null as Record<string, any> | null }));
@@ -368,6 +369,29 @@ describe('QuickCaptureSheet save handling', () => {
     rearmActivitySessionMock.mockReset();
     recoveryFileDeleteMock.mockReset();
     mockThemeTokens.value = { isMaterial: false, roles: null, shape: { large: 16 } };
+  });
+
+  it.each([false, true])('wires Android focus diagnostics without blocking the existing focus timer (logger throws: %s)', async (throws) => {
+    vi.useFakeTimers();
+    await withPlatform('android', async () => {
+      vi.spyOn(appLog, 'isLoggingEnabled').mockReturnValue(true);
+      const log = vi.spyOn(appLog, 'logInfo').mockImplementation(() => {
+        if (throws) throw new Error('private logging failure');
+        return Promise.resolve(null);
+      });
+      let tree!: ReturnType<typeof create>;
+      await act(async () => { tree = create(<QuickCaptureSheet visible openRequestId={1} onClose={vi.fn()} />); });
+      const body = tree.root.findAll((node) => String(node.type) === 'QuickCaptureSheetBody')[0];
+      const focus = vi.fn();
+      body.props.inputRef.current = { focus, isFocused: () => false, measureInWindow: vi.fn() };
+      act(() => { body.props.onModalShow(); body.props.onInputFocus(); body.props.onInputBlur(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+      expect(focus).toHaveBeenCalledOnce();
+      expect(log.mock.calls.map(([, context]) => context?.extra?.phase)).toEqual([
+        'open', 'inset-applied', 'modal-shown', 'input-focus', 'input-blur', 'auto-focus-request',
+      ]);
+      act(() => tree.unmount());
+    });
   });
 
   it('uses primaryContainer for the save button under Material, below the high-emphasis capture FAB', async () => {

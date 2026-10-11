@@ -39,7 +39,7 @@ const FIXTURE_PATH = new URL('../../../packages/core/src/entry-points-parity.fix
 const CAPTURE = process.env.MINDWTR_CAPTURE_ENTRY_POINTS === '1';
 const NOW = '2026-09-28T09:00:00.000Z';
 
-vi.mock('@/lib/app-log', () => ({ logError: vi.fn(), logWarn: vi.fn(), logInfo: vi.fn(async () => null) }));
+vi.mock('@/lib/app-log', () => ({ logError: vi.fn(), logWarn: vi.fn(), logInfo: vi.fn(async () => null), isLoggingEnabled: () => false }));
 vi.mock('@/lib/app-search-service', () => ({ syncAppSearchIndexingWithPreference: vi.fn(async () => undefined) }));
 vi.mock('@/lib/attachment-sync', () => ({ persistAttachmentLocallyDetailed: vi.fn() }));
 vi.mock('expo-file-system', () => ({ deleteAsync: vi.fn().mockResolvedValue(undefined) }));
