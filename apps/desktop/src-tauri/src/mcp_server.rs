@@ -224,7 +224,7 @@ impl McpRuntime {
                     self.applied_config = Some(config.clone());
                     self.last_error = None;
                     log::info!(
-                        "In-process MCP listener ready extra.releaseCheck=v1.3.4/in-process-mcp"
+                        "In-process MCP listener ready extra.releaseCheck=v1.3.5/in-process-mcp"
                     );
                 }
                 Err(error) => {
@@ -496,7 +496,7 @@ pub(crate) fn handle_mcp_request(
                 match execute(operation) {
                     Ok(body) => {
                         let operation = if writing { "write" } else { "read" };
-                        log::info!("In-process MCP native operation completed extra.releaseCheck=v1.3.4/in-process-mcp operation={operation}");
+                        log::info!("In-process MCP native operation completed extra.releaseCheck=v1.3.5/in-process-mcp operation={operation}");
                         match crate::mcp_tools::tool_result(name, arguments, body) {
                             Ok(body) => {
                                 json!({"content":[{"type":"text", "text": serde_json::to_string_pretty(&body).unwrap()}]})
