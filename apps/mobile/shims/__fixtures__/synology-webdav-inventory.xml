@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/DataUser/__Mindwtr/attachments/</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype><D:collection/></lp1:resourcetype>
+<lp1:creationdate>2026-09-02T19:21:47Z</lp1:creationdate>
+<lp1:getlastmodified>Sun, 04 Oct 2026 12:43:29 GMT</lp1:getlastmodified>
+<lp1:getetag>"1000-65d031ccf1be6"</lp1:getetag>
+<D:supportedlock>
+<D:lockentry>
+<D:lockscope><D:exclusive/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+<D:lockentry>
+<D:lockscope><D:shared/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+</D:supportedlock>
+<D:lockdiscovery/>
+<D:getcontenttype>httpd/unix-directory</D:getcontenttype>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/DataUser/__Mindwtr/attachments/11111111-1111-4111-8111-111111111111.m4a</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:creationdate>2026-09-28T06:48:39Z</lp1:creationdate>
+<lp1:getcontentlength>96600</lp1:getcontentlength>
+<lp1:getlastmodified>Mon, 28 Sep 2026 06:48:39 GMT</lp1:getlastmodified>
+<lp1:getetag>"17958-65c8574c643cf"</lp1:getetag>
+<lp2:executable>T</lp2:executable>
+<D:supportedlock>
+<D:lockentry>
+<D:lockscope><D:exclusive/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+<D:lockentry>
+<D:lockscope><D:shared/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+</D:supportedlock>
+<D:lockdiscovery/>
+<D:getcontenttype>audio/mp4</D:getcontenttype>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<D:response xmlns:lp1="DAV:" xmlns:lp2="http://apache.org/dav/props/">
+<D:href>/DataUser/__Mindwtr/attachments/22222222-2222-4222-8222-222222222222.wav</D:href>
+<D:propstat>
+<D:prop>
+<lp1:resourcetype/>
+<lp1:creationdate>2026-09-05T13:27:45Z</lp1:creationdate>
+<lp1:getcontentlength>128386</lp1:getcontentlength>
+<lp1:getlastmodified>Sat, 05 Sep 2026 13:27:45 GMT</lp1:getlastmodified>
+<lp1:getetag>"1f582-65abc59b867a9"</lp1:getetag>
+<lp2:executable>T</lp2:executable>
+<D:supportedlock>
+<D:lockentry>
+<D:lockscope><D:exclusive/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+<D:lockentry>
+<D:lockscope><D:shared/></D:lockscope>
+<D:locktype><D:write/></D:locktype>
+</D:lockentry>
+</D:supportedlock>
+<D:lockdiscovery/>
+<D:getcontenttype>audio/x-wav</D:getcontenttype>
+</D:prop>
+<D:status>HTTP/1.1 200 OK</D:status>
+</D:propstat>
+</D:response>
+<!-- ... 65 more <D:response> entries omitted, identical in structure (.m4a / .wav files) ... -->
+</D:multistatus>
