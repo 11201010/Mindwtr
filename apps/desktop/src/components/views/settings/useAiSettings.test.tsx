@@ -439,6 +439,7 @@ describe('useAiSettings live model lists', () => {
         extra: Partial<NonNullable<AppData['settings']['ai']>> = {}
     ): AppData['settings'] => ({
         ai: {
+            enabled: true,
             provider: 'openai',
             baseUrl: 'http://localhost:1234/v1',
             model: 'my-local-model',
@@ -550,6 +551,7 @@ describe('useAiSettings live model lists', () => {
 
         await renderOptions({
             ai: {
+                enabled: true,
                 provider: 'gemini',
                 speechToText: { provider: 'gemini' },
             },
@@ -577,8 +579,29 @@ describe('useAiSettings live model lists', () => {
         );
     });
 
+    it('asks no provider for models before AI is turned on with it (consent)', async () => {
+        aiConfigMocks.loadAIKey.mockResolvedValue('sk-entered');
+        const aiOff: AppData['settings'] = {
+            ai: {
+                provider: 'openai',
+                baseUrl: 'http://localhost:1234/v1',
+                speechToText: { provider: 'gemini' },
+            },
+        };
+
+        const { rerender } = await renderOptions(aiOff);
+        expect(coreMocks.fetchProviderModelsCached).not.toHaveBeenCalled();
+
+        // Turning AI on is this device's consent for its provider only; the
+        // Gemini speech provider was never agreed to.
+        rerender(<Probe settings={{ ai: { ...aiOff.ai, enabled: true } }} />);
+        await settle();
+        expect(coreMocks.fetchProviderModelsCached).toHaveBeenCalledWith('openai', expect.objectContaining({ kind: 'chat' }));
+        expect(coreMocks.fetchProviderModelsCached).not.toHaveBeenCalledWith('gemini', expect.anything());
+    });
+
     it('does not call any provider without a key or base URL', async () => {
-        await renderOptions({ ai: { provider: 'gemini' } });
+        await renderOptions({ ai: { enabled: true, provider: 'gemini' } });
 
         expect(coreMocks.fetchProviderModelsCached).not.toHaveBeenCalled();
         expect(read().model).toEqual(getModelOptions('gemini'));
@@ -592,14 +615,14 @@ describe('useAiSettings live model lists', () => {
             return 'sk-openai';
         });
 
-        const { rerender } = await renderOptions({ ai: { provider: 'openai' } });
+        const { rerender } = await renderOptions({ ai: { enabled: true, provider: 'openai' } });
         expect(coreMocks.fetchProviderModelsCached).toHaveBeenCalledWith(
             'openai',
             expect.objectContaining({ apiKey: 'sk-openai' })
         );
 
         coreMocks.fetchProviderModelsCached.mockClear();
-        rerender(<Probe settings={{ ai: { provider: 'gemini' } }} />);
+        rerender(<Probe settings={{ ai: { enabled: true, provider: 'gemini' } }} />);
         await settle();
 
         expect(coreMocks.fetchProviderModelsCached).not.toHaveBeenCalledWith(

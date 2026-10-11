@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AIProviderId, AIReasoningEffort, AiSettings, AppData, AudioCaptureMode, AudioFieldStrategy } from '@mindwtr/core';
 import {
+    canDiscoverAIModels,
     DEFAULT_ANTHROPIC_THINKING_BUDGET,
     DEFAULT_GEMINI_THINKING_BUDGET,
     DEFAULT_REASONING_EFFORT,
@@ -42,6 +43,10 @@ type UseAiSettingsOptions = {
 
 // Typing a key by hand would otherwise fire one list request per keystroke.
 const MODEL_FETCH_DEBOUNCE_MS = 400;
+
+// Desktop keeps no per-provider consent record: turning AI on (after its
+// consent dialog) is the consent, and it covers only the AI provider.
+const NO_STORED_CONSENT: Readonly<Record<string, boolean>> = {};
 
 // A loaded key belongs to the provider it was loaded for. Effects in one commit
 // all see that commit's values, so a bare `key` string would still be the old
@@ -272,6 +277,7 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
         // A self-hosted OpenAI-compatible server needs no key (#930); official
         // endpoints list nothing without one, so don't bother asking.
         if (!enabled || (!apiKey && !(aiProvider === 'openai' && baseUrl))) return;
+        if (!canDiscoverAIModels({ provider: aiProvider, consent: NO_STORED_CONSENT, aiEnabled, aiProvider })) return;
         let cancelled = false;
         const timer = setTimeout(() => {
             fetchProviderModelsCached(aiProvider, { apiKey, baseUrl, kind: 'chat' })
@@ -286,7 +292,7 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [aiApiKey, aiBaseUrl, aiProvider, enabled]);
+    }, [aiApiKey, aiBaseUrl, aiEnabled, aiProvider, enabled]);
 
     // Live speech model list (#986). Whisper/Parakeet are local sha256-pinned
     // catalogs — never fetched.
@@ -296,6 +302,7 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
         const baseUrl = speechBaseUrl.trim();
         const remote = speechProvider === 'openai' || speechProvider === 'gemini';
         if (!enabled || !remote || (!apiKey && !(speechProvider === 'openai' && baseUrl))) return;
+        if (!canDiscoverAIModels({ provider: speechProvider, consent: NO_STORED_CONSENT, aiEnabled, aiProvider })) return;
         let cancelled = false;
         const timer = setTimeout(() => {
             fetchProviderModelsCached(speechProvider, {
@@ -314,7 +321,7 @@ export function useAiSettings({ isTauri, settings, updateSettings, showSaved, en
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [enabled, speechApiKey, speechBaseUrl, speechProvider]);
+    }, [aiEnabled, aiProvider, enabled, speechApiKey, speechBaseUrl, speechProvider]);
 
     useEffect(() => {
         if (!enabled || !isTauri) {
