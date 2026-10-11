@@ -8,6 +8,8 @@ import { SyncRemoteMutationFenceBusyError } from './sync-remote-fence';
 import { SyncRemoteWriteConflict } from './sync-run-ports';
 import { performSyncCycle } from './sync';
 import { createSyncEncryptionStateStore, readSyncLocationScope } from './sync-encryption-local-state';
+import { defaultSyncCryptoPrimitives, encryptSyncArtifact } from './sync-crypto';
+import { createSyncEncryptionService } from './sync-encryption-service';
 import { createWebdavCapabilityProofStore } from './webdav-capability-proof';
 import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY, CLOUD_URL_KEY, CLOUD_TOKEN_KEY } from './sync-storage-keys';
 import type { AppData } from './types';
@@ -170,7 +172,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
       createDropboxSyncRemoteMutationFencePort: vi.fn(() => ({}) as never),
     },
   };
-  return { host, values, logs, syncErrors, store, remote, fenceOwners, saved };
+  return { host, values, logs, syncErrors, store, remote, fenceOwners, saved, encryption };
 };
 
 const WEBDAV_VALUES = {
@@ -403,6 +405,68 @@ describe('mobile sync service behind fake ports', () => {
     expect(probe).toHaveBeenCalledWith({ webdav: expect.objectContaining({ url: 'https://candidate.example.com/dav/data.json' }) });
     // This fake's attachment pass downloads nothing, so the proof fails after it; the location check no longer refuses.
     expect(String(result.error ?? '')).not.toContain('PARTLY_ENCRYPTED');
+  });
+
+  it('refuses a mixed Dropbox candidate while the stored backend is off', async () => {
+    const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'off' }, dropboxAppKey: 'candidate-client' });
+    const tokens = { accessToken: 'candidate-access', refreshToken: 'candidate-refresh', expiresAt: Date.now() + 3600_000 };
+    const data = { ...emptyData(), tasks: [{ id: 't1', title: 'T', status: 'inbox', tags: [], contexts: [],
+      createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+      attachments: [{ id: 'a1', kind: 'file', title: 'a.bin', uri: 'file:///a.bin', localStatus: 'available',
+        createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' }] }] } as AppData;
+    const encryptedBlob = await encryptSyncArtifact(new TextEncoder().encode('remote blob'), {
+      key: new Uint8Array(32).fill(1), salt: new Uint8Array(16).fill(2), params: { mKib: 65536, t: 3, p: 1 },
+    });
+    const attachmentUploads = vi.fn(async () => false as const);
+    const blobReads: string[] = [];
+    fake.host.localData.getData = async () => data;
+    fake.host.core!.getInMemoryAppDataSnapshot = () => data;
+    fake.host.core!.performSyncCycle = performSyncCycle;
+    fake.host.core!.downloadDropboxAppData = vi.fn(async () => ({ data: emptyData(), rev: 'data-rev' })) as never;
+    fake.host.core!.getDropboxAppDataMetadata = vi.fn(async () => ({ rev: 'data-rev' }));
+    fake.host.core!.uploadDropboxAppData = vi.fn(async () => ({ rev: 'next-rev' }));
+    fake.host.attachments.hasPendingWork = async () => true;
+    fake.host.attachments.syncDropbox = attachmentUploads;
+    fake.host.dropboxAuth.getValidAccessTokenForTokens = vi.fn(async (_clientId, candidate) => ({ accessToken: candidate.accessToken, tokens: candidate }));
+    fake.host.fetch = vi.fn(async (input, init) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer candidate-access');
+      if (String(input).endsWith('/files/list_folder')) {
+        return new Response(JSON.stringify({ entries: [{ '.tag': 'file', name: 'remote.bin', path_lower: '/attachments/remote.bin' }], has_more: false }));
+      }
+      if (String(input).endsWith('/files/download')) {
+        const path = JSON.parse(new Headers(init?.headers).get('Dropbox-API-Arg')!).path;
+        expect(path).toBe('/attachments/remote.bin');
+        blobReads.push(path);
+        return new Response(encryptedBlob, { headers: { 'Dropbox-API-Result': JSON.stringify({ rev: 'blob-rev' }) } });
+      }
+      throw new Error(`Unexpected Dropbox request: ${input}`);
+    }) as typeof fetch;
+    const encryptionService = createSyncEncryptionService({
+      storage: fake.host.storage, state: fake.encryption, crypto: defaultSyncCryptoPrimitives, fetch: fake.host.fetch,
+      parseWebdavXml: () => { throw new Error('Dropbox does not use WebDAV'); },
+      loadWebDavConfig: async () => null, webDavRequestOptions: () => ({}),
+      getDropboxClientId: async () => { throw new Error('Stored Dropbox client must not be read'); },
+      runDropboxAuthorized: async () => { throw new Error('Stored Dropbox credentials must not be used'); },
+    });
+    fake.host.encryption = { ...fake.encryption, probeLocationCiphertext: encryptionService.probeSyncLocationCiphertext };
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, {
+      manual: true, activationProbe: true,
+      configOverride: { backend: 'cloud', cloudProvider: 'dropbox', dropbox: { tokens } },
+    });
+
+    expect(String(result.error)).toContain('partly encrypted');
+    expect(result.success).toBe(false);
+    expect(attachmentUploads).not.toHaveBeenCalled();
+    expect(fake.host.core!.uploadDropboxAppData).not.toHaveBeenCalled();
+    expect(blobReads).toEqual(['/attachments/remote.bin']);
+    expect(fake.host.dropboxAuth.getValidAccessTokenForTokens).toHaveBeenCalledWith('candidate-client', tokens, expect.any(Function));
+    expect(fake.values.get(SYNC_BACKEND_KEY)).toBe('off');
+    expect(fake.logs).toContainEqual(expect.objectContaining({ level: 'warn', extra: expect.objectContaining({
+      releaseCheck: 'v1.3.5/dropbox-candidate-encryption-probe', found: 'mixed',
+    }) }));
+    expect(JSON.stringify(fake.logs)).not.toMatch(/candidate-access|candidate-refresh|remote\.bin/);
   });
 
   it('refuses a Dropbox candidate in a FOSS build', async () => {

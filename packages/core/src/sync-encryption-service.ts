@@ -243,6 +243,12 @@ export type SyncEncryptionWebDavConfig = {
     allowInsecureHttp?: boolean;
 };
 
+export type SyncEncryptionDropboxConfig = {
+    clientId: string;
+    runAuthorized<T>(operation: (accessToken: string) => Promise<T>): Promise<T>;
+    fetcher: typeof fetch;
+};
+
 /** File Sync's folder, held by the host's folder lock. */
 export type SyncEncryptionFileSyncPort<Lease> = {
     /** Takes the same folder lock an ordinary sync takes. */
@@ -846,15 +852,15 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
         };
     };
 
-    const createDropboxRemotePort = async (appData: AppData | null): Promise<TransitionRemotePort> => {
+    const createDropboxRemotePort = async (appData: AppData | null, override?: SyncEncryptionDropboxConfig): Promise<TransitionRemotePort> => {
         void appData;
-        const clientId = await deps.getDropboxClientId();
+        const clientId = override?.clientId ?? await deps.getDropboxClientId();
         if (!clientId) throw new Error('Dropbox is not configured');
         const authorized = <T,>(operation: (accessToken: string) => Promise<T>): Promise<T> =>
-            deps.runDropboxAuthorized(clientId, operation);
+            override ? override.runAuthorized(operation) : deps.runDropboxAuthorized(clientId, operation);
         const read = (name: string): Promise<SyncEncryptionRemoteRead> =>
-            authorized((token) => downloadDropboxFileVersioned(token, `/${assertManagedRemoteArtifactName(name)}`));
-        const listAttachmentKeys = () => authorized((token) => listDropboxAttachmentKeys(token));
+            authorized((token) => downloadDropboxFileVersioned(token, `/${assertManagedRemoteArtifactName(name)}`, override?.fetcher));
+        const listAttachmentKeys = () => authorized((token) => listDropboxAttachmentKeys(token, override?.fetcher));
         let referencedAttachmentKeys: string[] = [];
         return {
             acquireRemoteMutationFence: () => acquireSyncRemoteMutationFence(
@@ -870,12 +876,12 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
             read,
             write: async (name, bytes, expectedVersion) => {
                 await authorized((token) => uploadDropboxFileVersioned(
-                    token, `/${assertManagedRemoteArtifactName(name)}`, bytes, expectedVersion,
+                    token, `/${assertManagedRemoteArtifactName(name)}`, bytes, expectedVersion, override?.fetcher,
                 ));
             },
             remove: async (name, expectedVersion) => {
                 await authorized((token) => deleteDropboxFileVersioned(
-                    token, `/${assertManagedRemoteArtifactName(name)}`, expectedVersion,
+                    token, `/${assertManagedRemoteArtifactName(name)}`, expectedVersion, override?.fetcher,
                 ));
             },
         };
@@ -889,9 +895,10 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
      * last not (enable) or the other way round (disable). `full` reads every artifact.
      */
     const probeSyncLocationCiphertext = async (
-        options: { full?: boolean; webdav?: SyncEncryptionWebDavConfig } = {},
+        options: { full?: boolean; webdav?: SyncEncryptionWebDavConfig; dropbox?: SyncEncryptionDropboxConfig } = {},
     ): Promise<SyncLocationCiphertext> => {
         const target = options.webdav ? { kind: 'remote' as const, port: await createWebdavRemotePort(null, options.webdav) }
+            : options.dropbox ? { kind: 'remote' as const, port: await createDropboxRemotePort(null, options.dropbox) }
             : await resolveTransitionTarget(null);
         if (target.kind !== 'remote') return 'plaintext';
         return runWithFileTransitionLease(target, async (port) => {

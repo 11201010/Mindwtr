@@ -13,6 +13,7 @@ import { SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSy
 import { buildSyncLocationScope, isSyncEncryptionPartlyEncryptedError, markRemoteEncryptionDiscovered, SyncEncryptionPartlyEncryptedError, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError, type SyncEncryptionStateStore } from './sync-encryption-local-state';
 import type { SyncCryptoPrimitives, SyncKeyMaterial } from './sync-crypto';
+import type { SyncEncryptionService } from './sync-encryption-service';
 import { acquireSyncRemoteMutationFence, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS } from './sync-remote-fence';
 import { createDropboxSyncRemoteMutationFencePort, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl } from './sync-remote-fence-providers';
 import { clearIdleSyncCycleSnapshot, runSharedSyncCycle } from './sync-run';
@@ -374,8 +375,8 @@ export type MobileSyncEncryptionPort = Pick<
 > & {
   /** Whether the location holds ciphertext beside plaintext (core's encryption service probeSyncLocationCiphertext,
    *  sampled). Asked before a WebDAV or Dropbox attachment pass with no key; absent on a host without the service. */
-  /** [target] names the cycle's own WebDAV folder (an activation's candidate is not the stored one); none reads the stored. */
-  probeLocationCiphertext?: (target?: { webdav?: MobileWebDavSyncConfig }) => Promise<'plaintext' | 'encrypted' | 'mixed'>;
+  /** [target] names the cycle's own WebDAV or Dropbox location; none reads the stored one. */
+  probeLocationCiphertext?: (target?: Parameters<SyncEncryptionService['probeSyncLocationCiphertext']>[0]) => Promise<'plaintext' | 'encrypted' | 'mixed'>;
 };
 
 /** Core functions and the store, called through here so a host's tests can replace them the
@@ -1558,8 +1559,18 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       if (!probe || (this.backend !== 'webdav' && !(this.backend === 'cloud' && this.cloudProvider === 'dropbox'))) return;
       // The cycle's own folder: an activation probe's candidate is not the stored location yet.
       if (this.locationCiphertext === null) {
-        this.locationCiphertext = await probe(this.backend === 'webdav' && this.webdavConfig ? { webdav: this.webdavConfig } : undefined);
-        if (this.configOverride) {
+        this.locationCiphertext = await probe(this.backend === 'webdav' ? (this.webdavConfig ? { webdav: this.webdavConfig } : undefined) : {
+          dropbox: {
+            clientId: this.dropboxClientId,
+            runAuthorized: (operation) => this.runDropboxOperation(operation),
+            fetcher: this.fetchWithAbort,
+          },
+        });
+        if (this.configOverride && this.backend === 'cloud' && this.cloudProvider === CLOUD_PROVIDER_DROPBOX) {
+          void log.warn('Dropbox candidate location ciphertext checked', { scope: 'sync', extra: {
+            releaseCheck: 'v1.3.5/dropbox-candidate-encryption-probe', backend: this.backend, found: this.locationCiphertext,
+          } });
+        } else if (this.configOverride) {
           logSyncInfo('Sync candidate location ciphertext checked', {
             releaseCheck: 'v1.3.5/candidate-ciphertext-probe', backend: this.backend, found: this.locationCiphertext,
           });
