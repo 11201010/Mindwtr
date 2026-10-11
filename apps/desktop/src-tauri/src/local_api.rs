@@ -754,11 +754,22 @@ fn handle_api_request(
     access: &LocalApiAccess,
     request: ApiRequest,
 ) -> ApiResponse {
+    handle_api_operation(token, access, request, |operation| {
+        execute_operation(app, write_lock, access, operation)
+    })
+}
+
+fn handle_api_operation(
+    token: &str,
+    access: &LocalApiAccess,
+    request: ApiRequest,
+    execute: impl FnOnce(LocalOperation) -> Result<Value, String>,
+) -> ApiResponse {
     if let Some(response) = authorize_api_request(&request, token, access) {
         return response;
     }
 
-    match route_api_request(app, write_lock, access, request) {
+    match route_api_operation(request, execute) {
         Ok(response) => response,
         Err(error) => api_error_response(error),
     }
@@ -836,7 +847,10 @@ pub(crate) fn api_error_response(error: String) -> ApiResponse {
     ) {
         return ApiResponse::error(404, error);
     }
-    if error.starts_with("Task status conflict:") || error.starts_with("Project update conflict:") {
+    if error.starts_with("Task status conflict:")
+        || error.starts_with("Project update conflict:")
+        || error.starts_with("Area update conflict:")
+    {
         return ApiResponse::error(409, error);
     }
     if error.starts_with("Invalid ")
@@ -869,6 +883,11 @@ pub(crate) enum LocalOperation {
         restore: bool,
     },
     ListAreas,
+    GetArea(String),
+    PatchArea {
+        id: String,
+        body: Map<String, Value>,
+    },
     Search(String),
     GetTask(String),
     CreateTask(Map<String, Value>),
@@ -889,6 +908,7 @@ impl LocalOperation {
             self,
             Self::CreateProject(_)
                 | Self::PatchProject { .. }
+                | Self::PatchArea { .. }
                 | Self::ProjectLifecycle { .. }
                 | Self::CreateTask(_)
                 | Self::PatchTask { .. }
@@ -914,6 +934,14 @@ pub(crate) fn operation_from_api_request(
         }
         ("POST", "/tasks") => LocalOperation::CreateTask(body()?),
         ("POST", "/projects") => LocalOperation::CreateProject(body()?),
+        (method, _) if segments.len() == 2 && segments[0] == "areas" => match method {
+            "GET" => LocalOperation::GetArea(id()),
+            "PATCH" => LocalOperation::PatchArea {
+                id: id(),
+                body: body()?,
+            },
+            _ => return Ok(None),
+        },
         (method, _) if segments.len() == 2 && segments[0] == "tasks" => match method {
             "GET" => LocalOperation::GetTask(id()),
             "PATCH" => LocalOperation::PatchTask {
@@ -958,11 +986,9 @@ pub(crate) fn operation_from_api_request(
     Ok(Some(operation))
 }
 
-fn route_api_request(
-    app: &tauri::AppHandle,
-    write_lock: &Arc<Mutex<()>>,
-    access: &LocalApiAccess,
+fn route_api_operation(
     request: ApiRequest,
+    execute: impl FnOnce(LocalOperation) -> Result<Value, String>,
 ) -> Result<ApiResponse, String> {
     let Some(operation) = operation_from_api_request(&request)? else {
         return Ok(ApiResponse::error(404, "Not found"));
@@ -975,7 +1001,7 @@ fn route_api_request(
         operation,
         LocalOperation::DeleteTask(_) | LocalOperation::ProjectLifecycle { restore: false, .. }
     );
-    let body = execute_operation(app, write_lock, access, operation)?;
+    let body = execute(operation)?;
     Ok(ApiResponse {
         status: if created { 201 } else { 200 },
         body: if deleted { json!({ "ok": true }) } else { body },
@@ -1078,6 +1104,7 @@ pub(crate) fn execute_operation(
                         projects: vec![project],
                         tasks,
                         sections,
+                        ..ProjectMutationRows::default()
                     },
                 ))
             })?;
@@ -1093,6 +1120,25 @@ pub(crate) fn execute_operation(
                 .filter(|area| !has_string_field(area, "deletedAt"))
                 .collect::<Vec<_>>();
             return Ok(json!({ "areas": areas }));
+        }
+        LocalOperation::GetArea(id) => {
+            let data = load_data_snapshot(app)?;
+            let area = live_project_area(&data, &id).ok_or("Area not found")?;
+            return Ok(json!({ "area": area }));
+        }
+        LocalOperation::PatchArea { id, body } => {
+            let _guard = access.lock_write(write_lock)?;
+            let (_, persisted) = mutate_project_rows_with_retries(
+                app,
+                ProjectMutationReadScope::area_update(&id),
+                |data| Ok(((), patch_area_in_data(data, &id, &body, &now_iso())?)),
+            )?;
+            log::info!(
+                "Desktop Local API area update persisted extra.releaseCheck=v1.3.5/local-api-area-update outcome=persisted"
+            );
+            let area =
+                live_project_area(&persisted, &id).ok_or("Area not found after persistence")?;
+            return Ok(json!({ "area": area }));
         }
         LocalOperation::Search(query) => {
             let data = load_data_snapshot(app)?;
@@ -1461,6 +1507,131 @@ fn live_project_area<'a>(data: &'a Value, area_id: &str) -> Option<&'a Value> {
     data.get("areas")?.as_array()?.iter().find(|area| {
         area.get("id").and_then(Value::as_str) == Some(area_id)
             && !has_string_field(area, "deletedAt")
+    })
+}
+
+fn trim_area_name(name: &str) -> &str {
+    // Match JavaScript trim, including BOM and excluding NEXT LINE.
+    name.trim_matches(|character| {
+        matches!(character,
+        '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' |
+        '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' |
+        '\u{205f}' | '\u{3000}' | '\u{feff}')
+    })
+}
+
+fn patch_area_in_data(
+    data: &mut Value,
+    id: &str,
+    patch: &Map<String, Value>,
+    now: &str,
+) -> Result<ProjectMutationRows, String> {
+    let current = live_project_area(data, id).ok_or("Area not found")?.clone();
+    if patch.is_empty() {
+        return Err("Request patch must include at least one area field".to_string());
+    }
+    let mut sanitized = Map::new();
+    for (field, value) in patch {
+        let value = match field.as_str() {
+            "name" => {
+                let name = value
+                    .as_str()
+                    .map(trim_area_name)
+                    .filter(|name| !name.is_empty())
+                    .ok_or("Invalid area field: name")?;
+                Value::String(name.to_string())
+            }
+            "color" | "icon" if value.is_null() || value.is_string() => value.clone(),
+            "color" | "icon" => return Err(format!("Invalid area field: {field}")),
+            "order" => {
+                value
+                    .as_f64()
+                    .filter(|order| order.is_finite())
+                    .ok_or("Invalid area field: order")?;
+                value.clone()
+            }
+            _ => return Err(format!("Unsupported area field: {field}")),
+        };
+        sanitized.insert(field.clone(), value);
+    }
+    if let Some(name) = sanitized.get("name").and_then(Value::as_str) {
+        let normalized = name.to_lowercase();
+        if array_items(data, "areas").iter().any(|area| {
+            area.get("id").and_then(Value::as_str) != Some(id)
+                && !has_string_field(area, "deletedAt")
+                && area
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| trim_area_name(name).to_lowercase() == normalized)
+        }) {
+            return Err("Area update conflict: another live area has this name".to_string());
+        }
+    }
+    let name = sanitized
+        .get("name")
+        .or_else(|| current.get("name"))
+        .and_then(Value::as_str)
+        .ok_or("Invalid area name")?
+        .to_string();
+    let repaint = sanitized.contains_key("color");
+    let repair_title = repaint
+        || (sanitized.contains_key("name")
+            && name != trim_area_name(current["name"].as_str().unwrap_or_default()));
+    let color = sanitized
+        .get("color")
+        .and_then(Value::as_str)
+        .unwrap_or("#94a3b8");
+    let title = trim_area_name(&name);
+    let target_title = (!title.is_empty()).then_some(title);
+    let device_id = device_id_from_data(data);
+    let mut projects = Vec::new();
+    if repair_title {
+        for project in ensure_array_mut(data, "projects")? {
+            if project.get("areaId").and_then(Value::as_str) != Some(id) {
+                continue;
+            }
+            let wants_color =
+                repaint && project.get("color").and_then(Value::as_str) != Some(color);
+            let wants_title = project.get("areaTitle").and_then(Value::as_str) != target_title;
+            if !wants_color && !wants_title {
+                continue;
+            }
+            let project = project.as_object_mut().ok_or("Invalid project")?;
+            if wants_color {
+                project.insert("color".to_string(), json!(color));
+            }
+            if wants_title {
+                if title.is_empty() {
+                    project.remove("areaTitle");
+                } else {
+                    project.insert("areaTitle".to_string(), json!(title));
+                }
+            }
+            project.insert("updatedAt".to_string(), json!(now));
+            bump_task_revision(project, &device_id);
+            projects.push(Value::Object(project.clone()));
+        }
+    }
+    let mut area = current.as_object().cloned().ok_or("Invalid area")?;
+    for (field, value) in sanitized {
+        if value.is_null() {
+            area.remove(&field);
+        } else {
+            area.insert(field, value);
+        }
+    }
+    area.insert("updatedAt".to_string(), json!(now));
+    bump_task_revision(&mut area, &device_id);
+    let area = Value::Object(area);
+    for item in ensure_array_mut(data, "areas")? {
+        if item.get("id").and_then(Value::as_str) == Some(id) {
+            *item = area.clone();
+        }
+    }
+    Ok(ProjectMutationRows {
+        areas: vec![area],
+        projects,
+        ..ProjectMutationRows::default()
     })
 }
 
@@ -5346,6 +5517,319 @@ mod tests {
             assert_eq!(api_error_response(error).status, 409);
             assert_eq!(data, before);
         }
+    }
+
+    #[test]
+    fn area_patch_is_a_classified_write_operation() {
+        let mut request = ApiRequest {
+            method: "PATCH".into(),
+            path: "/areas/area-1".into(),
+            query: HashMap::new(),
+            headers: HashMap::new(),
+            body: br#"{"name":"Work"}"#.to_vec(),
+        };
+        let operation = operation_from_api_request(&request)
+            .unwrap()
+            .expect("area patch route");
+        assert!(operation.writes());
+        assert!(matches!(operation, LocalOperation::PatchArea { id, .. } if id == "area-1"));
+        request.method = "GET".into();
+        assert!(matches!(operation_from_api_request(&request).unwrap(),
+            Some(LocalOperation::GetArea(id)) if id == "area-1"));
+        for path in ["/areas", "/v1/areas"] {
+            request.path = path.into();
+            assert_eq!(
+                operation_from_api_request(&request).unwrap(),
+                Some(LocalOperation::ListAreas)
+            );
+        }
+        for (method, path) in [
+            ("POST", "/areas"),
+            ("DELETE", "/areas/area-1"),
+            ("PATCH", "/areas"),
+            ("PATCH", "/v1/areas/area-1"),
+        ] {
+            request.method = method.into();
+            request.path = path.into();
+            assert!(operation_from_api_request(&request).unwrap().is_none());
+        }
+    }
+
+    fn area_update_fixture() -> Value {
+        serde_json::from_str(include_str!(
+            "../../../../packages/core/src/__fixtures__/local-api-area-update.json"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn area_updates_match_core_golden_cases() {
+        let fixture = area_update_fixture();
+        for case in fixture["cases"].as_array().unwrap() {
+            let mut data = fixture["before"].clone();
+            let changed = patch_area_in_data(
+                &mut data,
+                "area-1",
+                case["patch"].as_object().unwrap(),
+                fixture["now"].as_str().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(changed.areas.len(), 1, "{}", case["label"]);
+            assert_eq!(
+                live_project_area(&data, "area-1").unwrap(),
+                &case["expected"]["area"],
+                "{}",
+                case["label"]
+            );
+            assert_eq!(
+                data["projects"], case["expected"]["projects"],
+                "{}",
+                case["label"]
+            );
+            assert_eq!(data["tasks"], fixture["before"]["tasks"]);
+            assert_eq!(data["sections"], fixture["before"]["sections"]);
+            assert!(changed.tasks.is_empty() && changed.sections.is_empty());
+            for area in fixture["before"]["areas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|area| area["id"] != "area-1")
+            {
+                assert!(data["areas"].as_array().unwrap().contains(area));
+            }
+        }
+    }
+
+    #[test]
+    fn area_name_collisions_match_core_unicode_normalization_without_mutating_rows() {
+        let fixture = area_update_fixture();
+        for case in fixture["normalizationCases"].as_array().unwrap() {
+            let mut data = fixture["before"].clone();
+            data["areas"].as_array_mut().unwrap().truncate(2);
+            data["areas"][1]["name"] = case["left"].clone();
+            let before = data.clone();
+            let patch = json!({"name":case["right"],"color":null,"icon":"updated","order":2});
+            let result = patch_area_in_data(
+                &mut data,
+                "area-1",
+                patch.as_object().unwrap(),
+                fixture["now"].as_str().unwrap(),
+            );
+            if case["collides"] == true {
+                assert_eq!(
+                    api_error_response(result.unwrap_err()).status,
+                    409,
+                    "{case}"
+                );
+                assert_eq!(data, before, "{case}");
+            } else {
+                assert!(result.is_ok(), "{case}");
+            }
+        }
+    }
+
+    fn area_http_request(
+        port: u16,
+        method: &str,
+        id: &str,
+        body: Value,
+        token: &str,
+    ) -> (u16, Value) {
+        let body = if method == "GET" {
+            String::new()
+        } else {
+            body.to_string()
+        };
+        let mut stream = TcpStream::connect((LOCAL_API_HOST, port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(stream, "{method} /areas/{id} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        (
+            headers.split_whitespace().nth(1).unwrap().parse().unwrap(),
+            serde_json::from_str(body).unwrap(),
+        )
+    }
+
+    #[test]
+    fn area_http_updates_are_durable_and_fail_atomically() {
+        use crate::storage::{
+            local_area_operation_test_commit, local_operation_test_seed, read_sqlite_data,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("areas.sqlite");
+        let fixture = area_update_fixture();
+        let mut conn = rusqlite::Connection::open(&database).unwrap();
+        local_operation_test_seed(&mut conn, &fixture["before"]).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let before = read_sqlite_data(&conn).unwrap();
+        let handler_database = database.clone();
+        let write_lock = Arc::new(Mutex::new(()));
+        let listener = start_http_listener(0, true, move |access, _, request| {
+            handle_api_operation("area-http-token", access, request, |operation| {
+                let _guard = if operation.writes() {
+                    Some(access.lock_write(&write_lock)?)
+                } else {
+                    None
+                };
+                let conn = rusqlite::Connection::open(&handler_database)
+                    .map_err(|error| error.to_string())?;
+                conn.execute_batch("PRAGMA foreign_keys=ON;")
+                    .map_err(|error| error.to_string())?;
+                let (id, data) = match operation {
+                    LocalOperation::PatchArea { id, body } => {
+                        let data = local_area_operation_test_commit(&conn, &id, |data| {
+                            Ok((
+                                (),
+                                patch_area_in_data(data, &id, &body, "2026-10-11T12:00:00.000Z")?,
+                            ))
+                        })?;
+                        (id, data)
+                    }
+                    LocalOperation::GetArea(id) => (id, read_sqlite_data(&conn)?),
+                    _ => return Err("Unsupported test operation".into()),
+                };
+                Ok(json!({"area": live_project_area(&data, &id).ok_or("Area not found")?}))
+            })
+        })
+        .unwrap();
+        let port = listener.port;
+        let token = "area-http-token";
+        assert_eq!(
+            area_http_request(port, "GET", "missing", Value::Null, token).0,
+            404
+        );
+        assert_eq!(
+            area_http_request(port, "GET", "deleted-area", Value::Null, token).0,
+            404
+        );
+        assert_eq!(
+            area_http_request(
+                port,
+                "PATCH",
+                "area-1",
+                json!({"name":"Unauthorized"}),
+                "wrong"
+            )
+            .0,
+            401
+        );
+        for (id, patch, status) in [
+            ("missing", json!({"name":"Office"}), 404),
+            ("deleted-area", json!({"name":"Office"}), 404),
+            ("area-1", json!({}), 400),
+            ("area-1", json!({"name":"\u{feff} \t"}), 400),
+            ("area-1", json!({"name":null}), 400),
+            ("area-1", json!({"name":1}), 400),
+            ("area-1", json!({"order":null}), 400),
+            ("area-1", json!({"order":"1"}), 400),
+            ("area-1", json!({"color":false}), 400),
+            ("area-1", json!({"icon":1}), 400),
+            ("area-1", json!({"rev":20}), 400),
+            (
+                "area-1",
+                json!({"name":"\u{feff}hOmE\u{feff}","color":"#10b981","icon":null,"order":1.5}),
+                409,
+            ),
+        ] {
+            assert_eq!(
+                area_http_request(port, "PATCH", id, patch.clone(), token).0,
+                status,
+                "{id} {patch}"
+            );
+            assert_eq!(
+                read_sqlite_data(&conn).unwrap(),
+                before,
+                "rejected request must not change rows"
+            );
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER reject_area_project BEFORE UPDATE ON projects WHEN NEW.id = 'archived'
+            BEGIN SELECT RAISE(ABORT, 'injected area project failure'); END;",
+        )
+        .unwrap();
+        assert_eq!(
+            area_http_request(
+                port,
+                "PATCH",
+                "area-1",
+                json!({"name":"Office","color":"#10b981"}),
+                token
+            )
+            .0,
+            500
+        );
+        assert_eq!(
+            read_sqlite_data(&conn).unwrap(),
+            before,
+            "failure rolls back area and earlier project writes"
+        );
+        conn.execute_batch("DROP TRIGGER reject_area_project;")
+            .unwrap();
+        let (status, response) = area_http_request(
+            port,
+            "PATCH",
+            "area-1",
+            fixture["cases"][0]["patch"].clone(),
+            token,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(
+            response,
+            json!({"area": fixture["cases"][0]["expected"]["area"]})
+        );
+        let after = read_sqlite_data(&conn).unwrap();
+        for expected in fixture["cases"][0]["expected"]["projects"]
+            .as_array()
+            .unwrap()
+        {
+            let actual = find_project(&after, expected["id"].as_str().unwrap()).unwrap();
+            for (field, value) in expected.as_object().unwrap() {
+                assert_eq!(&actual[field], value, "{} {field}", expected["id"]);
+            }
+        }
+        assert_eq!(
+            after["tasks"], before["tasks"],
+            "child foreign keys and content survive"
+        );
+        assert_eq!(after["sections"], before["sections"]);
+        assert_eq!(
+            area_http_request(port, "GET", "area-1", Value::Null, token),
+            (200, response)
+        );
+        drop(conn);
+        let reopened = rusqlite::Connection::open(&database).unwrap();
+        assert_eq!(
+            read_sqlite_data(&reopened).unwrap(),
+            after,
+            "HTTP success survives database reopen"
+        );
+        drop(listener);
+    }
+
+    #[test]
+    fn area_http_read_only_denies_patch_before_execution() {
+        let listener = start_http_listener(0, false, |access, _, request| {
+            handle_api_operation("area-http-token", access, request, |_| {
+                panic!("read-only area patch must not reach storage")
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            area_http_request(
+                listener.port,
+                "PATCH",
+                "area-1",
+                json!({"name":"Office"}),
+                "area-http-token"
+            )
+            .0,
+            403
+        );
+        drop(listener);
     }
 
     #[test]

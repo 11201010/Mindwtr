@@ -3777,6 +3777,67 @@ where
     result
 }
 
+fn row_to_area_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let mut map = serde_json::Map::new();
+    map.insert("id".to_string(), Value::String(row.get::<_, String>("id")?));
+    map.insert(
+        "name".to_string(),
+        Value::String(row.get::<_, String>("name")?),
+    );
+    if let Ok(val) = row.get::<_, Option<String>>("color") {
+        if let Some(v) = val {
+            map.insert("color".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("icon") {
+        if let Some(v) = val {
+            map.insert("icon".to_string(), Value::String(v));
+        }
+    }
+    if let Some(num) = json_number_from_f64(row.get::<_, f64>("orderNum")?) {
+        map.insert("order".to_string(), num);
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
+        if let Some(v) = val {
+            map.insert("deletedAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("deletedAtBeforeProjectArchive") {
+        if let Some(v) = val {
+            map.insert(
+                "deletedAtBeforeProjectArchive".to_string(),
+                Value::String(v),
+            );
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("projectArchivedAt") {
+        if let Some(v) = val {
+            map.insert("projectArchivedAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+        if let Some(v) = val {
+            map.insert("rev".to_string(), Value::Number(v.into()));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+        if let Some(v) = val {
+            map.insert("revBy".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("createdAt") {
+        if let Some(v) = val {
+            map.insert("createdAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("updatedAt") {
+        if let Some(v) = val {
+            map.insert("updatedAt".to_string(), Value::String(v));
+        }
+    }
+    Ok(Value::Object(map))
+}
+
 pub(crate) fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
     let mut tasks_stmt = conn
         .prepare("SELECT * FROM tasks")
@@ -3828,66 +3889,7 @@ pub(crate) fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
         .prepare("SELECT * FROM areas")
         .map_err(|e| e.to_string())?;
     let area_rows = areas_stmt
-        .query_map([], |row| {
-            let mut map = serde_json::Map::new();
-            map.insert("id".to_string(), Value::String(row.get::<_, String>("id")?));
-            map.insert(
-                "name".to_string(),
-                Value::String(row.get::<_, String>("name")?),
-            );
-            if let Ok(val) = row.get::<_, Option<String>>("color") {
-                if let Some(v) = val {
-                    map.insert("color".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("icon") {
-                if let Some(v) = val {
-                    map.insert("icon".to_string(), Value::String(v));
-                }
-            }
-            if let Some(num) = json_number_from_f64(row.get::<_, f64>("orderNum")?) {
-                map.insert("order".to_string(), num);
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
-                if let Some(v) = val {
-                    map.insert("deletedAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("deletedAtBeforeProjectArchive") {
-                if let Some(v) = val {
-                    map.insert(
-                        "deletedAtBeforeProjectArchive".to_string(),
-                        Value::String(v),
-                    );
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("projectArchivedAt") {
-                if let Some(v) = val {
-                    map.insert("projectArchivedAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<i64>>("rev") {
-                if let Some(v) = val {
-                    map.insert("rev".to_string(), Value::Number(v.into()));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("revBy") {
-                if let Some(v) = val {
-                    map.insert("revBy".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("createdAt") {
-                if let Some(v) = val {
-                    map.insert("createdAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("updatedAt") {
-                if let Some(v) = val {
-                    map.insert("updatedAt".to_string(), Value::String(v));
-                }
-            }
-            Ok(Value::Object(map))
-        })
+        .query_map([], row_to_area_value)
         .map_err(|e| e.to_string())?;
     let mut areas: Vec<Value> = Vec::new();
     for row in area_rows {
@@ -4272,9 +4274,19 @@ pub(crate) struct ProjectMutationReadScope {
     target_area_supplied: bool,
     include_children: bool,
     include_section_tasks: bool,
+    update_area: bool,
 }
 
 impl ProjectMutationReadScope {
+    pub(crate) fn area_update(area_id: &str) -> Self {
+        Self {
+            target_area_id: Some(area_id.to_string()),
+            target_area_supplied: true,
+            update_area: true,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn lifecycle(project_id: &str) -> Self {
         Self {
             project_id: Some(project_id.to_string()),
@@ -4310,6 +4322,7 @@ impl ProjectMutationReadScope {
 
 #[derive(Debug, Default)]
 pub(crate) struct ProjectMutationRows {
+    pub(crate) areas: Vec<Value>,
     pub(crate) projects: Vec<Value>,
     pub(crate) tasks: Vec<Value>,
     pub(crate) sections: Vec<Value>,
@@ -4775,6 +4788,31 @@ fn read_project_mutation_data(
     let mut sections = Vec::new();
     let mut areas = Vec::new();
 
+    if scope.update_area {
+        stats.statements += 1;
+        let mut statement = conn
+            .prepare("SELECT * FROM areas")
+            .map_err(|e| e.to_string())?;
+        for row in statement
+            .query_map([], row_to_area_value)
+            .map_err(|e| e.to_string())?
+        {
+            areas.push(row.map_err(|e| e.to_string())?);
+            stats.rows += 1;
+        }
+        stats.statements += 1;
+        let mut statement = conn
+            .prepare("SELECT * FROM projects WHERE areaId = ?1")
+            .map_err(|e| e.to_string())?;
+        for row in statement
+            .query_map([scope.target_area_id.as_deref()], row_to_project_value)
+            .map_err(|e| e.to_string())?
+        {
+            projects.push(row.map_err(|e| e.to_string())?);
+            stats.rows += 1;
+        }
+    }
+
     if let Some(project_id) = scope.project_id.as_deref() {
         load_scoped_project(conn, project_id, &mut projects, &mut stats)?;
         if scope.include_children {
@@ -5051,6 +5089,28 @@ where
     let result = (|| {
         let (mut canonical, read_stats) = read_project_mutation_data(conn, scope)?;
         let (result, changed) = mutate(&mut canonical)?;
+        for area in changed.areas {
+            // UPDATE preserves child foreign keys; REPLACE would detach them.
+            let changed = conn
+                .execute(
+                    "UPDATE areas SET name = ?2, color = ?3, icon = ?4, orderNum = ?5,
+                 rev = ?6, revBy = ?7, updatedAt = ?8 WHERE id = ?1",
+                    params![
+                        area["id"].as_str(),
+                        area["name"].as_str(),
+                        area["color"].as_str(),
+                        area["icon"].as_str(),
+                        area["order"].as_f64(),
+                        area["rev"].as_i64(),
+                        area["revBy"].as_str(),
+                        area["updatedAt"].as_str()
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            if changed != 1 {
+                return Err("Area not found".to_string());
+            }
+        }
         let mut written_ids = HashSet::new();
         for project in changed.projects {
             let project_id = project
@@ -5158,6 +5218,23 @@ pub(crate) fn local_operation_test_seed(conn: &mut Connection, data: &Value) -> 
     conn.execute_batch(SQLITE_SCHEMA)
         .map_err(|error| error.to_string())?;
     migrate_json_to_sqlite(conn, data)
+}
+
+#[cfg(test)]
+pub(crate) fn local_area_operation_test_commit<F>(
+    conn: &Connection,
+    area_id: &str,
+    mut mutate: F,
+) -> Result<Value, String>
+where
+    F: FnMut(&mut Value) -> Result<((), ProjectMutationRows), String>,
+{
+    commit_project_row_mutation(
+        conn,
+        &ProjectMutationReadScope::area_update(area_id),
+        &mut mutate,
+    )?;
+    read_sqlite_data(conn)
 }
 
 #[cfg(test)]
@@ -10092,6 +10169,7 @@ mod tests {
                         projects: vec![project],
                         tasks,
                         sections,
+                        ..ProjectMutationRows::default()
                     },
                 ))
             };
@@ -10176,6 +10254,7 @@ mod tests {
                     projects: vec![project],
                     tasks,
                     sections,
+                    ..ProjectMutationRows::default()
                 },
             ))
         };
