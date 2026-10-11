@@ -16,9 +16,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -320,13 +322,17 @@ const val COMPACT_TEXT_MAX_SCALE = 1.2f
 fun compactFontFactor(fontScale: Float, maxScale: Float = COMPACT_TEXT_MAX_SCALE): Float = if (fontScale <= maxScale) 1f else maxScale / fontScale
 
 /**
- * RN's CompactText: this style with its size capped at 1.2x the font scale. RN's maxFontSizeMultiplier leaves the line height
- * scaling with the system (S23 at 2.0: RN's pill is as tall as an uncapped line), so the line height here does too.
+ * RN's CompactText: this style with its size capped at 1.2x the font scale (maxFontSizeMultiplier) and its line height RN's,
+ * the style's value times the font scale in dp. RN scales a line height linearly and leaves it uncapped; Compose's sp grows
+ * less than the scale on Android 14+, so an sp line height would be shorter than RN's (S23 at 2.0: pills 14 dp shorter).
  */
 @Composable
-fun TextStyle.compact(): TextStyle {
-    val factor = compactFontFactor(LocalDensity.current.fontScale)
-    return if (factor == 1f) this else copy(fontSize = fontSize * factor)
+fun TextStyle.compact(): TextStyle = compact(LocalDensity.current)
+
+fun TextStyle.compact(density: Density): TextStyle {
+    val factor = compactFontFactor(density.fontScale)
+    val line = if (lineHeight.isSpecified) with(density) { (lineHeight.value * density.fontScale).dp.toSp() } else lineHeight
+    return copy(fontSize = if (factor == 1f) fontSize else fontSize * factor, lineHeight = line)
 }
 
 /** RN's type: the platform sans (Fonts.sans is 'normal' on Android), at RN's size, weight, and line height. */
