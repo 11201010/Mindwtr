@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { RecurrenceByDay, RecurrenceWeekday, Task, TaskDraft, TaskDraftSetter } from '@mindwtr/core';
-import { buildRRuleString, isMonthlyWeekdaySet, MONTHLY_WEEKDAYS, parseRRuleString, safeParseDate } from '@mindwtr/core';
+import { buildRRuleString, getTaskEditorMonthlyPattern, isMonthlyWeekdaySet, MONTHLY_WEEKDAYS, parseRRuleString, safeParseDate } from '@mindwtr/core';
 import { WEEKDAY_ORDER } from './recurrence-constants';
 
 type UseTaskItemRecurrenceProps = {
@@ -28,16 +28,8 @@ export function useTaskItemRecurrence({
             return { pattern: 'date' as const, interval: 1 };
         }
         const parsed = parseRRuleString(editRecurrenceRRule);
-        const hasLast = parsed.byDay?.some((day) => String(day).startsWith('-1'));
-        const hasNth = parsed.byDay?.some((day) => /^[1-4]/.test(String(day)));
-        const hasByMonthDay = parsed.byMonthDay && parsed.byMonthDay.length > 0;
         const interval = parsed.interval && parsed.interval > 0 ? parsed.interval : 1;
-        // A multi-day list is always custom, even when its first day happens to
-        // match the anchor.
-        const isCustomDay = hasByMonthDay
-            && (parsed.byMonthDay!.length > 1 || parsed.byMonthDay![0] !== monthlyAnchorDate.getDate());
-        const pattern: 'custom' | 'date' = hasNth || hasLast || parsed.bySetPos !== undefined || isCustomDay ? 'custom' : 'date';
-        return { pattern, interval };
+        return { pattern: getTaskEditorMonthlyPattern(editRecurrence, editRecurrenceRRule, monthlyAnchorDate), interval };
     }, [editRecurrence, editRecurrenceRRule, monthlyAnchorDate]);
 
     const [showCustomRecurrence, setShowCustomRecurrence] = useState(false);
