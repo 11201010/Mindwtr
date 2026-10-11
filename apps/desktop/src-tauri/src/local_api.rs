@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use time::format_description::well_known::Rfc3339;
-use time::{Date, Month, OffsetDateTime};
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime};
 
 const LOCAL_API_HOST: &str = "127.0.0.1";
 pub(crate) const DEFAULT_LOCAL_API_PORT: u16 = 3456;
@@ -1174,11 +1174,12 @@ pub(crate) fn execute_operation(
             let task = persisted_task(&persisted, &task_id)?;
             let now = OffsetDateTime::now_utc();
             if task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
-                && task
-                    .as_object()
-                    .is_some_and(|task| local_api_task_is_future_start(task, now))
+                && task.as_object().is_some_and(|task| {
+                    local_api_task_is_future_start(task, now, &crate::local_query::local_wall)
+                })
             {
-                let count = local_api_focused_task_count(&persisted, now);
+                let count =
+                    local_api_focused_task_count(&persisted, now, &crate::local_query::local_wall);
                 log::info!(
                 "Desktop Local API scheduled Focus queued extra.releaseCheck=v1.3.3/local-api-scheduled-focus operation=create outcome=queued count={count}"
             );
@@ -3787,19 +3788,51 @@ fn local_api_review_is_due(task: &Map<String, Value>, now: OffsetDateTime) -> bo
     local_api_schedule_time(task.get("reviewAt")).is_some_and(|review| review <= now)
 }
 
-fn local_api_task_is_future_start(task: &Map<String, Value>, now: OffsetDateTime) -> bool {
-    let defer_until = local_api_schedule_time(task.get("startTime")).or_else(|| {
-        recurrence_rule(task).and_then(|_| {
-            [
-                local_api_schedule_time(task.get("dueDate")),
-                local_api_schedule_time(task.get("reviewAt")),
-            ]
-            .into_iter()
-            .flatten()
-            .min()
+fn local_api_focus_schedule_time(
+    value: Option<&Value>,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> Option<PrimitiveDateTime> {
+    let value = value?.as_str()?;
+    let parse = |value: &str| {
+        crate::local_query::parse_local_date(value).or_else(|| {
+            let instant = OffsetDateTime::parse(value, &Rfc3339).ok()?;
+            let utc = instant.to_offset(time::UtcOffset::UTC);
+            Some(local_wall(instant).unwrap_or(PrimitiveDateTime::new(utc.date(), utc.time())))
         })
-    });
-    defer_until.is_some_and(|value| value.date() > now.date())
+    };
+    parse(value).or_else(|| {
+        if matches!(
+            value.as_bytes().get(16),
+            None | Some(b'Z' | b'z' | b'+' | b'-')
+        ) {
+            parse(&format!("{}:00{}", value.get(..16)?, value.get(16..)?))
+        } else {
+            None
+        }
+    })
+}
+
+fn local_api_task_is_future_start(
+    task: &Map<String, Value>,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> bool {
+    let defer_until =
+        local_api_focus_schedule_time(task.get("startTime"), local_wall).or_else(|| {
+            recurrence_rule(task).and_then(|_| {
+                [
+                    local_api_focus_schedule_time(task.get("dueDate"), local_wall),
+                    local_api_focus_schedule_time(task.get("reviewAt"), local_wall),
+                ]
+                .into_iter()
+                .flatten()
+                .min()
+            })
+        });
+    let today = local_wall(now)
+        .map(|value| value.date())
+        .unwrap_or_else(|| now.to_offset(time::UtcOffset::UTC).date());
+    defer_until.is_some_and(|value| value.date() > today)
 }
 
 fn local_api_focus_task_limit(data: &Value) -> usize {
@@ -3817,7 +3850,11 @@ fn local_api_focus_task_limit(data: &Value) -> usize {
         .unwrap_or(3)
 }
 
-fn local_api_focused_task_count(data: &Value, now: OffsetDateTime) -> usize {
+fn local_api_focused_task_count(
+    data: &Value,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> usize {
     if let Some(count) = data
         .get(TASK_MUTATION_FOCUSED_COUNT_KEY)
         .and_then(Value::as_u64)
@@ -3835,7 +3872,7 @@ fn local_api_focused_task_count(data: &Value, now: OffsetDateTime) -> usize {
                 )
                 && task
                     .as_object()
-                    .is_some_and(|task| !local_api_task_is_future_start(task, now))
+                    .is_some_and(|task| !local_api_task_is_future_start(task, now, local_wall))
         })
         .count()
 }
@@ -3961,7 +3998,12 @@ fn local_api_focus_candidate_is_sequential_first(
     best_id == candidate.get("id").and_then(Value::as_str)
 }
 
-fn normalize_created_task_focus(task: &mut Map<String, Value>, data: &Value, now: &str) {
+fn normalize_created_task_focus(
+    task: &mut Map<String, Value>,
+    data: &Value,
+    now: &str,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) {
     if task.get("isFocusedToday").and_then(Value::as_bool) != Some(true) {
         task.remove("focusOrder");
         return;
@@ -3983,7 +4025,7 @@ fn normalize_created_task_focus(task: &mut Map<String, Value>, data: &Value, now
         Value::String(promoted_status.to_string()),
     );
     candidate.insert("isFocusedToday".to_string(), Value::Bool(false));
-    let future_start = local_api_task_is_future_start(&candidate, now);
+    let future_start = local_api_task_is_future_start(&candidate, now, local_wall);
     let queued =
         promoted_status == "next" && has_non_empty_string(&candidate, "startTime") && future_start;
     let status_is_eligible = promoted_status == "next"
@@ -3992,13 +4034,16 @@ fn normalize_created_task_focus(task: &mut Map<String, Value>, data: &Value, now
         && local_api_project_allows_focus(&candidate, data)
         && (!future_start || queued)
         && local_api_focus_candidate_is_sequential_first(&candidate, data, now);
-    let cap_is_available =
-        queued || local_api_focused_task_count(data, now) < local_api_focus_task_limit(data);
+    let cap_is_available = queued
+        || local_api_focused_task_count(data, now, local_wall) < local_api_focus_task_limit(data);
     if eligible && cap_is_available {
         task.insert(
             "status".to_string(),
             Value::String(promoted_status.to_string()),
         );
+        if queued {
+            log::info!("Local API Focus star queued for a later local day extra.releaseCheck=v1.3.5/local-api-focus-local-day");
+        }
     } else {
         task.insert("isFocusedToday".to_string(), Value::Bool(false));
         task.remove("focusOrder");
@@ -4086,7 +4131,7 @@ fn create_task_from_body(
     if task.get("status").and_then(Value::as_str) == Some("reference") {
         normalize_created_reference_task(&mut task);
     }
-    normalize_created_task_focus(&mut task, data, &now);
+    normalize_created_task_focus(&mut task, data, &now, &crate::local_query::local_wall);
     task.insert("rev".to_string(), Value::Number(1.into()));
     task.insert("revBy".to_string(), Value::String(device_id.to_string()));
     Ok(task)
@@ -7067,6 +7112,67 @@ mod tests {
         .expect("refused focus task remains valid");
         assert_eq!(refused["status"], "inbox");
         assert_eq!(refused["isFocusedToday"], false);
+    }
+
+    #[test]
+    fn local_api_focus_uses_local_day_at_timezone_boundaries() {
+        for (offset_hours, now, start, future) in [
+            (9, "2026-10-11T23:00:00Z", "2026-10-12", false),
+            (9, "2026-10-11T23:00:00Z", "2026-10-12T07:00+09:00", false),
+            (9, "2026-10-11T23:00:00Z", "2026-10-11T23:30:00Z", false),
+            (-4, "2026-10-12T01:00:00Z", "2026-10-12", true),
+            (-4, "2026-10-12T01:00:00Z", "2026-10-12T07:00", true),
+            (-4, "2026-10-12T01:00:00Z", "2026-10-12T01:30:00Z", false),
+            (-4, "2026-10-12T01:00:00Z", "2026-10-12T07:00+09:00", false),
+        ] {
+            let offset = time::UtcOffset::from_hms(offset_hours, 0, 0).unwrap();
+            let local_wall = |instant: OffsetDateTime| {
+                let local = instant.to_offset(offset);
+                Some(PrimitiveDateTime::new(local.date(), local.time()))
+            };
+            let instant = OffsetDateTime::parse(now, &Rfc3339).unwrap();
+            let mut task = json!({
+                "status": "next", "startTime": start, "isFocusedToday": true, "focusOrder": 1
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            assert_eq!(
+                local_api_task_is_future_start(&task, instant, &local_wall),
+                future,
+                "future-start mismatch: offset={offset_hours} now={now} start={start}"
+            );
+            assert_eq!(
+                local_api_focused_task_count(
+                    &json!({"tasks": [task.clone()]}),
+                    instant,
+                    &local_wall
+                ),
+                usize::from(!future),
+                "Focus count mismatch: offset={offset_hours} now={now} start={start}"
+            );
+            let cap_full = json!({
+                "tasks": [{"status": "next", "isFocusedToday": true}],
+                "settings": {"gtd": {"focusTaskLimit": 1}}
+            });
+            normalize_created_task_focus(&mut task, &cap_full, now, &local_wall);
+            assert_eq!(
+                task["isFocusedToday"], future,
+                "Focus cap mismatch: {start}"
+            );
+            assert_eq!(task.contains_key("focusOrder"), future);
+        }
+
+        let utc_unavailable = |_| None;
+        let now = OffsetDateTime::parse("2026-10-12T01:00:00+09:00", &Rfc3339).unwrap();
+        for start in ["2026-10-12", "2026-10-11T23:30:00-04:00"] {
+            let task = json!({"startTime": start});
+            assert!(local_api_task_is_future_start(
+                task.as_object().unwrap(),
+                now,
+                &utc_unavailable
+            ));
+        }
     }
 
     #[test]

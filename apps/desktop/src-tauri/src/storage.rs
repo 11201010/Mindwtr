@@ -4506,6 +4506,7 @@ where
 fn read_task_mutation_data(
     conn: &Connection,
     scope: &TaskMutationReadScope,
+    now: OffsetDateTime,
 ) -> Result<(Value, TaskMutationReadStats), String> {
     let mut stats = TaskMutationReadStats::default();
     let mut tasks = Vec::new();
@@ -4618,42 +4619,45 @@ fn read_task_mutation_data(
     let mut focused_count = None;
     if scope.include_focus_context {
         stats.statements += 1;
-        let today = OffsetDateTime::now_utc().date().to_string();
-        // Match local_api_task_is_future_start: choose recurring fallback fields by instant,
-        // then compare the chosen value's own calendar date against today.
+        let today = crate::local_query::local_wall(now)
+            .map(|value| value.date())
+            .unwrap_or_else(|| now.to_offset(time::UtcOffset::UTC).date())
+            .to_string();
+        // Match local_api_task_is_future_start: offset timestamps use local days;
+        // date-only and floating timestamps keep their written days.
         let count: i64 = conn
             .query_row(
                 "WITH focus_values AS (
                    SELECT startTime, dueDate, reviewAt, recurrence,
                      CASE WHEN julianday(startTime) IS NOT NULL
                        AND date(substr(startTime, 1, 10), '+0 days') = substr(startTime, 1, 10)
-                       AND (length(startTime) = 10 OR (
-                         substr(startTime, 11, 1) IN ('T', 't')
-                         AND (upper(substr(startTime, -1, 1)) = 'Z'
-                           OR (substr(startTime, -6, 1) IN ('+', '-')
-                             AND substr(startTime, -3, 1) = ':'))
-                       ))
-                       THEN substr(startTime, 1, 10)
+                       AND (length(startTime) = 10 OR substr(startTime, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(startTime, -1, 1)) = 'Z'
+                         OR (substr(startTime, -6, 1) IN ('+', '-')
+                           AND substr(startTime, -3, 1) = ':')
+                         THEN COALESCE(date(startTime, 'localtime'), date(startTime))
+                         ELSE substr(startTime, 1, 10)
+                       END
                      END AS startDay,
                      CASE WHEN julianday(dueDate) IS NOT NULL
                        AND date(substr(dueDate, 1, 10), '+0 days') = substr(dueDate, 1, 10)
-                       AND (length(dueDate) = 10 OR (
-                         substr(dueDate, 11, 1) IN ('T', 't')
-                         AND (upper(substr(dueDate, -1, 1)) = 'Z'
-                           OR (substr(dueDate, -6, 1) IN ('+', '-')
-                             AND substr(dueDate, -3, 1) = ':'))
-                       ))
-                       THEN substr(dueDate, 1, 10)
+                       AND (length(dueDate) = 10 OR substr(dueDate, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(dueDate, -1, 1)) = 'Z'
+                         OR (substr(dueDate, -6, 1) IN ('+', '-')
+                           AND substr(dueDate, -3, 1) = ':')
+                         THEN COALESCE(date(dueDate, 'localtime'), date(dueDate))
+                         ELSE substr(dueDate, 1, 10)
+                       END
                      END AS dueDay,
                      CASE WHEN julianday(reviewAt) IS NOT NULL
                        AND date(substr(reviewAt, 1, 10), '+0 days') = substr(reviewAt, 1, 10)
-                       AND (length(reviewAt) = 10 OR (
-                         substr(reviewAt, 11, 1) IN ('T', 't')
-                         AND (upper(substr(reviewAt, -1, 1)) = 'Z'
-                           OR (substr(reviewAt, -6, 1) IN ('+', '-')
-                             AND substr(reviewAt, -3, 1) = ':'))
-                       ))
-                       THEN substr(reviewAt, 1, 10)
+                       AND (length(reviewAt) = 10 OR substr(reviewAt, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(reviewAt, -1, 1)) = 'Z'
+                         OR (substr(reviewAt, -6, 1) IN ('+', '-')
+                           AND substr(reviewAt, -3, 1) = ':')
+                         THEN COALESCE(date(reviewAt, 'localtime'), date(reviewAt))
+                         ELSE substr(reviewAt, 1, 10)
+                       END
                      END AS reviewDay
                    FROM tasks
                    WHERE isFocusedToday = 1
@@ -4668,7 +4672,7 @@ fn read_task_mutation_data(
                      THEN CASE
                        WHEN dueDay IS NULL THEN reviewDay
                        WHEN reviewDay IS NULL THEN dueDay
-                       WHEN julianday(dueDate) <= julianday(reviewAt) THEN dueDay
+                       WHEN dueDay <= reviewDay THEN dueDay
                        ELSE reviewDay
                      END
                    END AS deferDate
@@ -5261,7 +5265,8 @@ where
     conn.execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| e.to_string())?;
     let result = (|| {
-        let (mut canonical, read_stats) = read_task_mutation_data(conn, scope)?;
+        let (mut canonical, read_stats) =
+            read_task_mutation_data(conn, scope, OffsetDateTime::now_utc())?;
         let (result, changed_tasks) = mutate(&mut canonical)?;
         let mut written_ids = HashSet::new();
         for task in changed_tasks {
@@ -10439,10 +10444,75 @@ mod tests {
     }
 
     #[test]
+    fn focused_create_scope_counts_local_schedule_days() {
+        let conn = Connection::open_in_memory().expect("database");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        let now = OffsetDateTime::parse(
+            "2026-10-11T23:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let local_now = crate::local_query::local_wall(now).unwrap();
+        let today = local_now.date();
+        let tomorrow = today.next_day().unwrap();
+        let offset = time::UtcOffset::from_whole_seconds(
+            (local_now.assume_utc().unix_timestamp() - now.unix_timestamp()) as i32,
+        )
+        .unwrap();
+        let offset_today = today
+            .with_hms(23, 30, 0)
+            .unwrap()
+            .assume_offset(offset)
+            .to_offset(time::UtcOffset::from_hms(14, 0, 0).unwrap())
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        for (index, schedule) in [
+            serde_json::json!({"startTime": today.to_string()}),
+            serde_json::json!({"startTime": format!("{today}T23:30")}),
+            serde_json::json!({"startTime": offset_today}),
+            serde_json::json!({"startTime": tomorrow.to_string()}),
+            serde_json::json!({"startTime": format!("{tomorrow}T07:00")}),
+            serde_json::json!({
+                "dueDate": tomorrow.to_string(), "reviewAt": offset_today,
+                "recurrence": {"rule": "daily"}
+            }),
+            serde_json::json!({
+                "dueDate": offset_today, "reviewAt": tomorrow.to_string(),
+                "recurrence": {"rule": "daily"}
+            }),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut task = schedule.as_object().unwrap().clone();
+            task.extend(
+                serde_json::json!({
+                    "id": format!("focused-{index}"), "title": "Focus", "status": "next",
+                    "isFocusedToday": true, "tags": [], "contexts": [], "rev": 1,
+                    "createdAt": "2026-10-11T23:00:00Z", "updatedAt": "2026-10-11T23:00:00Z"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            );
+            replace_task_row(&conn, &Value::Object(task)).expect("seed task");
+        }
+        let scope = TaskMutationReadScope::create(None, None, None, true);
+        let (data, _) = read_task_mutation_data(&conn, &scope, now).expect("Focus context");
+        assert_eq!(
+            data[TASK_MUTATION_FOCUSED_COUNT_KEY], 5,
+            "SQL Focus count must use local schedule days"
+        );
+    }
+
+    #[test]
     fn focused_create_scope_reads_only_referenced_context_and_sequential_candidates() {
         let conn = Connection::open_in_memory().expect("database");
         conn.execute_batch(SQLITE_SCHEMA).expect("schema");
-        let today = OffsetDateTime::now_utc().date();
+        let now = OffsetDateTime::now_utc();
+        let today = crate::local_query::local_wall(now)
+            .map(|value| value.date())
+            .unwrap_or_else(|| now.date());
         let tomorrow = today.next_day().expect("tomorrow");
         let mut tasks = (0..1_000)
             .map(|index| {
@@ -10481,8 +10551,8 @@ mod tests {
             }),
             serde_json::json!({
                 "id": "recurring-queued-focus", "title": "Recurring queued", "status": "next",
-                "dueDate": format!("{tomorrow}T00:30:00+14:00"),
-                "reviewAt": format!("{today}T23:45:00-10:00"),
+                "dueDate": tomorrow.to_string(),
+                "reviewAt": format!("{tomorrow}T23:45:00"),
                 "recurrence": { "rule": "daily" }, "isFocusedToday": true,
                 "tags": [], "contexts": [], "rev": 1,
                 "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
@@ -10517,7 +10587,7 @@ mod tests {
             true,
         );
 
-        let (data, stats) = read_task_mutation_data(&conn, &scope).expect("scoped context");
+        let (data, stats) = read_task_mutation_data(&conn, &scope, now).expect("scoped context");
 
         assert_eq!(data["projects"].as_array().map(Vec::len), Some(1));
         assert_eq!(data["sections"].as_array().map(Vec::len), Some(1));
@@ -10557,9 +10627,9 @@ mod tests {
                 "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
             }),
         )
-        .expect("insert unsupported local datetime");
-        let (data, _) = read_task_mutation_data(&conn, &scope).expect("invalid date context");
-        assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 3);
+        .expect("insert future local datetime");
+        let (data, _) = read_task_mutation_data(&conn, &scope, now).expect("invalid date context");
+        assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 2);
     }
 
     #[test]
@@ -10600,7 +10670,8 @@ mod tests {
             Some("section-b"),
             Some("area-b"),
         );
-        let (data, stats) = read_task_mutation_data(&conn, &scope).expect("patch context");
+        let (data, stats) = read_task_mutation_data(&conn, &scope, OffsetDateTime::now_utc())
+            .expect("patch context");
 
         assert_eq!(data["tasks"].as_array().map(Vec::len), Some(1));
         assert_eq!(data["projects"].as_array().map(Vec::len), Some(2));
