@@ -276,7 +276,7 @@ function calendarDriver(contract: Host, device: ReturnType<typeof phone>, openin
             if (screen.expanded !== choice.key) return;
             for (const option of choice.options) {
                 texts.push(option.label);
-                control(option.label, option.checked, false, () => send(option.edit));
+                control(option.accessibilityLabel, option.checked, false, () => send(option.edit));
             }
         };
 

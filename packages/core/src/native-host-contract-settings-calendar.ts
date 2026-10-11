@@ -228,7 +228,7 @@ function isFeedAdd(input: unknown): input is NativeCalendarFeedAdd {
 export type NativeCalendarAreaChoice = {
     key: string;
     label: string;
-    options: { areaId: string; label: string; checked: boolean; edit: NativeCalendarSettingsEdit }[];
+    options: { areaId: string; label: string; accessibilityLabel: string; checked: boolean; edit: NativeCalendarSettingsEdit }[];
 };
 
 export type NativeCalendarSettings = {

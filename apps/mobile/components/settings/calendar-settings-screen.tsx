@@ -388,12 +388,13 @@ export function CalendarSettingsScreen() {
 
     const renderAreaSelector = (sourceId: string, selectedIds: string[], onToggle: (areaId: string) => void) => {
         const choice = buildCalendarAreaChoice(selectedIds, areas, t);
+        const expanded = expandedAreaSourceId === sourceId;
         return choice && <View style={{ marginTop: 8 }}>
-            <TouchableOpacity accessibilityRole="button" onPress={() => setExpandedAreaSourceId(expandedAreaSourceId === sourceId ? null : sourceId)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpandedAreaSourceId(expanded ? null : sourceId)}>
                 <Text style={[styles.settingDescription, { color: tc.tint }]}>{choice.label}</Text>
             </TouchableOpacity>
-            {expandedAreaSourceId === sourceId && choice.options.map((option) => (
-                <TouchableOpacity key={option.areaId} accessibilityRole="checkbox" accessibilityState={{ checked: option.checked }} onPress={() => onToggle(option.areaId)} style={{ paddingVertical: 7 }}>
+            {expanded && choice.options.map((option) => (
+                <TouchableOpacity key={option.areaId} accessibilityRole="checkbox" accessibilityState={{ checked: option.checked }} accessibilityLabel={option.accessibilityLabel} onPress={() => onToggle(option.areaId)} style={{ paddingVertical: 7 }}>
                     <Text style={[styles.settingDescription, { color: tc.text }]}>{option.label}</Text>
                 </TouchableOpacity>
             ))}
