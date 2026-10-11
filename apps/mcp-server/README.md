@@ -8,7 +8,7 @@ By default this is a **stdio** server: MCP clients launch it as a subprocess and
 
 ## App Binaries vs. MCP Helper
 
-The desktop app includes a built-in MCP server in **Settings → Integrations → MCP**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
+The desktop app includes a built-in MCP server in **Settings → Integrations → Local MCP server (advanced)**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
 
 You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`, or use the Local API backend below.
 
@@ -269,7 +269,7 @@ mindwtr-mcp --db "/path/to/mindwtr.db"
 
 ### Desktop app toggle?
 
-The desktop app has **Settings → Integrations → MCP**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
+The desktop app has **Settings → Integrations → Local MCP server (advanced)**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
 
 Enable **Allow changes** only to permit creating, editing, and deleting tasks and projects, including completing tasks. Connected AI clients can read exposed Mindwtr data and may send it to their provider. Keep the copied bearer token private; regenerating it disconnects old clients.
 
