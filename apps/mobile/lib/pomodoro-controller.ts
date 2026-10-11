@@ -13,7 +13,7 @@ import {
 } from '@mindwtr/core';
 import { useSyncExternalStore } from 'react';
 
-import { logWarn } from './app-log';
+import { logInfo, logWarn } from './app-log';
 import {
   POMODORO_SESSION_STORAGE_KEY,
   pausePomodoroSession,
@@ -41,6 +41,21 @@ type TaskStoreAccess = () => {
   tasks: Task[];
   updateTask: (id: string, updates: Partial<Task>) => Promise<unknown>;
 };
+
+/**
+ * A finished focus session's time owed to its task: the task's time moves from `from` to `to`. It is stored with the
+ * session before the task is written, and leaves the session once the task holds it, so a restart between the two
+ * writes credits it exactly once: a task still at `from` takes it, a task at any other time already took it (or was
+ * changed since, which wins).
+ */
+type PomodoroCredit = { taskId: string; from?: number; to: number };
+
+const readCredits = (value: unknown): PomodoroCredit[] => (Array.isArray(value) ? value : []).flatMap((item) => {
+  const credit = item as Partial<PomodoroCredit> | null;
+  if (!credit || typeof credit.taskId !== 'string' || typeof credit.to !== 'number' || !Number.isFinite(credit.to)) return [];
+  const from = typeof credit.from === 'number' && Number.isFinite(credit.from) ? credit.from : undefined;
+  return [{ taskId: credit.taskId, ...(from === undefined ? {} : { from }), to: credit.to }];
+});
 
 type ControllerOptions = {
   storage?: Storage;
@@ -90,35 +105,73 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
   };
   let hydrationPromise: Promise<void> | null = null;
   let persistenceQueue: Promise<void> = Promise.resolve();
+  /** Task credits owed, oldest first; stored with the session until their task holds them. */
+  let pendingCredits: PomodoroCredit[] = [];
+  /** The owed credits a load found (the app stopped between the two writes): the diagnostics log says how each settled. */
+  let loadedCredits = new Set<PomodoroCredit>();
   const listeners = new Set<() => void>();
 
   const emit = () => listeners.forEach((listener) => listener());
 
-  const creditCompletedSessions = (
+  const queueCredits = (
     previous: PomodoroSessionHistory,
     next: PomodoroSessionHistory,
     focusMinutes: number,
   ) => {
-    const { tasks, updateTask } = getTaskStore();
+    const { tasks } = getTaskStore();
     for (const [taskId, count] of Object.entries(next.completedFocusSessionsByTaskId)) {
       const delta = count - (previous.completedFocusSessionsByTaskId[taskId] ?? 0);
       if (delta <= 0) continue;
       const task = tasks.find((candidate) => candidate.id === taskId);
       if (!task) continue;
-      const nextTotal = addTimeSpentMinutes(task.timeSpentMinutes, delta * focusMinutes);
-      if (nextTotal === undefined || nextTotal === task.timeSpentMinutes) continue;
-      void updateTask(taskId, { timeSpentMinutes: nextTotal }).catch(() => undefined);
+      // After a credit still owed to this task, from the time that credit leaves it at.
+      const owed = pendingCredits.filter((credit) => credit.taskId === taskId).pop();
+      const from = owed ? owed.to : task.timeSpentMinutes;
+      const to = addTimeSpentMinutes(from, delta * focusMinutes);
+      if (to === undefined || to === from) continue;
+      pendingCredits.push({ taskId, ...(from === undefined ? {} : { from }), to });
     }
   };
 
+  /** Each stored credit given to its task in order; the settled ones leave the session. Answers whether any settled. */
+  const settleCredits = async (credits: PomodoroCredit[]): Promise<boolean> => {
+    let settled = 0;
+    for (const credit of credits) {
+      const task = getTaskStore().tasks.find((candidate) => candidate.id === credit.taskId);
+      let outcome = 'already-applied';
+      if (task && task.timeSpentMinutes === credit.from) {
+        const result = await getTaskStore().updateTask(credit.taskId, { timeSpentMinutes: credit.to }).catch(() => ({ success: false }));
+        if ((result as { success?: boolean } | undefined)?.success === false) break;
+        outcome = 'applied';
+      }
+      settled += 1;
+      if (loadedCredits.has(credit)) {
+        void logInfo('Pomodoro credit replayed after a restart', {
+          scope: 'pomodoro',
+          extra: { releaseCheck: 'v1.3.5/pomodoro-credit-once', outcome },
+        });
+      }
+    }
+    if (settled === 0) return false;
+    const done = new Set(credits.slice(0, settled));
+    pendingCredits = pendingCredits.filter((credit) => !done.has(credit));
+    return true;
+  };
+
   const persist = () => {
-    const payload: StoredPomodoroSession = {
+    const credits = pendingCredits.slice();
+    const payload: StoredPomodoroSession & { pendingCredits?: PomodoroCredit[] } = {
       ...serializePomodoroSession(state),
       updatedAtMs: state.updatedAtMs,
+      ...(credits.length > 0 ? { pendingCredits: credits } : {}),
     };
     persistenceQueue = persistenceQueue
       .catch(() => undefined)
-      .then(() => storage.setItem(POMODORO_SESSION_STORAGE_KEY, JSON.stringify(payload)));
+      .then(() => storage.setItem(POMODORO_SESSION_STORAGE_KEY, JSON.stringify(payload)))
+      // The credits are stored with the session first; once their task holds them, the session is stored without them.
+      .then(async () => {
+        if (credits.length > 0 && await settleCredits(credits)) persist();
+      });
     void persistenceQueue.catch(() => {
       void logWarn('Failed to persist pomodoro session', {
         scope: 'pomodoro',
@@ -136,14 +189,15 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
       || (config.updatedAtMs !== undefined && config.updatedAtMs !== state.updatedAtMs)
       || state.isHydrating;
     if (!changed) return false;
-    creditCompletedSessions(previousHistory, next.sessionHistory, next.durations.focusMinutes);
+    const owed = pendingCredits.length;
+    queueCredits(previousHistory, next.sessionHistory, next.durations.focusMinutes);
     state = {
       ...next,
       isHydrating: false,
       updatedAtMs: config.updatedAtMs ?? state.updatedAtMs,
     };
     emit();
-    if (config.persist !== false) persist();
+    if (config.persist !== false || pendingCredits.length > owed) persist();
     return true;
   };
 
@@ -157,7 +211,10 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
           emit();
           return;
         }
-        const parsed = JSON.parse(raw) as StoredPomodoroSession;
+        const parsed = JSON.parse(raw) as StoredPomodoroSession & { pendingCredits?: unknown };
+        // Credits a session stored before its task held them (the app stopped in between): settled with this load.
+        pendingCredits = readCredits(parsed.pendingCredits);
+        loadedCredits = new Set(pendingCredits);
         const previousHistory = sanitizePomodoroSessionHistory(parsed.sessionHistory);
         const resolved = resolvePomodoroSession(parsed, now(), autoStartOptions);
         const updatedAtMs = typeof parsed.updatedAtMs === 'number' && Number.isFinite(parsed.updatedAtMs)
@@ -315,6 +372,7 @@ export function createMobilePomodoroController(options: ControllerOptions = {}) 
       };
       hydrationPromise = null;
       persistenceQueue = Promise.resolve();
+      pendingCredits = [];
     },
   };
 }
