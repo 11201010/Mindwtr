@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetForTests, useTaskStore, type Task } from '@mindwtr/core';
 
 import { DailyReviewGuideModal } from './DailyReviewModal';
+import { fetchExternalCalendarEvents } from '../../../lib/external-calendar-events';
 
 vi.mock('../../../contexts/language-context', () => ({
     useLanguage: () => ({
@@ -98,6 +99,32 @@ describe('DailyReviewGuideModal', () => {
         expect(screen.getByText('Today and Calendar')).toBeInTheDocument();
         expect(screen.getByText('Process Inbox')).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /next/i })).not.toBeInTheDocument();
+    });
+
+    it('hides events from calendars the user switched off or disabled', async () => {
+        window.localStorage.setItem('mindwtr.calendar.hiddenExternalCalendars', JSON.stringify(['hidden']));
+        const calendars = ['visible', 'hidden', 'disabled'].map((id) => ({
+            id, name: id, url: '', enabled: id !== 'disabled',
+        }));
+        const start = new Date();
+        const end = new Date(start.getTime() + 60 * 1000);
+        vi.mocked(fetchExternalCalendarEvents).mockResolvedValueOnce({
+            calendars,
+            events: calendars.map((calendar) => ({
+                id: `${calendar.id}-event`, sourceId: calendar.id, title: `${calendar.id} appointment`,
+                start: start.toISOString(), end: end.toISOString(), allDay: false,
+            })),
+            warnings: [],
+        });
+
+        const dueToday = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        useTaskStore.setState({ _allTasks: [makeTask({ id: 'today-1', title: 'Due today', dueDate: dueToday })] });
+
+        render(<DailyReviewGuideModal onClose={vi.fn()} />);
+
+        await waitFor(() => expect(screen.getByText('visible appointment')).toBeInTheDocument());
+        expect(screen.queryByText('hidden appointment')).not.toBeInTheDocument();
+        expect(screen.queryByText('disabled appointment')).not.toBeInTheDocument();
     });
 
     it('persists the current step across modal remounts and clears it when finished', () => {
