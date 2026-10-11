@@ -791,7 +791,7 @@ const shootPillsFontScale = async (prefix, rn, activity) => {
     await tap(calendarRow(advanced));
     const pill = en['settings.calendarMobile.chooseLocalIcsFile'];
     const pillShown = (current) => hasText(current, pill) || Boolean(withDescription(current, pill));
-    let nodes = await waitFor('Settings › Calendar', (current) => hasText(current, en['settings.externalCalendarUrl']) || pillShown(current), 30_000);
+    let nodes = await waitFor('Settings › Calendar', (current) => hasText(current, en['settings.deviceCalendars']) || hasText(current, en['settings.externalCalendarUrl']) || pillShown(current), 30_000);
     for (let step = 0; step < 8 && !pillShown(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
     await shoot(`${prefix}-settings-calendar-pills-font2-light`, pillShown);
     for (let step = 0; step < 3; step += 1) await back();
