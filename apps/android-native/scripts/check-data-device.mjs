@@ -368,7 +368,7 @@ try {
     const db = pullDb('export');
     const ids = sqlite(db, 'SELECT id FROM tasks ORDER BY id').map((row) => row.id);
     check(JSON.stringify(exported.tasks.map((item) => item.id).sort()) === JSON.stringify(ids), `(E1) ${json.name} holds every task the library holds (${ids.length})`);
-    check(exported.tasks.find((item) => item.title === `d1b${run}`)?.notes === '日本語 🦉', '(E1) the export keeps the notes\' text byte for byte');
+    check(exported.tasks.find((item) => item.title === `d1b${run}` && !item.deletedAt)?.notes === '日本語 🦉', '(E1) the export keeps the notes\' text byte for byte');
     check(allLogs().includes('"releaseCheck":"v1.3.5/android-backup-export"') && allLogs().includes('"route":"saf"'), '(E1) the export line says route=saf');
     const csv = await exportFile('data-transfer-export-csv', '.csv');
     const csvText = readFileSync(csv.local, 'utf8');
