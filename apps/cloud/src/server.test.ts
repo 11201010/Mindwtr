@@ -3566,6 +3566,34 @@ describe('cloud server api', () => {
         expect((await refused.json()).error).toBe('Focus limit of 3 reached');
     });
 
+    test('enforces the Focus cap when a PATCH activates a queued star', async () => {
+        const queuedId = crypto.randomUUID();
+        const plainId = crypto.randomUUID();
+        expect((await seedFocusData([
+            makeTestTask({ id: queuedId, title: 'Queued', status: 'next', startTime: '2099-01-01', isFocusedToday: true }),
+            makeTestTask({ id: plainId, title: 'Plain', status: 'next', isFocusedToday: false }),
+        ], 1)).status).toBe(200);
+
+        const plainStar = await fetch(`${baseUrl}/v1/tasks/${plainId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(plainStar.status).toBe(200);
+
+        const activate = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ startTime: null }),
+        });
+        expect(activate.status).toBe(409);
+        expect((await activate.json()).error).toBe('Focus limit of 1 reached');
+
+        const unchanged = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, { headers: authHeaders });
+        expect(unchanged.status).toBe(200);
+        expect((await unchanged.json()).task.startTime).toBe('2099-01-01');
+    });
+
     test('preserves a valid over-cap Focus snapshot on PUT', async () => {
         const tasks = Array.from({ length: 4 }, (_, index) => makeTestTask({
             id: crypto.randomUUID(),

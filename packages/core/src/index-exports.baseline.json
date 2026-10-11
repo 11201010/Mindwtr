@@ -1271,6 +1271,7 @@
     "isTaskActionable",
     "isTaskCancelled",
     "isTaskCompleted",
+    "isTaskCountedAsFocused",
     "isTaskDateCoherent",
     "isTaskDraftDirty",
     "isTaskEditDraftDirty",

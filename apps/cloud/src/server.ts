@@ -19,6 +19,7 @@ import {
     generateUUID,
     getNextProjectOrder,
     getTaskOrder,
+    isTaskCountedAsFocused,
     isTaskFutureFocusCandidate,
     mergeAppDataWithStats,
     normalizeTaskUpdate,
@@ -799,11 +800,17 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             const normalizedUpdates = normalizeTaskUpdate(existing, updates);
             const isAddingFocus = normalizedUpdates.isFocusedToday === true
                 && existing.isFocusedToday !== true;
-            if (isAddingFocus) {
+            // Same rule as the store's updateTask: any write that makes the task
+            // newly count as Focus takes a slot, including clearing the future
+            // start on an already-queued star.
+            const focusNow = new Date();
+            const patchedTask = { ...existing, ...normalizedUpdates };
+            const isFillingFocusSlot = !isTaskCountedAsFocused(existing, focusNow)
+                && isTaskCountedAsFocused(patchedTask, focusNow);
+            if (isFillingFocusSlot) {
                 const focusedCount = selectFocusedCount([...data.tasks]);
                 const focusTaskLimit = normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit);
-                const queued = isTaskFutureFocusCandidate({ ...existing, ...normalizedUpdates });
-                if (!queued && focusedCount >= focusTaskLimit) {
+                if (focusedCount >= focusTaskLimit) {
                     logInfo('Cloud task Focus write policy applied', {
                         releaseCheck: 'v1.3.0/cloud-focus-write-parity',
                         operation: 'patch',
@@ -813,10 +820,17 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                     return errorResponse(`Focus limit of ${focusTaskLimit} reached`, 409);
                 }
                 logInfo('Cloud task Focus write policy applied', {
-                    releaseCheck: queued ? 'v1.3.3/scheduled-focus-cloud-write' : 'v1.3.0/cloud-focus-write-parity',
+                    releaseCheck: 'v1.3.0/cloud-focus-write-parity',
                     operation: 'patch',
-                    outcome: queued ? 'queued' : 'focused',
-                    count: focusedCount + (queued ? 0 : 1),
+                    outcome: 'focused',
+                    count: focusedCount + 1,
+                });
+            } else if (isAddingFocus && isTaskFutureFocusCandidate(patchedTask)) {
+                logInfo('Cloud task Focus write policy applied', {
+                    releaseCheck: 'v1.3.3/scheduled-focus-cloud-write',
+                    operation: 'patch',
+                    outcome: 'queued',
+                    count: selectFocusedCount([...data.tasks]),
                 });
             }
             const { updatedTask, nextRecurringTask } = applyTaskUpdates(
