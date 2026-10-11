@@ -1,7 +1,7 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_REMINDER_ALARMS=1 MINDWTR_CAPTURE_REMINDER_ALARMS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run lib/notification-service-local.parity.test.ts",
-  "capturedAt": "176e66d34eaa26890257a92ffa7382d6cb138ea8",
+  "capturedAt": "600a38959d3735bed3866dd57ba1846834915c8f",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except the reminder alarm and notification open parity harnesses and their fixtures.",
   "rendering": "lib/notification-service-local.ts run for real under fake timers (Date, setTimeout) with TZ=UTC. The store, the system language and the alarm library are replaced: parseDate is toISOString, scheduleAlarm answers from the cycle's `answers` and then with ids counting up from 100, getScheduledAlarms answers []. Stored language and translations are core's real English. Android starts with notification permission granted; iOS grants through requestPermissions. Each cycle is one startLocalMobileNotifications call (the first starts the service, later ones run a cycle while running) or, for trigger `exact`, one rescheduleLocalAlarmsAsExact call. `calls` records, in order, every alarm library call, AsyncStorage write, setTimeout delay and log line (message and extra)."
  },
@@ -5167,7 +5167,7 @@
    ]
   },
   {
-   "name": "a minute that stays taken aborts the cycle",
+   "name": "a minute that stays taken skips that alarm",
    "cycles": [
     {
      "now": "2026-09-28T10:00:00.000Z",
@@ -5370,7 +5370,7 @@
    ]
   },
   {
-   "name": "a rejected alarm aborts the cycle and keeps the ids already created",
+   "name": "a rejected alarm is skipped and the cycle finishes",
    "cycles": [
     {
      "now": "2026-09-28T10:00:00.000Z",
@@ -19885,6 +19885,14 @@
       "{\"task:t-legacy\":{\"id\":21,\"signature\":\"{\\\"title\\\":\\\"Task t-legacy\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T11:00:00.000Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-legacy\\\"}}\"},\"task:t-fraction\":{\"id\":22,\"signature\":\"{\\\"title\\\":\\\"Task t-fraction\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T11:05:00.000Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-fraction\\\"}}\"}}"
      ],
      [
+      "logWarn",
+      "[Local Notifications] Reminder cycle finished with refused alarms",
+      {
+       "releaseCheck": "v1.3.5/reminder-cycle-partial",
+       "count": 1
+      }
+     ],
+     [
       "logInfo",
       "[Local Notifications] Reminder boot recovery unavailable",
       {
@@ -20167,7 +20175,7 @@
     "error": null
    }
   ],
-  "a minute that stays taken aborts the cycle": [
+  "a minute that stays taken skips that alarm": [
    {
     "calls": [
      [
@@ -21964,16 +21972,70 @@
       }
      ],
      [
+      "setTimeout",
+      3605000
+     ],
+     [
       "setItem",
       "mindwtr:local:alarms:v1",
       "{}"
+     ],
+     [
+      "logWarn",
+      "[Local Notifications] Reminder cycle finished with refused alarms",
+      {
+       "releaseCheck": "v1.3.5/reminder-cycle-partial",
+       "count": 1
+      }
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Reminder boot recovery unavailable",
+      {
+       "releaseCheck": "v1.3.5/reminder-boot-recovery",
+       "outcome": "unavailable"
+      }
+     ],
+     [
+      "getScheduledAlarms"
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Reschedule cycle complete",
+      {
+       "activeFeature": true,
+       "scheduledAlarmCount": 0,
+       "pendingNativeAlarmCount": 0,
+       "oneShotReminderCount": 1,
+       "scheduledOneShotReminderCount": 1,
+       "maxPendingOneShotReminderAlarms": 200,
+       "nextOneShotFireAt": "2026-09-28T11:00:00.000Z",
+       "taskReminderCount": 1,
+       "taskReviewReminderCount": 0,
+       "projectReviewReminderCount": 0,
+       "dateOnlyDueDateCount": 0,
+       "futureDueDateReminderCount": 1,
+       "pastDueDateReminderCount": 0,
+       "dateOnlyStartTimeCount": 0,
+       "futureStartTimeReminderCount": 0,
+       "pastStartTimeReminderCount": 0,
+       "futureTaskReviewReminderCount": 0,
+       "pastTaskReviewReminderCount": 0,
+       "suppressedTaskReminderCount": 0,
+       "durationMs": 0
+      }
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Service started",
+      null
      ]
     ],
     "alarms": {},
-    "error": "Duplicate alarm set at date"
+    "error": null
    }
   ],
-  "a rejected alarm aborts the cycle and keeps the ids already created": [
+  "a rejected alarm is skipped and the cycle finishes": [
    {
     "calls": [
      [
@@ -22176,9 +22238,63 @@
       }
      ],
      [
+      "setTimeout",
+      3605000
+     ],
+     [
       "setItem",
       "mindwtr:local:alarms:v1",
       "{\"digest:evening\":{\"id\":41,\"signature\":\"{\\\"title\\\":\\\"Evening review\\\",\\\"message\\\":\\\"Open Mindwtr to review and wrap up.\\\",\\\"fireAt\\\":\\\"daily:20:00\\\",\\\"repeatInterval\\\":\\\"daily\\\",\\\"hasSnoozeAction\\\":false,\\\"data\\\":{\\\"kind\\\":\\\"daily-digest\\\"}}\"},\"task:t-one\":{\"id\":42,\"signature\":\"{\\\"title\\\":\\\"Task t-one\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T11:00:00.000Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-one\\\"}}\"},\"task:t-three\":{\"id\":44,\"signature\":\"{\\\"title\\\":\\\"Task t-three\\\",\\\"message\\\":\\\"Due date reminders\\\",\\\"fireAt\\\":\\\"2026-09-28T12:00:00.000Z\\\",\\\"repeatInterval\\\":\\\"once\\\",\\\"hasSnoozeAction\\\":true,\\\"hasCompleteAction\\\":true,\\\"data\\\":{\\\"kind\\\":\\\"task-reminder\\\",\\\"taskId\\\":\\\"t-three\\\"}}\"}}"
+     ],
+     [
+      "logWarn",
+      "[Local Notifications] Reminder cycle finished with refused alarms",
+      {
+       "releaseCheck": "v1.3.5/reminder-cycle-partial",
+       "count": 1
+      }
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Reminder boot recovery unavailable",
+      {
+       "releaseCheck": "v1.3.5/reminder-boot-recovery",
+       "outcome": "unavailable"
+      }
+     ],
+     [
+      "getScheduledAlarms"
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Reschedule cycle complete",
+      {
+       "activeFeature": true,
+       "scheduledAlarmCount": 3,
+       "pendingNativeAlarmCount": 0,
+       "oneShotReminderCount": 3,
+       "scheduledOneShotReminderCount": 3,
+       "maxPendingOneShotReminderAlarms": 200,
+       "nextOneShotFireAt": "2026-09-28T11:00:00.000Z",
+       "taskReminderCount": 3,
+       "taskReviewReminderCount": 0,
+       "projectReviewReminderCount": 0,
+       "dateOnlyDueDateCount": 0,
+       "futureDueDateReminderCount": 3,
+       "pastDueDateReminderCount": 0,
+       "dateOnlyStartTimeCount": 0,
+       "futureStartTimeReminderCount": 0,
+       "pastStartTimeReminderCount": 0,
+       "futureTaskReviewReminderCount": 0,
+       "pastTaskReviewReminderCount": 0,
+       "suppressedTaskReminderCount": 0,
+       "durationMs": 0
+      }
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Service started",
+      null
      ]
     ],
     "alarms": {
@@ -22195,7 +22311,7 @@
       "signature": "{\"title\":\"Task t-three\",\"message\":\"Due date reminders\",\"fireAt\":\"2026-09-28T12:00:00.000Z\",\"repeatInterval\":\"once\",\"hasSnoozeAction\":true,\"hasCompleteAction\":true,\"data\":{\"kind\":\"task-reminder\",\"taskId\":\"t-three\"}}"
      }
     },
-    "error": "exact alarm permission revoked"
+    "error": null
    },
    {
     "calls": [

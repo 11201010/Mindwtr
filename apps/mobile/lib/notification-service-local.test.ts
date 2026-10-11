@@ -1698,7 +1698,7 @@ describe('notification-service-local', () => {
   // alarm cap) aborted the cycle before its single save, so alarms created earlier
   // stayed live in AlarmManager while the persisted map never learned their ids —
   // after a restart nothing could cancel them and the reminders kept firing.
-  describe('alarm map persistence when a cycle aborts', () => {
+  describe('a refused alarm', () => {
     const readSavedAlarmMap = () => {
       const call = [...mockAsyncStorageSetItem.mock.calls]
         .reverse()
@@ -1719,11 +1719,49 @@ describe('notification-service-local', () => {
         .mockResolvedValueOnce({ id: 11 })
         .mockRejectedValue(new Error('exact alarm permission revoked'));
 
-      await expect(startLocalMobileNotifications()).rejects.toThrow('exact alarm permission revoked');
+      await startLocalMobileNotifications();
 
       const saved = readSavedAlarmMap();
       expect(saved).not.toBeNull();
       expect(Object.values(saved ?? {}).map((entry) => entry.id)).toContain(11);
+    });
+
+    it('arms every other alarm, cancels a finished task\'s alarm and sets the top-up', async () => {
+      mockStoreState.tasks = [
+        ...Array.from({ length: 13 }, (_, index) => ({
+          id: `task-${index}`,
+          title: `Task ${index}`,
+          dueDate: new Date(Date.now() + (index + 1) * 60 * 1000).toISOString(),
+        })),
+        { id: 'task-done', title: 'Done', status: 'done', dueDate: new Date(Date.now() + 30 * 60 * 1000).toISOString() },
+      ];
+      mockAsyncStorageGetItem.mockImplementation(async (key: string) => (
+        key === 'mindwtr:local:alarms:v1' ? JSON.stringify({ 'task:task-done': { id: 77, signature: 'before it was done' } }) : null
+      ));
+      let nextId = 200;
+      mockAlarmScheduleAlarm.mockReset();
+      mockAlarmScheduleAlarm.mockImplementation(async (...args: unknown[]) => {
+        if ((args[0] as { data?: { taskId?: string } }).data?.taskId === 'task-4') throw new Error('exact alarm permission revoked');
+        return { id: nextId++ };
+      });
+      const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        await startLocalMobileNotifications();
+        const delays = timeoutSpy.mock.calls.map(([, delay]) => Number(delay));
+        expect(delays.some((delay) => delay > 55_000 && delay <= 65_000)).toBe(true);
+      } finally {
+        timeoutSpy.mockRestore();
+      }
+
+      const armed = Array.from(__localNotificationTestUtils.getAlarmMapSnapshot().keys()).sort();
+      expect(armed).toHaveLength(12);
+      expect(armed).not.toContain('task:task-4');
+      expect(armed).not.toContain('task:task-done');
+      expect(mockAlarmDeleteAlarm).toHaveBeenCalledWith(77);
+      expect(mockLogWarn).toHaveBeenCalledWith(
+        '[Local Notifications] Reminder cycle finished with refused alarms',
+        expect.objectContaining({ extra: { releaseCheck: 'v1.3.5/reminder-cycle-partial', count: 1 } }),
+      );
     });
   });
 });

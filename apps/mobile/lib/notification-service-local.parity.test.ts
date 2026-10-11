@@ -247,7 +247,7 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    name: 'a minute that stays taken aborts the cycle',
+    name: 'a minute that stays taken skips that alarm',
     cycles: [
       {
         now: MONDAY,
@@ -258,7 +258,7 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
-    name: 'a rejected alarm aborts the cycle and keeps the ids already created',
+    name: 'a rejected alarm is skipped and the cycle finishes',
     cycles: [
       {
         now: MONDAY,

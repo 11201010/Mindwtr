@@ -798,18 +798,28 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
   }
 
   // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
-  // alarm cap) aborts the cycle. Whatever was created before that point is live in
-  // AlarmManager, so the map has to reach storage anyway or a restart can never
-  // cancel those alarms. saveAlarmMap no-ops on an unchanged map and swallows its
-  // own storage errors, so the extra call is free and cannot mask the original.
+  // alarm cap) skips that alarm only: the rest are made, alarms of finished tasks
+  // are cancelled and the top-up is set, even if scheduling throws. Whatever was
+  // created is live in AlarmManager, so the map has to reach storage anyway or a
+  // restart can never cancel those alarms. saveAlarmMap no-ops on an unchanged map
+  // and swallows its own storage errors, so the extra call cannot mask an error.
+  let refusedAlarmCount = 0;
   try {
-    await scheduleReminderAlarms(plan, alarmMap, port);
-    scheduleOneShotTopUp(api, plan.topUpDelayMs);
-
-    await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
+    try {
+      refusedAlarmCount = await scheduleReminderAlarms(plan, alarmMap, port);
+    } finally {
+      scheduleOneShotTopUp(api, plan.topUpDelayMs);
+      await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
+    }
   } finally {
     await saveAlarmMap();
     await rememberExpiredReminders(delivered, plan);
+  }
+  if (refusedAlarmCount > 0) {
+    logNotificationWarn('Reminder cycle finished with refused alarms', {
+      releaseCheck: 'v1.3.5/reminder-cycle-partial',
+      count: refusedAlarmCount,
+    });
   }
   await withdrawDeliveredReminders(api, {
     diagnostics,

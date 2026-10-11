@@ -438,26 +438,22 @@ export async function cancelReminderAlarm(
 
 /**
  * Makes one requested alarm unless the held one matches. A duplicate-minute refusal retries
- * a minute later; any other refusal throws, and the alarms made so far stay in `alarms`.
+ * a minute later. False when the library refused it: the refusal is logged, never thrown.
  */
 async function scheduleReminderAlarm(
     alarms: Map<string, ReminderAlarmEntry>,
     request: ReminderAlarmRequest,
     port: ReminderAlarmPort,
     plan: ReminderAlarmPlan,
-): Promise<void> {
+): Promise<boolean> {
     const { key, config, signature } = request;
-    if (plan.shifted.includes(key) || isReminderAlarmCurrent(alarms.get(key), signature)) return;
+    if (plan.shifted.includes(key) || isReminderAlarmCurrent(alarms.get(key), signature)) return true;
 
     await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
 
     const baseFireAt = new Date(config.fireAt);
     baseFireAt.setMilliseconds(0);
     const detailsBase = buildReminderAlarmDetails(key, config);
-
-    let scheduledId: number | null = null;
-    let retryCount = 0;
-    let lastError: unknown = null;
 
     for (let retry = 0; retry <= MAX_DUPLICATE_ALARM_RETRIES; retry += 1) {
         const fireAt = getDuplicateAlarmRetryFireAt(baseFireAt, retry);
@@ -469,62 +465,52 @@ async function scheduleReminderAlarm(
             const id = Number(result?.id);
             if (!Number.isFinite(id)) {
                 port.logError(`Scheduled alarm returned invalid id for ${key}`);
-                return;
+                return false;
             }
-            scheduledId = Math.floor(id);
-            retryCount = retry;
             port.logInfo('Alarm scheduled', {
                 alarmKey: key,
-                alarmId: scheduledId,
+                alarmId: Math.floor(id),
                 fireAt: fireAt.toISOString(),
                 retryCount: retry,
                 scheduleType: config.repeatInterval ? 'repeat' : 'once',
             });
-            break;
+            alarms.set(key, { id: Math.floor(id), signature, ...(retry > 0 ? { fireAtMs: fireAt.getTime() } : {}) });
+            return true;
         } catch (error) {
-            lastError = error;
             if (isDuplicateReminderAlarmError(error) && retry < MAX_DUPLICATE_ALARM_RETRIES) {
                 continue;
             }
             port.logError(`Failed to schedule alarm (${key})`, error);
-            throw error;
+            return false;
         }
     }
-
-    if (scheduledId === null) {
-        port.logError(`Failed to schedule alarm for ${key} after duplicate retries`, lastError);
-        return;
-    }
-
-    const scheduledFireAt = getDuplicateAlarmRetryFireAt(baseFireAt, retryCount);
-    alarms.set(key, { id: scheduledId, signature, ...(retryCount > 0 ? { fireAtMs: scheduledFireAt.getTime() } : {}) });
-}
-
-async function scheduleReminderAlarmBatches(
-    alarms: Map<string, ReminderAlarmEntry>,
-    plan: ReminderAlarmPlan,
-    port: ReminderAlarmPort,
-): Promise<void> {
-    for (let index = 0; index < plan.oneShot.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
-        const batch = plan.oneShot.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE);
-        await Promise.all(batch.map((request) => scheduleReminderAlarm(alarms, request, port, plan)));
-    }
+    return false;
 }
 
 /**
  * Makes every requested alarm that is missing or changed: the repeating ones one at a time,
- * then the one-shots ten at a time. It updates `alarms` as it goes, so a refusal that aborts
- * the pass leaves the ids of the alarms already made there to be saved.
+ * then the one-shots ten at a time. A refused alarm is skipped, so the rest are still made;
+ * the next cycle tries it again. Returns how many were refused.
  */
 export async function scheduleReminderAlarms(
     plan: ReminderAlarmPlan,
     alarms: Map<string, ReminderAlarmEntry>,
     port: ReminderAlarmPort,
-): Promise<void> {
-    for (const request of plan.recurring) {
-        await scheduleReminderAlarm(alarms, request, port, plan);
+): Promise<number> {
+    let refused = 0;
+    const arm = async (request: ReminderAlarmRequest) => {
+        try {
+            if (await scheduleReminderAlarm(alarms, request, port, plan)) return;
+        } catch (error) {
+            port.logError(`Failed to schedule alarm (${request.key})`, error);
+        }
+        refused += 1;
+    };
+    for (const request of plan.recurring) await arm(request);
+    for (let index = 0; index < plan.oneShot.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
+        await Promise.all(plan.oneShot.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE).map(arm));
     }
-    await scheduleReminderAlarmBatches(alarms, plan, port);
+    return refused;
 }
 
 /** Cancels every held alarm the plan does not request or keep, as `alarms` stands now. */
