@@ -276,13 +276,39 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
     return { attempts, reachedLimit: true, mutated, message, logMessage };
   };
 
+  /**
+   * Local fs error text quotes the uris it failed on, and a picked file's name is the user's
+   * text (#854). Known uris become their {@link describeAttachmentUriForLog} shape in every
+   * form a native error prints them (encoded, decoded, without `file://`); any other uri or
+   * absolute path becomes `[path]`. Hermes has no look-behind, so the path rule captures its
+   * prefix. Only callers that pass the local uris they touched get this: other callers'
+   * errors carry WebDAV/cloud URLs whose host a tester needs.
+   */
+  const describeErrorForLog = (error: unknown, knownUris: string[]): string => {
+    let text = error instanceof Error ? error.message : String(error);
+    for (const uri of knownUris) {
+      const path = uri.replace(/^file:\/\//i, '');
+      for (const form of [uri, decodeUriSafe(uri), path, decodeUriSafe(path)]) {
+        if (form) text = text.split(form).join(describeAttachmentUriForLog(uri));
+      }
+    }
+    // ponytail: an unknown unquoted path with spaces keeps its later words; pass the uris you know.
+    return text.replace(/(^|[\s'"(=:])(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/)[^\s'"]+/g, '$1[path]');
+  };
+
   const logAttachmentWarn = (
     message: string,
     error?: unknown,
     extra?: Record<string, string>,
+    knownUris: string[] = [],
   ) => {
     const fields = error
-      ? { ...extra, error: host.log.sanitize(error instanceof Error ? error.message : String(error)) }
+      ? {
+        ...extra,
+        error: host.log.sanitize(knownUris.length > 0
+          ? describeErrorForLog(error, knownUris)
+          : error instanceof Error ? error.message : String(error)),
+      }
       : extra;
     void host.log.warn(message, { scope: 'attachment', extra: fields });
   };
@@ -361,24 +387,26 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
 
   const copyFileSafely = async (sourceUri: string, targetUri: string): Promise<void> => {
     const tempUri = buildTempUri(targetUri);
+    const knownUris = [sourceUri, targetUri, tempUri];
+    const copied = { sourceUri: describeAttachmentUriForLog(sourceUri), targetUri: describeAttachmentUriForLog(targetUri) };
     try {
       await fs.copy(sourceUri, tempUri);
     } catch (error) {
-      logAttachmentWarn('Attachment temp copy failed, falling back to byte write', error);
+      logAttachmentWarn('Attachment temp copy failed, falling back to byte write', error, undefined, knownUris);
       await writeBytesSafely(targetUri, await readFileAsBytes(sourceUri));
-      logAttachmentInfo('Attachment byte fallback copied file', { sourceUri, targetUri });
+      logAttachmentInfo('Attachment byte fallback copied file', copied);
       return;
     }
     try {
       await fs.move(tempUri, targetUri);
     } catch (moveError) {
-      logAttachmentWarn('Attachment temp move failed, falling back to direct copy', moveError);
+      logAttachmentWarn('Attachment temp move failed, falling back to direct copy', moveError, undefined, knownUris);
       try {
         await fs.copy(sourceUri, targetUri);
       } catch (copyError) {
-        logAttachmentWarn('Attachment direct copy failed, falling back to byte write', copyError);
+        logAttachmentWarn('Attachment direct copy failed, falling back to byte write', copyError, undefined, knownUris);
         await writeBytesSafely(targetUri, await readFileAsBytes(sourceUri));
-        logAttachmentInfo('Attachment byte fallback copied file', { sourceUri, targetUri });
+        logAttachmentInfo('Attachment byte fallback copied file', copied);
       } finally {
         try {
           await fs.delete(tempUri);
