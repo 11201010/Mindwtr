@@ -27,7 +27,7 @@
 //
 // PARITY_ONLY=c3-fixes shoots only C3's 10-10 fixes, in light mode: the Calendar's month with today's details while the same
 // range reloads (the feed answers after 15 s: RN's Loading… line over the events kept), and Settings › Calendar's pills at
-// system font scale 2.0 (RN's CompactText 1.2x cap). The font scale is restored at the end.
+// system font scale 2.0 and 1.0 (RN's CompactText 1.2x cap). The font scale is restored at the end.
 //
 // It touches only tech.dongdongbh.mindwtr.upgradetest: it refuses any other APK, sends
 // input only while that package is in front, and at the end uninstalls it and restores
@@ -771,10 +771,10 @@ const shootCalendarReload = async (prefix, rn) => {
     calendarServer.state.mode('parity', 'ok');
     await sleep(16_000);
 };
-/** C3 fix 3: Settings › Calendar at system font scale 2.0, scrolled to its pills (Add, Test, Choose local .ics file). */
-const shootPillsFontScale = async (prefix, rn, activity) => {
+/** C3 fix 3: Settings › Calendar at system font scale [scale], scrolled to its pills (Add, Test, Choose local .ics file). */
+const shootPillsFontScale = async (prefix, rn, activity, scale = '2.0') => {
     await stopApp();
-    sh('settings put system font_scale 2.0');
+    sh(`settings put system font_scale ${scale}`);
     device.launch(activity);
     if (rn) openLink('inbox');
     const back = async () => { requireAppFront(); sh('input keyevent KEYCODE_BACK'); await sleep(1000); };
@@ -793,7 +793,7 @@ const shootPillsFontScale = async (prefix, rn, activity) => {
     const pillShown = (current) => hasText(current, pill) || Boolean(withDescription(current, pill));
     let nodes = await waitFor('Settings › Calendar', (current) => hasText(current, en['settings.deviceCalendars']) || hasText(current, en['settings.externalCalendarUrl']) || pillShown(current), 30_000);
     for (let step = 0; step < 8 && !pillShown(nodes); step += 1) nodes = await device.swipe(nodes, 'down');
-    await shoot(`${prefix}-settings-calendar-pills-font2-light`, pillShown);
+    await shoot(`${prefix}-settings-calendar-pills-font${scale.replace('.0', '')}-light`, pillShown);
     for (let step = 0; step < 3; step += 1) await back();
     sh(`settings put system font_scale ${originalFontScale === 'null' ? '1.0' : originalFontScale}`);
     await stopApp();
@@ -829,6 +829,7 @@ try {
         await setNight('no');
         // Settings › Calendar first: RN's Calendar reads the subscriptions RN's Settings › Calendar copies to the device.
         await shootPillsFontScale('rn', true, RN_ACTIVITY);
+        await shootPillsFontScale('rn', true, RN_ACTIVITY, '1.0');
         device.launch(RN_ACTIVITY);
         await shootCalendarReload('rn', true);
     }
@@ -875,6 +876,7 @@ try {
     device.launch(NATIVE_ACTIVITY);
     if (c3FixesOnly) {
         await shootPillsFontScale('native', false, NATIVE_ACTIVITY);
+        await shootPillsFontScale('native', false, NATIVE_ACTIVITY, '1.0');
         device.launch(NATIVE_ACTIVITY);
         await shootCalendarReload('native', false);
     }
