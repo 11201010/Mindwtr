@@ -430,7 +430,7 @@ fn utc_date_key(value: &str) -> Option<Date> {
         .or_else(|| parse_date(value))
 }
 
-fn parse_local_date(value: &str) -> Option<PrimitiveDateTime> {
+pub(crate) fn parse_local_date(value: &str) -> Option<PrimitiveDateTime> {
     if let Some(date) = parse_date(value) {
         return Some(date.midnight());
     }
@@ -548,7 +548,7 @@ fn match_date(value: &str, due: bool, term: &Term, now: PrimitiveDateTime) -> bo
 // Native conversions retain local calendar/DST semantics in request threads.
 // time's Unix local-offset feature fails closed in multi-threaded processes.
 #[cfg(unix)]
-fn local_wall(date: OffsetDateTime) -> Option<PrimitiveDateTime> {
+pub(crate) fn local_wall(date: OffsetDateTime) -> Option<PrimitiveDateTime> {
     let timestamp = libc::time_t::try_from(date.unix_timestamp()).ok()?;
     let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
     if unsafe { libc::localtime_r(&timestamp, local.as_mut_ptr()) }.is_null() {
@@ -623,7 +623,7 @@ fn wall_from_system_time(
     ))
 }
 #[cfg(windows)]
-fn local_wall(date: OffsetDateTime) -> Option<PrimitiveDateTime> {
+pub(crate) fn local_wall(date: OffsetDateTime) -> Option<PrimitiveDateTime> {
     let date = date.to_offset(time::UtcOffset::UTC);
     let input = system_time(PrimitiveDateTime::new(date.date(), date.time()));
     let mut output = unsafe { std::mem::zeroed() };

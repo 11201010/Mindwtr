@@ -1615,5 +1615,67 @@
       "areas": []
     },
     "expected": {}
+  },
+  {
+    "name": "overdue strict start date-only requires app catchup",
+    "completedAt": "2026-08-13T12:00:00.000Z",
+    "previousStatus": "done",
+    "task": {
+      "id": "parity-late-start-date-only",
+      "title": "Recurring task",
+      "status": "done",
+      "startTime": "2026-08-10",
+      "recurrence": "daily",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-08-01T00:00:00.000Z",
+      "updatedAt": "2026-08-01T00:00:00.000Z"
+    },
+    "expected": {
+      "title": "Recurring task",
+      "status": "next",
+      "startTime": "2026-08-13",
+      "recurrence": {
+        "rule": "daily",
+        "seriesId": "parity-late-start-date-only"
+      },
+      "tags": [],
+      "contexts": [],
+      "isFocusedToday": false,
+      "createdAt": "2026-08-13T12:00:00.000Z",
+      "updatedAt": "2026-08-13T12:00:00.000Z"
+    },
+    "localApiExpected": null
+  },
+  {
+    "name": "overdue strict start datetime requires app catchup",
+    "completedAt": "2026-08-13T12:00:00.000Z",
+    "previousStatus": "done",
+    "task": {
+      "id": "parity-late-start-datetime",
+      "title": "Recurring task",
+      "status": "done",
+      "startTime": "2026-08-10T09:00:00.000Z",
+      "recurrence": "daily",
+      "tags": [],
+      "contexts": [],
+      "createdAt": "2026-08-01T00:00:00.000Z",
+      "updatedAt": "2026-08-01T00:00:00.000Z"
+    },
+    "expected": {
+      "title": "Recurring task",
+      "status": "next",
+      "startTime": "2026-08-14T09:00:00.000Z",
+      "recurrence": {
+        "rule": "daily",
+        "seriesId": "parity-late-start-datetime"
+      },
+      "tags": [],
+      "contexts": [],
+      "isFocusedToday": false,
+      "createdAt": "2026-08-13T12:00:00.000Z",
+      "updatedAt": "2026-08-13T12:00:00.000Z"
+    },
+    "localApiExpected": null
   }
 ]

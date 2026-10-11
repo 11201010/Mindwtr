@@ -42,6 +42,7 @@ import {
     type ProjectOrderReserver,
 } from './store-helpers';
 import { logInfo, logWarn } from './logger';
+import { safeParseDate } from './date';
 import {
     isTaskActionable,
     isTaskCancelled,
@@ -189,6 +190,31 @@ const logTaskProjectReactivationSaved = (count: number): void => {
             count,
         },
     });
+};
+
+const logStartOnlyRecurringCompletions = (
+    rows: readonly { before: Task | null; after: Task }[],
+    createdTasks: readonly Task[],
+): void => {
+    if (createdTasks.length === 0) return;
+    const createdSeries = new Set(createdTasks.map((task) => normalizeRecurrenceForLoad(task.recurrence)?.seriesId));
+    const count = rows.filter(({ before, after }) => {
+        if (!before || before.status === 'done' || before.status === 'archived' || after.status !== 'done'
+            || !before.startTime || before.dueDate) return false;
+        const recurrence = normalizeRecurrenceForLoad(before.recurrence);
+        if (!recurrence || recurrence.strategy === 'fluid' || !createdSeries.has(recurrence.seriesId ?? before.id)) return false;
+        const start = safeParseDate(before.startTime);
+        const completion = safeParseDate(after.completedAt);
+        return Boolean(start && completion && start <= completion);
+    }).length;
+    if (count > 0) {
+        try {
+            logInfo('Strict start-only recurrence generated', {
+                scope: 'store', category: 'storage',
+                context: { releaseCheck: 'v1.3.5/start-only-recurrence', outcome: 'generated', count },
+            });
+        } catch { /* Optional diagnostics must not interrupt completion or persistence. */ }
+    }
 };
 
 // `tasks` and `_tasksById` are derived from `_allTasks` by
@@ -1047,6 +1073,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return { _allTasks: freshTasks, _allProjects: freshProjects, _allSections: sections,
                 _allAreas: durable.areas, _allPeople: durable.people ?? [], settings, lastDataChangeAt };
         });
+        if (result.success && result.outcome === 'applied') {
+            logStartOnlyRecurringCompletions(input.effect.tasks, input.effect.createdTasks ?? []);
+        }
         return result;
     };
     return ({
@@ -1552,6 +1581,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return { _allTasks: tasks, _allProjects: projects, _allSections: sections, settings,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt) };
         });
+        if (result.success && result.outcome === 'applied') {
+            logStartOnlyRecurringCompletions(input.tasks, input.tasks.filter((row) => !row.before).map((row) => row.after));
+        }
         return result;
     },
 
@@ -1691,6 +1723,9 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             return { _allTasks: tasks, _allProjects: projects, _allSections: sections, settings,
                 lastDataChangeAt: getNextDataChangeAt(memory.lastDataChangeAt) };
         });
+        if (result.success && result.outcome === 'applied') {
+            logStartOnlyRecurringCompletions(input.tasks, input.tasks.filter((row) => !row.before).map((row) => row.after));
+        }
         return result;
     },
 
@@ -2123,6 +2158,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         }
         const prepareMs = Date.now() - updateStartedAt;
         let snapshot: AppData | null = null;
+        let completedRecurrenceRows: Array<{ before: Task; after: Task }> = [];
+        let createdRecurringTasks: Task[] = [];
         const incrementalPersistence: {
             task?: Task;
             hasRecurringFollowUp: boolean;
@@ -2157,6 +2194,10 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                     deviceId: deviceState.deviceId,
                 });
                 const { updatedTask, recurringFollowUpTask } = effects;
+                if (recurringFollowUpTask) {
+                    completedRecurrenceRows = [{ before: oldTask, after: updatedTask }];
+                    createdRecurringTasks = [recurringFollowUpTask];
+                }
                 incrementalPersistence.task = updatedTask;
                 incrementalPersistence.hasRecurringFollowUp = recurringFollowUpTask !== null;
                 incrementalPersistence.mintedDeviceId = deviceState.updated;
@@ -2180,6 +2221,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             if (notifyProfilingEnabled) notifyProfile = endNotifyProfile();
         }
         const setStateMs = Date.now() - setStateStartedAt;
+        logStartOnlyRecurringCompletions(completedRecurrenceRows, createdRecurringTasks);
         const persistenceStartedAt = Date.now();
         const storage = getStorage();
         // A queued (not yet dispatched) full-state save can hold rows this task
@@ -2830,6 +2872,8 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
         const changeAt = Date.now();
         const now = new Date().toISOString();
         let reactivatedProjectCount = 0;
+        let completedRecurrenceRows: Array<{ before: Task; after: Task }> = [];
+        let createdRecurringTasks: Task[] = [];
 
         set((state) => {
             const deviceState = ensureDeviceId(state.settings);
@@ -2842,6 +2886,12 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 deviceId: deviceState.deviceId,
             });
             reactivatedProjectCount = projectReactivation.reactivatedProjectIds.length;
+            if (projectReactivation.createdTasks.length > 0) {
+                createdRecurringTasks = projectReactivation.createdTasks;
+                completedRecurrenceRows = state._allTasks.flatMap((task, index) =>
+                    prepared.preparedUpdatesById.has(task.id)
+                        ? [{ before: task, after: projectReactivation.tasks[index] }] : []);
+            }
 
             persist(set, debouncedSave, state, {
                 tasks: projectReactivation.tasks,
@@ -2859,6 +2909,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             };
         });
 
+        logStartOnlyRecurringCompletions(completedRecurrenceRows, createdRecurringTasks);
         if (reactivatedProjectCount > 0) {
             try {
                 await flushPendingSave();

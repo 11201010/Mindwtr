@@ -42,6 +42,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'allDayNonMidnightCount', 'localDayAheadCount', 'localDayBehindCount',
     'nativeColorCount', 'fallbackColorCount',
     // someday-section-move reuses releaseCheck, count, and operation below.
+    // start-only-recurrence reuses releaseCheck, outcome, and count below; no task data.
     // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
     // mcp-core-log-stderr: count of the first event actually forwarded.
     'forwardedEventCount',
@@ -190,6 +191,11 @@ const RELEASE_CHECK_FIELD_NAMES = [
 ];
 
 describe('release diagnostics field names', () => {
+    it('preserves the content-free start-only recurrence receipt', () => {
+        const receipt = { releaseCheck: 'v1.3.5/start-only-recurrence', outcome: 'generated', count: 1 };
+        expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '1' });
+    });
+
     it('preserves the fixed iOS legacy secret retirement receipt', () => {
         const receipt = { releaseCheck: 'v1.3.5/ios-legacy-secret-retirement', operation: 'legacy-secret-retirement', outcome: 'delivered' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);

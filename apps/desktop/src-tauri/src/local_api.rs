@@ -1234,7 +1234,14 @@ fn mutate_task_operation(
         }
         LocalOperation::TaskAction { id, action } => {
             let action = action.as_str();
-            if action == "complete" && recurrence_completion_refusal(data, &id).is_some() {
+            let now = now_iso();
+            if action == "complete" && recurrence_completion_refusal(data, &id, &now).is_some() {
+                if find_task(data, &id).is_some_and(|task| {
+                    task.as_object()
+                        .is_some_and(|task| recurrence_start_needs_catchup(task, &now))
+                }) {
+                    log::info!("Desktop Local API recurrence requires app extra.releaseCheck=v1.3.5/start-only-recurrence outcome=requires-app");
+                }
                 return Err(RECURRENCE_REQUIRES_APP.to_string());
             }
             let device_id = device_id_from_data(data);
@@ -1243,7 +1250,6 @@ fn mutate_task_operation(
             } else {
                 LiveContainers::default()
             };
-            let now = now_iso();
             let mut recurring_follow_up: Option<Map<String, Value>> = None;
             let task = update_task_in_data(data, &id, |task| {
                 let previous_status = task
@@ -2209,7 +2215,11 @@ fn apply_project_delete_or_restore_at(
 /// than a rejected request: nothing is read here except to decide, and the
 /// caller must not proceed to `update_task_in_data` when this returns `Some`,
 /// so the task is left completely untouched on disk.
-fn recurrence_completion_refusal(data: &Value, task_id: &str) -> Option<ApiResponse> {
+fn recurrence_completion_refusal(
+    data: &Value,
+    task_id: &str,
+    completed_at: &str,
+) -> Option<ApiResponse> {
     let task = find_task(data, task_id)?;
     let task_object = task.as_object()?;
     let previous_status = task_object
@@ -2219,7 +2229,10 @@ fn recurrence_completion_refusal(data: &Value, task_id: &str) -> Option<ApiRespo
     if !should_create_recurring_follow_up("complete", previous_status) {
         return None;
     }
-    if recurrence_rule(task_object).is_none() || !recurrence_needs_core_engine(task_object) {
+    if recurrence_rule(task_object).is_none()
+        || (!recurrence_needs_core_engine(task_object)
+            && !recurrence_start_needs_catchup(task_object, completed_at))
+    {
         return None;
     }
     Some(recurrence_completion_refusal_response())
@@ -2917,13 +2930,79 @@ fn recurrence_needs_core_engine(task: &Map<String, Value>) -> bool {
     has_by_day || has_by_month_day || has_rrule
 }
 
+// Catchup belongs to core; refuse before changing the source when one step is stale.
+fn recurrence_start_needs_catchup(task: &Map<String, Value>, completed_at: &str) -> bool {
+    if recurrence_strategy(task) == "fluid"
+        || has_non_empty_string(task, "dueDate")
+        || recurrence_count(task)
+            .is_some_and(|count| recurrence_completed_occurrences(task).unwrap_or(0) + 1 >= count)
+    {
+        return false;
+    }
+    let (Some(source), Some(rule)) = (
+        task.get("startTime")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty()),
+        recurrence_rule(task),
+    ) else {
+        return false;
+    };
+    let Some(next) = next_recurring_iso(
+        source,
+        completed_at,
+        rule,
+        "strict",
+        recurrence_interval(task),
+        recurrence_anchor_day_for_field(task, "startAnchorDay", "startTime"),
+    ) else {
+        return true;
+    };
+    if let Some(until) = recurrence_until(task) {
+        let certainly_ended = if next.len() == 10 && until.len() == 10 {
+            next > until
+        } else if let (Ok(next), Ok(until)) = (
+            OffsetDateTime::parse(&next, &Rfc3339),
+            OffsetDateTime::parse(&until, &Rfc3339),
+        ) {
+            next > until
+        } else {
+            false
+        };
+        if certainly_ended && should_stop_at_until(Some(&next), &until) {
+            return false;
+        }
+    }
+    let Ok(completed) = OffsetDateTime::parse(completed_at, &Rfc3339) else {
+        return true;
+    };
+    if let Ok(next) = OffsetDateTime::parse(&next, &Rfc3339) {
+        return next <= completed;
+    }
+    let Some(completed) = crate::local_query::local_wall(completed) else {
+        return true;
+    };
+    let floating = if next.len() == 16 {
+        format!("{next}:00")
+    } else {
+        next.clone()
+    };
+    let Some(candidate) = crate::local_query::parse_local_date(&floating) else {
+        return true;
+    };
+    if next.len() == 10 {
+        candidate.date() < completed.date()
+    } else {
+        candidate <= completed
+    }
+}
+
 fn create_next_recurring_task_for_local_api(
     task: &Map<String, Value>,
     completed_at: &str,
     previous_status: &str,
 ) -> Option<Map<String, Value>> {
     let rule = recurrence_rule(task)?;
-    if recurrence_needs_core_engine(task) {
+    if recurrence_needs_core_engine(task) || recurrence_start_needs_catchup(task, completed_at) {
         // Refuse what this engine cannot model instead of guessing a wrong
         // date (e.g. an every-Mon/Wed/Fri task otherwise gets a follow-up 7
         // days out because `next_recurring_iso` below only knows fixed
@@ -7088,6 +7167,91 @@ mod tests {
     }
 
     #[test]
+    fn local_api_start_catchup_refusal_preserves_source_and_supported_completions() {
+        let completed = "2026-08-13T12:00:00.000Z";
+        let local_day =
+            crate::local_query::local_wall(OffsetDateTime::parse(completed, &Rfc3339).unwrap())
+                .unwrap()
+                .date()
+                .to_string();
+        let base = json!({ "id": "late-start", "title": "Recurring", "status": "next",
+            "startTime": "2000-01-01", "recurrence": "daily", "tags": [], "contexts": [] });
+        assert!(recurrence_start_needs_catchup(
+            base.as_object().unwrap(),
+            completed
+        ));
+        let mut data = json!({ "tasks": [base.clone()] });
+        let before = data.clone();
+        let result = mutate_task_operation(
+            &mut data,
+            &LocalOperation::TaskAction {
+                id: "late-start".to_string(),
+                action: "complete".to_string(),
+            },
+        );
+        assert_eq!(result.unwrap_err(), RECURRENCE_REQUIRES_APP);
+        assert_eq!(data, before);
+        let patch = json!({ "status": "done" });
+        assert!(patch_task_in_data(&mut data, "late-start", patch.as_object().unwrap()).is_err());
+        assert_eq!(data, before);
+
+        for (start, needs_app) in [
+            ("2026-08-12T12:00:00.000Z", true),
+            ("2026-08-12T12:00:00.001Z", false),
+            ("2100-01-01", false),
+        ] {
+            let mut task = base.as_object().unwrap().clone();
+            task.insert("startTime".into(), json!(start));
+            assert_eq!(
+                recurrence_start_needs_catchup(&task, completed),
+                needs_app,
+                "{start}"
+            );
+        }
+        // A one-step date-only candidate on local today remains supported.
+        let (year, month, day, _) = parse_iso_prefix(&local_day).unwrap();
+        let (year, month, day) = add_days(year, month, day, -1);
+        let mut task = base.as_object().unwrap().clone();
+        task.insert(
+            "startTime".into(),
+            json!(format!("{year:04}-{month:02}-{day:02}")),
+        );
+        assert!(!recurrence_start_needs_catchup(&task, completed));
+        for update in [
+            json!({ "dueDate": "2000-01-01" }),
+            json!({ "recurrence": { "rule": "daily", "strategy": "fluid" } }),
+            json!({ "recurrence": { "rule": "daily", "count": 1 } }),
+            json!({ "recurrence": { "rule": "daily", "until": "2000-01-01" } }),
+        ] {
+            let mut task = base.as_object().unwrap().clone();
+            task.extend(update.as_object().unwrap().clone());
+            assert!(!recurrence_start_needs_catchup(&task, completed));
+        }
+        task = base.as_object().unwrap().clone();
+        task.insert("recurrence".into(), json!({ "rule": "daily", "count": 1 }));
+        assert!(create_next_recurring_task_for_local_api(&task, completed, "next").is_none());
+        assert!(recurrence_completion_refusal(
+            &json!({ "tasks": [task] }),
+            "late-start",
+            completed
+        )
+        .is_none());
+        let mixed_offset = json!({ "id": "late-start", "status": "next",
+            "startTime": "2026-08-10T12:00:00+14:00",
+            "recurrence": { "rule": "daily", "until": "2026-08-11T11:00:00-12:00" } });
+        assert!(recurrence_start_needs_catchup(
+            mixed_offset.as_object().unwrap(),
+            "2026-08-10T23:00:00Z"
+        ));
+        assert!(recurrence_completion_refusal(
+            &json!({ "tasks": [mixed_offset] }),
+            "late-start",
+            "2026-08-10T23:00:00Z"
+        )
+        .is_some());
+    }
+
+    #[test]
     fn local_api_complete_creates_next_recurring_task_payload() {
         let task = json!({
             "id": "task-1",
@@ -7194,7 +7358,10 @@ mod tests {
                 "recurrence": { "rule": "weekly", "byDay": ["MO", "WE", "FR"] }
             }]
         });
-        assert!(recurrence_completion_refusal(&data, "byday-archived").is_none());
+        assert!(
+            recurrence_completion_refusal(&data, "byday-archived", "2026-07-20T12:00:00.000Z")
+                .is_none()
+        );
     }
 
     /// Consolidation-law pin: a test that only iterates `kind: "action"`
@@ -7272,8 +7439,9 @@ mod tests {
                     .unwrap_or_default()
                     .to_string();
                 let data = json!({ "tasks": [task] });
-                let refusal = recurrence_completion_refusal(&data, &task_id)
-                    .unwrap_or_else(|| panic!("{name}: expected a 409 refusal"));
+                let refusal =
+                    recurrence_completion_refusal(&data, &task_id, "2026-07-20T12:00:00.000Z")
+                        .unwrap_or_else(|| panic!("{name}: expected a 409 refusal"));
                 assert_eq!(refusal.status, 409, "{name}");
                 assert_eq!(
                     refusal.body.get("code").and_then(Value::as_str),
