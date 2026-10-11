@@ -22746,22 +22746,49 @@ final class CoreHostTests: XCTestCase {
             let before = try nineTableSnapshot(beforeDB)
             beforeDB.close()
             let beforeMoved = try storedTask("order-a")
+            let linkedTasks = try ["rename-task", "order-a", "order-hidden", "order-c", "order-d"].map { try storedTask($0) }
+            let linkedSections = try ["rename-section", "order-destination"].map { try XCTUnwrap(projectSectionRows($0).first) }
             let replayFaults = HostIOFaults()
             var writes = 0
+            var writeSQL: [String] = []
             replayFaults.beforeSQL = { sql in
                 if sql.range(of: #"(?i)^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM)\s+(?:sections|projects|tasks)\b"#,
-                             options: .regularExpression) != nil { writes += 1 }
+                             options: .regularExpression) != nil { writes += 1; writeSQL.append(sql) }
             }
             let reopened = host(replayFaults)
             let startup = try object(await reopened.start())
             let recovery = try XCTUnwrap(startup["recovery"] as? [String: Any])
             XCTAssertEqual(recovery["method"] as? String, "projectTaskOrderCommit")
-            XCTAssertEqual((recovery["result"] as? [String: Any])?["sectionId"] as? String, "order-destination")
+            XCTAssertEqual(try json(XCTUnwrap(recovery["result"] as? [String: Any])), try json(frozen))
             let afterMoved = try storedTask("order-a")
             if kind == "receipt-delete" {
-                // Direct SQL tombstones only the parent. Startup repairs the still-linked
-                // task and sections; the receipt must precede that single detach.
-                XCTAssertEqual(writes, 3)
+                // Repair batches the changed tasks and sections; the tombstoned parent stays unchanged.
+                XCTAssertEqual(writes, 2, "Repair SQL statements (no parameters): \(writeSQL)")
+                for table in ["tasks", "sections"] {
+                    XCTAssertEqual(writeSQL.filter { $0.hasPrefix("INSERT INTO " + table + " ") }.count, 1)
+                }
+                for row in linkedTasks {
+                    let current = try storedTask(XCTUnwrap(row["id"] as? String))
+                    XCTAssertTrue(current["projectId"] is NSNull)
+                    XCTAssertTrue(current["sectionId"] is NSNull)
+                    XCTAssertEqual(current["rev"] as? Int, (row["rev"] as? Int ?? 0) + 1)
+                    for (field, value) in row where !["projectId", "sectionId", "rev", "revBy", "updatedAt"].contains(field) {
+                        XCTAssertEqual(try json([current[field] ?? NSNull()]), try json([value]), field)
+                    }
+                }
+                for row in linkedSections {
+                    let current = try XCTUnwrap(projectSectionRows(XCTUnwrap(row["id"] as? String)).first)
+                    XCTAssertNotNil(current["deletedAt"] as? String)
+                    XCTAssertEqual(current["rev"] as? Int, (row["rev"] as? Int ?? 0) + 1)
+                    for (field, value) in row where !["deletedAt", "rev", "revBy", "updatedAt"].contains(field) {
+                        XCTAssertEqual(try json([current[field] ?? NSNull()]), try json([value]), field)
+                    }
+                }
+                let check = try SQLiteBridge(url: database)
+                let after = try nineTableSnapshot(check)
+                check.close()
+                for index in before.indices where index != 0 && index != 4 { XCTAssertEqual(after[index], before[index]) }
+                XCTAssertEqual(try storedTask("rename-unrelated-task")["title"] as? String, "Later unrelated title")
                 XCTAssertTrue(afterMoved["projectId"] is NSNull)
                 XCTAssertTrue(afterMoved["sectionId"] is NSNull)
                 XCTAssertEqual(afterMoved["orderNum"] as? Int, beforeMoved["orderNum"] as? Int)
@@ -22777,6 +22804,18 @@ final class CoreHostTests: XCTestCase {
             }
             XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
             await reopened.close()
+            let stableDB = try SQLiteBridge(url: database)
+            let stable = try nineTableSnapshot(stableDB)
+            stableDB.close()
+            writes = 0
+            let again = host(replayFaults)
+            let secondStart = try object(await again.start())
+            XCTAssertNil(secondStart["recovery"])
+            XCTAssertEqual(writes, 0)
+            let secondDB = try SQLiteBridge(url: database)
+            XCTAssertEqual(try nineTableSnapshot(secondDB), stable)
+            secondDB.close()
+            await again.close()
             directory = parent
         }
     }
@@ -24216,10 +24255,10 @@ final class CoreHostTests: XCTestCase {
         let ids = try XCTUnwrap((recovery["result"] as? [String: Any])?["attachmentIds"] as? [String])
         XCTAssertEqual(ids.count, 2)
         XCTAssertEqual(Set(ids).count, 2)
-        // The Project save upserts the unchanged Settings row in the same flush.
-        XCTAssertEqual(writes, 2, "Replay SQL statements (no parameters): \(writeSQL)")
+        // Cold replay uses the loaded fingerprints and writes only the changed project.
+        XCTAssertEqual(writes, 1, "Replay SQL statements (no parameters): \(writeSQL)")
         XCTAssertEqual(writeSQL.filter { $0.range(of: #"(?i)^\s*INSERT INTO projects\b"#, options: .regularExpression) != nil }.count, 1)
-        XCTAssertEqual(writeSQL.filter { $0.range(of: #"(?i)^\s*INSERT INTO settings\b"#, options: .regularExpression) != nil }.count, 1)
+        XCTAssertEqual(writeSQL.filter { $0.range(of: #"(?i)^\s*INSERT INTO settings\b"#, options: .regularExpression) != nil }.count, 0)
         let rowAfter = try XCTUnwrap(projectRows("focus-target").first)
         XCTAssertEqual(try json(projectRows().filter { $0["id"] as? String != "focus-target" }),
                        try json(siblingsBefore))

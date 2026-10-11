@@ -35,6 +35,11 @@ const resolveWhisperRnPath = (relativePath) => {
 
 const config = getDefaultConfig(projectRoot);
 
+// CI bundles must not depend on a persistent Watchman daemon or desktop login.
+if (process.env.CI === '1' || process.env.CI === 'true') {
+    config.resolver.useWatchman = false;
+}
+
 // Expo public flags are inlined during transformation. Explicitly isolate the
 // optional profiler variants: export:embed can otherwise reuse a disabled
 // capture transform even after a forced bundle with --reset-cache (and vice versa).

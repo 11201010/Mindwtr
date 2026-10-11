@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const prepareCacheScript = fileURLToPath(new URL('./prepare-apple-cache.sh', import.meta.url));
 const dispatchScript = fileURLToPath(new URL('./dispatch-macmini.sh', import.meta.url));
 
-test('Mac caches survive cleanup while stale generated sources are removed', () => {
+test('Mac caches survive cleanup without Watchman while stale generated sources are removed', () => {
   const root = mkdtempSync(join(tmpdir(), 'mindwtr-cache-'));
   try {
     const repo = join(root, 'repo');
@@ -21,7 +21,7 @@ test('Mac caches survive cleanup while stale generated sources are removed', () 
       writeFileSync(join(repo, path), 'fixture');
     }
     writeFileSync(join(bin, 'xcodebuild'), '#!/bin/sh\necho "Xcode $FIXTURE_XCODE"\n', { mode: 0o755 });
-    writeFileSync(join(bin, 'watchman'), '#!/bin/sh\ntest "$1" = --no-site-spawner\n', { mode: 0o755 });
+    writeFileSync(join(bin, 'watchman'), '#!/bin/sh\necho "CI must not start Watchman" >&2\nexit 88\n', { mode: 0o755 });
     writeFileSync(join(bin, 'df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 20000000 1 12582912 1%% /\\n"\n', { mode: 0o755 });
     const envFile = join(root, 'env');
     const run = (version) => {
