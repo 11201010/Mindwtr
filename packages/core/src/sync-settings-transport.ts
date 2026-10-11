@@ -40,6 +40,7 @@ import {
 } from './mobile-sync-utils';
 import { isConnectionAllowed, SYNC_LOCAL_INSECURE_URL_OPTIONS } from './http-utils';
 import { addBreadcrumb } from './log-breadcrumbs';
+import { isSandboxMode } from './sandbox';
 import { SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTransitionIncompleteError, isSyncEncryptionRemoteVersionUnavailableError, type SyncEncryptionTransitionKind } from './sync-encryption';
 import { normalizeCloudUrl, normalizeWebdavUrl } from './sync-helpers';
 import type { SyncRunResult } from './sync-run-ports';
@@ -299,17 +300,43 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         documentUrl: string,
         options: Parameters<typeof probeWebdavSyncCompatibility>[1],
     ): Promise<'strong-etag' | 'legacy-plaintext'> => {
-        const status = await host.encryption.getStatus();
-        const requireStrongEtag = status.state !== 'off' || Boolean(status.incompleteTransition);
-        const compatibility = await core.probeWebdavSyncCompatibility(
-            documentUrl,
-            options,
-            { requireStrongEtag },
-        );
-        if (compatibility === 'legacy-plaintext' && requireStrongEtag) {
-            throw new core.SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json');
+        let phase = 'encryption-status';
+        let requireStrongEtag: boolean | undefined;
+        let compatibility: 'strong-etag' | 'legacy-plaintext' | undefined;
+        let failure: unknown;
+        try {
+            const status = await host.encryption.getStatus();
+            requireStrongEtag = status.state !== 'off' || Boolean(status.incompleteTransition);
+            phase = 'compatibility';
+            compatibility = await core.probeWebdavSyncCompatibility(documentUrl, options, { requireStrongEtag });
+            if (compatibility === 'legacy-plaintext' && requireStrongEtag) {
+                throw new core.SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json');
+            }
+            return compatibility;
+        } catch (error) {
+            failure = error;
+            compatibility = undefined;
+            throw error;
+        } finally {
+            try {
+                const status = (failure as { status?: unknown } | null)?.status;
+                const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599
+                    ? String(status) : undefined;
+                const reason = compatibility ?? (phase === 'encryption-status' ? 'encryption-status-unavailable'
+                    : httpStatus ? 'http'
+                    : core.isSyncEncryptionRemoteVersionUnavailableError(failure) ? 'strong-etag-required'
+                    : failure instanceof Error && failure.message.startsWith('WebDAV GET failed: invalid JSON (') ? 'invalid-json'
+                    : core.isLikelyOfflineSyncError(failure) ? 'network' : 'unknown');
+                void Promise.resolve(host.logInfo('WebDAV setup compatibility probe', {
+                    scope: 'sync-settings', force: !isSandboxMode(), extra: {
+                        releaseCheck: 'v1.3.5/webdav-setup-probe', phase,
+                        outcome: compatibility ? 'completed' : 'failed', reason,
+                        requireStrongEtag: requireStrongEtag === undefined ? 'unknown' : String(requireStrongEtag),
+                        ...(httpStatus ? { httpStatus } : {}),
+                    },
+                })).catch(() => undefined);
+            } catch { /* Diagnostics must preserve the probe's result and original rejection. */ }
         }
-        return compatibility;
     };
 
     /** Answers once the write is stored (React Native's screen does not wait for it). */

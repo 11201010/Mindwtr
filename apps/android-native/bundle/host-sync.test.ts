@@ -66,6 +66,35 @@ const host = (stored: Record<string, string> = {}, refuseSchedule = false, getDa
     return { sync, kv, schedules, lines, entries, traces, calls, bindings };
 };
 
+it.each(['android', 'ios'] as const)('forwards the shared WebDAV setup failure receipt through the %s log binding', async (platform) => {
+    resetForTests();
+    if (platform === 'ios') iosFiles();
+    globals.__mindwtrHostPlatform = platform;
+    const data: AppData = { tasks: [], projects: [], sections: [], areas: [], settings: {} };
+    core.setStorageAdapter({ getData: async () => structuredClone(data), saveData: async () => undefined });
+    const fixture = host({ [SYNC_BACKEND_KEY]: 'webdav', [WEBDAV_URL_KEY]: 'https://dav.example.com/data.json' }, false,
+        async () => structuredClone(data), async () => false);
+    const receipts: { entry: core.DiagnosticsLogEntry; force?: boolean }[] = [];
+    fixture.bindings.appendLog = async (entry, force) => { receipts.push({ entry, force }); return null; };
+    const contract = core.createNativeHostContract({ syncSettings: fixture.sync.settingsHost });
+    expect((await contract.activate({ writeSafetyReady: true })).ok).toBe(true);
+    expect((await contract.openSyncSettings({})).ok).toBe(true);
+    globalThis.fetch = (async () => new Response('private server body', { status: 401 })) as typeof fetch;
+    const tested = await contract.testSyncConnection({ webdav: {
+        url: 'https://dav.example.com/data.json', username: 'alice', password: 'secret', allowInsecureHttp: false,
+    } });
+    expect(tested.ok).toBe(true);
+    expect(receipts.filter(({ entry }) => entry.context?.releaseCheck === 'v1.3.5/webdav-setup-probe')).toEqual([{
+        force: true, entry: expect.objectContaining({ message: 'WebDAV setup compatibility probe', scope: 'sync-settings', context: {
+            releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'failed',
+            reason: 'http', requireStrongEtag: 'false', httpStatus: '401',
+        } }),
+    }]);
+    expect(JSON.stringify(receipts)).not.toContain('private server body');
+    expect(fixture.kv.get(SYNC_BACKEND_KEY)).toBe('webdav');
+    resetForTests();
+});
+
 it('records bounded iOS unlock only after the shared service confirms completion', async () => {
     const create = core.createSyncEncryptionService;
     let outcome: 'ok' | 'wrong-passphrase' | 'no-encrypted-remote' | Error = 'ok';

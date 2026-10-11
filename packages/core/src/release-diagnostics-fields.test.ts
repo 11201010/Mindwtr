@@ -13,6 +13,8 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // webdav-setup-probe: fixed posture/outcome categories and an optional validated HTTP status.
+    'requireStrongEtag', 'httpStatus',
     // mobile-sync-follow-up: fixed request class, one aggregate comparison; no IDs, values or paths.
     'requestClass', 'comparison',
     'outgoingTasksSig', 'outgoingProjectsSig', 'outgoingSectionsSig', 'outgoingAreasSig', 'outgoingPeopleSig', 'outgoingSettingsSig',
@@ -196,6 +198,13 @@ const RELEASE_CHECK_FIELD_NAMES = [
 ];
 
 describe('release diagnostics field names', () => {
+    it('preserves the bounded WebDAV setup probe receipt', () => {
+        const receipt = {
+            releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'failed',
+            reason: 'http', requireStrongEtag: 'false', httpStatus: '401',
+        };
+        expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
     it('preserves the content-free start-only recurrence receipt', () => {
         const receipt = { releaseCheck: 'v1.3.5/start-only-recurrence', outcome: 'generated', count: 1 };
         expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '1' });

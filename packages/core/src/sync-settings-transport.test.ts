@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
 import { runSerializedSyncDocumentOperation } from './data-transfer-transaction';
+import { buildDiagnosticsLogEntry, createDiagnosticsLog } from './diagnostics-log';
+import * as sandbox from './sandbox';
 import { createSyncSettingsTransport, SyncSettingsWriteError, type SyncSettingsSyncResult, type SyncSettingsToast, type SyncSettingsTransportHost } from './sync-settings-transport';
 import { SYNC_BACKEND_KEY, SYNC_PATH_BOOKMARK_KEY, SYNC_PATH_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY } from './sync-storage-keys';
 
@@ -12,7 +14,7 @@ vi.mock('./webdav', async (importOriginal) => ({
 }));
 
 /** A transport over an in-memory device, with core's own rules (no host overrides). */
-function setup(syncResults: SyncSettingsSyncResult[]) {
+function setup(syncResults: SyncSettingsSyncResult[], coreOverrides: SyncSettingsTransportHost['core'] = {}) {
     const storage = new Map<string, string>();
     const secrets = new Map<string, string>();
     const toasts: SyncSettingsToast[] = [];
@@ -55,7 +57,7 @@ function setup(syncResults: SyncSettingsSyncResult[]) {
         rememberWebdavCapabilityProof: async () => undefined,
         encryption: { getStatus: async () => ({ state: 'off' }), getIncompleteTransition: async () => null },
         dropbox: {} as SyncSettingsTransportHost['dropbox'],
-        core: { addBreadcrumb: () => undefined },
+        core: { addBreadcrumb: () => undefined, ...coreOverrides },
     };
     return { transport: createSyncSettingsTransport(host), host, storage, secrets, toasts, syncs };
 }
@@ -63,6 +65,140 @@ function setup(syncResults: SyncSettingsSyncResult[]) {
 const fields = { allowInsecureHttp: false, password: 'secret', url: ' https://dav.example.com/ ', username: 'alice' };
 
 describe('sync settings transport', () => {
+    it.each(['test', 'save'].flatMap((action) => ['http', 'network', 'invalid-json'].map((reason) => ({ action, reason }))))(
+        'records bounded WebDAV $action $reason failures without activating or exposing the response', async ({ action, reason }) => {
+            const { probeWebdavSyncCompatibility } = await vi.importActual<typeof import('./webdav')>('./webdav');
+            const privateText = 'private-document https://alice:secret@dav.example.com/private';
+            const fetcher = async () => {
+                if (reason === 'network') throw new TypeError(`Network request failed ${privateText}`);
+                return new Response(privateText, { status: reason === 'http' ? 401 : 200 });
+            };
+            const { transport, host, storage, secrets, toasts, syncs } = setup([], {
+                probeWebdavSyncCompatibility: (url, options, policy) => probeWebdavSyncCompatibility(url, { ...options, fetcher }, policy),
+            });
+            const logged = vi.spyOn(host, 'logInfo');
+            const proof = vi.spyOn(host, 'rememberWebdavCapabilityProof');
+            await transport.load().done;
+            if (action === 'test') await transport.handleTestConnection('webdav', { webdav: fields });
+            else await transport.handleSaveWebDavSettings(fields);
+            const receipts = logged.mock.calls.filter(([, context]) => context.extra.releaseCheck === 'v1.3.5/webdav-setup-probe');
+            expect(receipts).toEqual([['WebDAV setup compatibility probe', {
+                scope: 'sync-settings', force: true, extra: {
+                    releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'failed',
+                    reason, requireStrongEtag: 'false',
+                    ...(reason === 'http' ? { httpStatus: '401' } : {}),
+                },
+            }]]);
+            const diagnostic = JSON.stringify(receipts);
+            for (const sensitive of ['private-document', 'https://', 'alice', 'secret', 'dav.example.com', 'Network request failed']) {
+                expect(diagnostic).not.toContain(sensitive);
+            }
+            expect(toasts.at(-1)?.tone).toBe('error');
+            expect(storage.size).toBe(0);
+            expect(secrets.size).toBe(0);
+            expect(syncs).toEqual([]);
+            expect(proof).not.toHaveBeenCalled();
+        });
+
+    it('records unreadable encryption posture and keeps its original failure toast', async () => {
+        const probe = vi.fn(async () => 'strong-etag' as const);
+        const { transport, host, toasts, storage, secrets, syncs } = setup([], { probeWebdavSyncCompatibility: probe });
+        const failure = new Error('posture unavailable');
+        host.encryption.getStatus = async () => { throw failure; };
+        const logged = vi.spyOn(host, 'logInfo');
+        await transport.load().done;
+        await transport.handleTestConnection('webdav', { webdav: fields });
+        expect(logged).toHaveBeenCalledWith('WebDAV setup compatibility probe', {
+            scope: 'sync-settings', force: true, extra: {
+                releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'encryption-status', outcome: 'failed',
+                reason: 'encryption-status-unavailable', requireStrongEtag: 'unknown',
+            },
+        });
+        expect(toasts.at(-1)?.message).toBe(failure.message);
+        expect(probe).not.toHaveBeenCalled();
+        expect(storage.size + secrets.size).toBe(0);
+        expect(syncs).toEqual([]);
+    });
+
+    it.each([false, true])('preserves successful activation and the logging gate in sandbox=%s', async (sandboxMode) => {
+        const mode = vi.spyOn(sandbox, 'isSandboxMode').mockReturnValue(sandboxMode);
+        try {
+            const { transport, host, storage, secrets, syncs } = setup([]);
+            const logged = vi.spyOn(host, 'logInfo');
+            await transport.load().done;
+            await transport.handleSaveWebDavSettings(fields);
+            expect(logged).toHaveBeenCalledWith('WebDAV setup compatibility probe', {
+                scope: 'sync-settings', force: !sandboxMode, extra: {
+                    releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'completed',
+                    reason: 'strong-etag', requireStrongEtag: 'false',
+                },
+            });
+            expect(storage.get(SYNC_BACKEND_KEY)).toBe('webdav');
+            expect(secrets.get(WEBDAV_PASSWORD_KEY)).toBe(fields.password);
+            expect(syncs).toHaveLength(2);
+        } finally { mode.mockRestore(); }
+    });
+
+    it.each([false, true].flatMap((sandboxMode) => [false, true].map((enabled) => ({ sandboxMode, enabled }))))(
+        'writes the probe through the real log gate with sandbox=$sandboxMode logging=$enabled', async ({ sandboxMode, enabled }) => {
+            const mode = vi.spyOn(sandbox, 'isSandboxMode').mockReturnValue(sandboxMode);
+            try {
+                let text = '';
+                const log = createDiagnosticsLog({ isEnabled: () => enabled, files: [{
+                    path: async () => 'log', ensure: async () => 'log', exists: async () => true,
+                    read: async () => text, write: async (value) => { text = value; }, delete: async () => true,
+                }] });
+                const { transport, host } = setup([]);
+                const writes: Promise<unknown>[] = [];
+                host.logInfo = (message, context) => {
+                    const pending = log.append(buildDiagnosticsLogEntry('info', message, context), { force: context.force });
+                    writes.push(pending);
+                    return pending;
+                };
+                await transport.load().done;
+                await transport.handleTestConnection('webdav', { webdav: fields });
+                await Promise.all(writes);
+                expect(text.includes('v1.3.5/webdav-setup-probe')).toBe(!sandboxMode || enabled);
+            } finally { mode.mockRestore(); }
+        });
+
+    it.each(['throw', 'reject'] as const)('preserves the original compatibility guard when diagnostics %s', async (sink) => {
+        const { transport, host, toasts, storage, secrets, syncs } = setup([], {
+            probeWebdavSyncCompatibility: async () => 'legacy-plaintext',
+        });
+        host.encryption.getStatus = async () => ({ state: 'on' });
+        await transport.load().done;
+        host.logInfo = sink === 'throw'
+            ? () => { throw new Error('log unavailable'); }
+            : () => Promise.reject(new Error('log unavailable'));
+        await transport.handleTestConnection('webdav', { webdav: fields });
+        expect(toasts.at(-1)?.message).toBe('settings.syncEncryptionErrorBackendIncompatible');
+        expect(storage.size + secrets.size).toBe(0);
+        expect(syncs).toEqual([]);
+    });
+
+    it.each(['throw', 'reject'] as const)('preserves probe success when diagnostics %s', async (sink) => {
+        const { transport, host, toasts } = setup([]);
+        await transport.load().done;
+        host.logInfo = sink === 'throw'
+            ? () => { throw new Error('log unavailable'); }
+            : () => Promise.reject(new Error('log unavailable'));
+        await transport.handleTestConnection('webdav', { webdav: fields });
+        expect(toasts.at(-1)?.tone).toBe('success');
+    });
+
+    it.each(['401 private', NaN, 600, 0])('omits an unsafe HTTP status %s from the receipt', async (status) => {
+        const { transport, host } = setup([], {
+            probeWebdavSyncCompatibility: async () => { throw Object.assign(new Error('private'), { status }); },
+        });
+        await transport.load().done;
+        const logged = vi.spyOn(host, 'logInfo');
+        await transport.handleTestConnection('webdav', { webdav: fields });
+        expect(logged.mock.calls[0][1].extra).toMatchObject({ reason: 'unknown', outcome: 'failed' });
+        expect(logged.mock.calls[0][1].extra).not.toHaveProperty('httpStatus');
+        expect(JSON.stringify(logged.mock.calls)).not.toContain('private');
+    });
+
     it.each(['verification', 'first sync', 'sync now'] as const)('propagates fatal cleanup during WebDAV %s without any later callback', async (phase) => {
         const { transport, host, storage, secrets, toasts } = setup([]);
         if (phase === 'sync now') {
