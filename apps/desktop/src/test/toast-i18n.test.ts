@@ -16,9 +16,10 @@ const SRC_ROOT = existsSync(LOCAL_SRC) ? LOCAL_SRC : join(process.cwd(), 'apps',
  */
 const ALLOWED_LITERAL_TOASTS = new Map<string, string>();
 
-// t(...), translate(...), tFallback(...), resolve*(...), format*(...) — every
-// wrapper the desktop uses to turn a key into localized copy.
-const TRANSLATOR_CALL = /\b(t|translate|tFallback|resolve[A-Z]\w*|format[A-Z]\w*)\s*\(/;
+// t(...), translate(...), tFallback(...) or its full name translateWithFallback(...),
+// resolve*(...), format*(...) — every wrapper the desktop uses to turn a key into
+// localized copy.
+const TRANSLATOR_CALL = /\b(t|translate|tFallback|translateWithFallback|resolve[A-Z]\w*|format[A-Z]\w*)\s*\(/;
 
 function collectSourceFiles(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
