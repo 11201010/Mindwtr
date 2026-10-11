@@ -670,6 +670,7 @@
     "createProgressStream",
     "createProjectOrderReserver",
     "createProjectSectionOrderMethods",
+    "createProjectToSectionPreviewer",
     "createProjectedRecurringTask",
     "createQuickCaptureOptions",
     "createReferenceSearchPredicate",

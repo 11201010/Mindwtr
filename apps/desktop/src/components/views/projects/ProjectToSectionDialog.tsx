@@ -1,8 +1,8 @@
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import {
+    createProjectToSectionPreviewer,
     formatI18nTemplate,
     prepareProjectToSection,
-    previewProjectToSection,
     tFallback,
     useTaskStore,
     type Project,
@@ -26,9 +26,13 @@ export function ProjectToSectionDialog({ source, projects, onCancel, onSuccess, 
     const [busy, setBusy] = useState(false);
     const [retryOnly, setRetryOnly] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const preview = destinationId
-        ? previewProjectToSection(useTaskStore.getState(), source.id, destinationId)
-        : null;
+    // Typing the section name re-renders; rebuild the destination list only when its inputs change.
+    const { _allProjects, _allSections, _allTasks } = useTaskStore.getState();
+    const previewDestination = useMemo(() => createProjectToSectionPreviewer({ _allProjects, _allSections, _allTasks }, source.id),
+        [_allProjects, _allSections, _allTasks, source.id]);
+    const destinations = useMemo(() => projects.filter((project) => previewDestination(project.id).ok),
+        [projects, previewDestination]);
+    const preview = destinationId ? previewDestination(destinationId) : null;
     const shownPreview = prepared?.preview ?? (preview?.ok ? preview : null);
     const destination = prepared?.command.destination ?? projects.find((project) => project.id === destinationId);
     const sourceForSummary = prepared?.command.source.before ?? source;
@@ -70,7 +74,7 @@ export function ProjectToSectionDialog({ source, projects, onCancel, onSuccess, 
                     {tFallback(t, 'projects.convertDestination', 'Destination project')}
                     <select value={destinationId} onChange={(event) => { setDestinationId(event.target.value); setError(null); }} disabled={busy} className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2">
                         <option value="">{tFallback(t, 'projects.convertChooseDestination', 'Choose a project')}</option>
-                        {projects.filter((project) => previewProjectToSection(useTaskStore.getState(), source.id, project.id).ok).map((project) =>
+                        {destinations.map((project) =>
                             <option key={project.id} value={project.id}>{project.title}</option>)}
                     </select>
                 </label>
