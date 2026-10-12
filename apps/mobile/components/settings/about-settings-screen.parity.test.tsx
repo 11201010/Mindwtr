@@ -219,19 +219,19 @@ const SCENARIOS: Scenario[] = [
       { type: { field: 'email', text: ' me@example.com ' } }, { diagnostics: true }, { tap: 'settings.feedbackSubmit', last: true }, { tap: 'common.close' }] },
   { name: 'feedback: location chip toggles off', feedbackEndpointUrl: FEEDBACK_URL, referrer: { value: '' }, storage: { 'mindwtr-update-last-check': String(NOW) },
     steps: [{ tap: 'settings.feedback' }, { tap: 'settings.feedbackWhereInbox' }, { tap: 'settings.feedbackWhereInbox' },
-      { type: { field: 'message', text: 'No place' } }, { tap: 'settings.feedbackSubmit', last: true }] },
+      { type: { field: 'message', text: 'No place' } }, { tap: 'settings.feedbackSubmit', last: true }, { pressAlert: 'settings.feedbackSendWithoutEmail' }] },
   { name: 'feedback: feature drops diagnostics, opens GitHub', feedbackEndpointUrl: FEEDBACK_URL, referrer: { value: '' },
     storage: { 'mindwtr-update-last-check': String(NOW) },
     steps: [{ tap: 'settings.feedback' }, { diagnostics: true }, { tap: 'settings.feedbackCategoryFeature' },
-      { tap: 'settings.feedbackOpenGitHubIssue' }, { type: { field: 'message', text: 'Add tags' } }, { tap: 'settings.feedbackSubmit', last: true }] },
+      { tap: 'settings.feedbackOpenGitHubIssue' }, { type: { field: 'message', text: 'Add tags' } }, { tap: 'settings.feedbackSubmit', last: true }, { pressAlert: 'settings.feedbackSendWithoutEmail' }] },
   { name: 'feedback: other opens discussions', feedbackEndpointUrl: FEEDBACK_URL, foss: true,
     steps: [{ tap: 'settings.feedback' }, { tap: 'settings.feedbackCategoryOther' }, { tap: 'settings.feedbackOpenGitHubDiscussion' },
-      { type: { field: 'message', text: 'Thanks' } }, { tap: 'settings.feedbackSubmit', last: true }] },
+      { type: { field: 'message', text: 'Thanks' } }, { tap: 'settings.feedbackSubmit', last: true }, { pressAlert: 'settings.feedbackSendWithoutEmail' }] },
   { name: 'feedback: invalid email', feedbackEndpointUrl: FEEDBACK_URL, referrer: { value: '' }, storage: { 'mindwtr-update-last-check': String(NOW) },
     steps: [{ tap: 'settings.feedback' }, { type: { field: 'message', text: 'Hi' } }, { type: { field: 'email', text: 'nope@' } }, { tap: 'settings.feedbackSubmit', last: true }] },
   { name: 'feedback: endpoint refuses', feedbackEndpointUrl: FEEDBACK_URL, feedbackStatus: 500, referrer: { value: '' },
     storage: { 'mindwtr-update-last-check': String(NOW) },
-    steps: [{ tap: 'settings.feedback' }, { type: { field: 'message', text: 'Broken' } }, { tap: 'settings.feedbackSubmit', last: true }] },
+    steps: [{ tap: 'settings.feedback' }, { type: { field: 'message', text: 'Broken' } }, { tap: 'settings.feedbackSubmit', last: true }, { pressAlert: 'settings.feedbackSendWithoutEmail' }] },
 ];
 
 /** A node's strings in drawing order, nested texts (a link inside a sentence) included. */

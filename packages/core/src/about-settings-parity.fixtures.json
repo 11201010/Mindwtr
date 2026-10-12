@@ -1,6 +1,6 @@
 {
  "provenance": {
-  "head": "b1ee68b0452e651a98ef9df58e5e4068222b447c"
+  "head": "fb4721dbcf01e0b45055d814abb77c9ed2b6bb5f"
  },
  "now": "2026-10-07T10:00:00.000Z",
  "scenarios": [
@@ -569,6 +569,9 @@
     {
      "tap": "settings.feedbackSubmit",
      "last": true
+    },
+    {
+     "pressAlert": "settings.feedbackSendWithoutEmail"
     }
    ]
   },
@@ -603,6 +606,9 @@
     {
      "tap": "settings.feedbackSubmit",
      "last": true
+    },
+    {
+     "pressAlert": "settings.feedbackSendWithoutEmail"
     }
    ]
   },
@@ -629,6 +635,9 @@
     {
      "tap": "settings.feedbackSubmit",
      "last": true
+    },
+    {
+     "pressAlert": "settings.feedbackSendWithoutEmail"
     }
    ]
   },
@@ -686,6 +695,9 @@
     {
      "tap": "settings.feedbackSubmit",
      "last": true
+    },
+    {
+     "pressAlert": "settings.feedbackSendWithoutEmail"
     }
    ]
   }
@@ -4314,6 +4326,51 @@
       "License",
       "AGPL-3.0",
       "Send feedback",
+      "If you have a GitHub account, we recommend GitHub Issues for easy follow-up.",
+      "Category",
+      "Bug report",
+      "Feature request",
+      "Other",
+      "Where did this happen?",
+      "Inbox",
+      "Focus",
+      "Projects",
+      "Review",
+      "Settings",
+      "Sync",
+      "Import or export",
+      "Notifications",
+      "Other",
+      "Message",
+      "Reply email (optional, recommended)",
+      "Include recent diagnostics",
+      "Recent activity and errors. Reproduce the issue on this device before sending.",
+      "Cancel",
+      "Send feedback"
+     ],
+     [
+      "About",
+      "Mindwtr",
+      "v1.3.4",
+      "Check for Updates",
+      "Tap to check",
+      "Rate our app",
+      "Google Play",
+      "Send feedback",
+      "Send feedback",
+      "Official website",
+      "Mindwtr",
+      "Video tutorials",
+      "YouTube",
+      "Privacy",
+      "Privacy",
+      "Terms of Use",
+      "Terms of Use",
+      "Support development",
+      "Donate",
+      "License",
+      "AGPL-3.0",
+      "Send feedback",
       "Feedback sent. Thank you.",
       "Close"
      ]
@@ -4346,6 +4403,22 @@
       "tap",
       "settings.feedbackSubmit",
       "enabled"
+     ],
+     [
+      "alert",
+      {
+       "title": "Send without follow-up?",
+       "message": "Mindwtr is local-first and has no account email to contact you. Without a reply email, we cannot reply or follow up on your feedback. Would you like to add an email address or send without follow-up?",
+       "buttons": [
+        {
+         "text": "Add email",
+         "style": "cancel"
+        },
+        {
+         "text": "Send without follow-up"
+        }
+       ]
+      }
      ],
      [
       "fetch",
@@ -4635,6 +4708,39 @@
       "License",
       "AGPL-3.0",
       "Send feedback",
+      "If you have a GitHub account, we recommend GitHub Issues for easy follow-up.",
+      "Category",
+      "Bug report",
+      "Feature request",
+      "Other",
+      "Message",
+      "Reply email (optional, recommended)",
+      "Cancel",
+      "Send feedback"
+     ],
+     [
+      "About",
+      "Mindwtr",
+      "v1.3.4",
+      "Check for Updates",
+      "Tap to check",
+      "Rate our app",
+      "Google Play",
+      "Send feedback",
+      "Send feedback",
+      "Official website",
+      "Mindwtr",
+      "Video tutorials",
+      "YouTube",
+      "Privacy",
+      "Privacy",
+      "Terms of Use",
+      "Terms of Use",
+      "Support development",
+      "Donate",
+      "License",
+      "AGPL-3.0",
+      "Send feedback",
       "Feedback sent. Thank you.",
       "Close"
      ]
@@ -4671,6 +4777,22 @@
       "tap",
       "settings.feedbackSubmit",
       "enabled"
+     ],
+     [
+      "alert",
+      {
+       "title": "Send without follow-up?",
+       "message": "Mindwtr is local-first and has no account email to contact you. Without a reply email, we cannot reply or follow up on your feedback. Would you like to add an email address or send without follow-up?",
+       "buttons": [
+        {
+         "text": "Add email",
+         "style": "cancel"
+        },
+        {
+         "text": "Send without follow-up"
+        }
+       ]
+      }
      ],
      [
       "fetch",
@@ -4891,6 +5013,35 @@
       "License",
       "AGPL-3.0",
       "Send feedback",
+      "If you have a GitHub account, we recommend GitHub Discussions for easy follow-up.",
+      "Category",
+      "Bug report",
+      "Feature request",
+      "Other",
+      "Message",
+      "Reply email (optional, recommended)",
+      "Cancel",
+      "Send feedback"
+     ],
+     [
+      "About",
+      "Mindwtr",
+      "v1.3.4",
+      "Send feedback",
+      "Send feedback",
+      "Official website",
+      "Mindwtr",
+      "Video tutorials",
+      "YouTube",
+      "Privacy",
+      "Privacy",
+      "Terms of Use",
+      "Terms of Use",
+      "Support development",
+      "Donate",
+      "License",
+      "AGPL-3.0",
+      "Send feedback",
       "Feedback sent. Thank you.",
       "Close"
      ]
@@ -4919,6 +5070,22 @@
       "tap",
       "settings.feedbackSubmit",
       "enabled"
+     ],
+     [
+      "alert",
+      {
+       "title": "Send without follow-up?",
+       "message": "Mindwtr is local-first and has no account email to contact you. Without a reply email, we cannot reply or follow up on your feedback. Would you like to add an email address or send without follow-up?",
+       "buttons": [
+        {
+         "text": "Add email",
+         "style": "cancel"
+        },
+        {
+         "text": "Send without follow-up"
+        }
+       ]
+      }
      ],
      [
       "fetch",
@@ -5381,6 +5548,51 @@
       "Reply email (optional, recommended)",
       "Include recent diagnostics",
       "Recent activity and errors. Reproduce the issue on this device before sending.",
+      "Cancel",
+      "Send feedback"
+     ],
+     [
+      "About",
+      "Mindwtr",
+      "v1.3.4",
+      "Check for Updates",
+      "Tap to check",
+      "Rate our app",
+      "Google Play",
+      "Send feedback",
+      "Send feedback",
+      "Official website",
+      "Mindwtr",
+      "Video tutorials",
+      "YouTube",
+      "Privacy",
+      "Privacy",
+      "Terms of Use",
+      "Terms of Use",
+      "Support development",
+      "Donate",
+      "License",
+      "AGPL-3.0",
+      "Send feedback",
+      "If you have a GitHub account, we recommend GitHub Issues for easy follow-up.",
+      "Category",
+      "Bug report",
+      "Feature request",
+      "Other",
+      "Where did this happen?",
+      "Inbox",
+      "Focus",
+      "Projects",
+      "Review",
+      "Settings",
+      "Sync",
+      "Import or export",
+      "Notifications",
+      "Other",
+      "Message",
+      "Reply email (optional, recommended)",
+      "Include recent diagnostics",
+      "Recent activity and errors. Reproduce the issue on this device before sending.",
       "Could not send feedback. Your message is still here; please try again.",
       "Cancel",
       "Send feedback"
@@ -5404,6 +5616,22 @@
       "tap",
       "settings.feedbackSubmit",
       "enabled"
+     ],
+     [
+      "alert",
+      {
+       "title": "Send without follow-up?",
+       "message": "Mindwtr is local-first and has no account email to contact you. Without a reply email, we cannot reply or follow up on your feedback. Would you like to add an email address or send without follow-up?",
+       "buttons": [
+        {
+         "text": "Add email",
+         "style": "cancel"
+        },
+        {
+         "text": "Send without follow-up"
+        }
+       ]
+      }
      ],
      [
       "fetch",
