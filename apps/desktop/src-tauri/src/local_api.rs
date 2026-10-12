@@ -2855,24 +2855,37 @@ pub(crate) fn patch_task_in_data(
         && candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true);
     apply_task_patch_with_containers(&mut candidate, patch, &device_id, &live_containers)?;
     if star_turning_on {
-        if has_non_empty_string(&candidate, "deletedAt")
-            || has_non_empty_string(&candidate, "purgedAt")
-            || !matches!(
-                candidate.get("status").and_then(Value::as_str),
-                Some("inbox" | "next" | "waiting" | "someday")
-            )
+        if candidate.get("status").and_then(Value::as_str) == Some("inbox") {
+            candidate.insert("status".to_string(), Value::String("next".to_string()));
+            if !patch.contains_key("boardOrder") {
+                candidate.remove("boardOrder");
+            }
+        }
+        if candidate.get("status").and_then(Value::as_str) == Some("reference") {
+            normalize_created_reference_task(&mut candidate);
+        }
+        let now = OffsetDateTime::now_utc();
+        let local_wall = &crate::local_query::local_wall;
+        let future_start = local_api_task_is_future_start(&candidate, now, local_wall);
+        let queued = candidate.get("status").and_then(Value::as_str) == Some("next")
+            && has_non_empty_string(&candidate, "startTime")
+            && future_start;
+        // Match core normalizeTaskUpdate: only a schedule/status edit clears a deferred star.
+        if future_start
+            && !queued
+            && ["startTime", "dueDate", "reviewAt", "recurrence", "status"]
+                .iter()
+                .any(|field| patch.contains_key(*field))
         {
             candidate.insert("isFocusedToday".to_string(), Value::Bool(false));
-        } else {
-            normalize_created_task_focus(
-                &mut candidate,
-                data,
-                &now_iso(),
-                &crate::local_query::local_wall,
-            );
         }
-        if candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true) {
-            let n = local_api_focus_task_limit(data);
+        if queued && !patch.contains_key("focusOrder") {
+            candidate.remove("focusOrder");
+        }
+        let n = local_api_focus_task_limit(data);
+        if local_api_task_is_counted_as_focused(&candidate, now, local_wall)
+            && local_api_focused_task_count(data, now, local_wall) >= n
+        {
             log::warn!("Local API refused a Focus star over the limit extra.releaseCheck=v1.3.5/local-api-patch-focus-limit limit={n}");
             return Err(format!("Focus limit of {n} reached"));
         }
@@ -3796,27 +3809,25 @@ fn normalize_created_reference_task(task: &mut Map<String, Value>) {
     task.insert("pushCount".to_string(), Value::Number(0.into()));
 }
 
-fn local_api_schedule_time(value: Option<&Value>) -> Option<OffsetDateTime> {
-    let value = value?.as_str()?;
-    if let Some(date) = parse_iso_date_bytes(value.as_bytes()) {
-        return date.with_hms(0, 0, 0).ok().map(|value| value.assume_utc());
+fn local_api_due_schedule_time(
+    value: Option<&Value>,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> Option<PrimitiveDateTime> {
+    if let Some(date) = parse_iso_date_bytes(value?.as_str()?.as_bytes()) {
+        return date.with_hms_milli(23, 59, 59, 999).ok();
     }
-    OffsetDateTime::parse(value, &Rfc3339).ok()
+    local_api_focus_schedule_time(value, local_wall)
 }
 
-fn local_api_due_schedule_time(value: Option<&Value>) -> Option<OffsetDateTime> {
-    let value = value?.as_str()?;
-    if let Some(date) = parse_iso_date_bytes(value.as_bytes()) {
-        return date
-            .with_hms_milli(23, 59, 59, 999)
-            .ok()
-            .map(|value| value.assume_utc());
-    }
-    OffsetDateTime::parse(value, &Rfc3339).ok()
-}
-
-fn local_api_review_is_due(task: &Map<String, Value>, now: OffsetDateTime) -> bool {
-    local_api_schedule_time(task.get("reviewAt")).is_some_and(|review| review <= now)
+fn local_api_review_is_due(
+    task: &Map<String, Value>,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> bool {
+    let utc = now.to_offset(time::UtcOffset::UTC);
+    let now = local_wall(now).unwrap_or(PrimitiveDateTime::new(utc.date(), utc.time()));
+    local_api_focus_schedule_time(task.get("reviewAt"), local_wall)
+        .is_some_and(|review| review <= now)
 }
 
 fn local_api_focus_schedule_time(
@@ -3881,6 +3892,20 @@ fn local_api_focus_task_limit(data: &Value) -> usize {
         .unwrap_or(3)
 }
 
+fn local_api_task_is_counted_as_focused(
+    task: &Map<String, Value>,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> bool {
+    !has_non_empty_string(task, "deletedAt")
+        && task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
+        && !matches!(
+            task.get("status").and_then(Value::as_str),
+            Some("done" | "reference" | "archived")
+        )
+        && !local_api_task_is_future_start(task, now, local_wall)
+}
+
 fn local_api_focused_task_count(
     data: &Value,
     now: OffsetDateTime,
@@ -3895,15 +3920,8 @@ fn local_api_focused_task_count(
     array_items(data, "tasks")
         .iter()
         .filter(|task| {
-            !has_string_field(task, "deletedAt")
-                && task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
-                && !matches!(
-                    task.get("status").and_then(Value::as_str),
-                    Some("done" | "reference" | "archived")
-                )
-                && task
-                    .as_object()
-                    .is_some_and(|task| !local_api_task_is_future_start(task, now, local_wall))
+            task.as_object()
+                .is_some_and(|task| local_api_task_is_counted_as_focused(task, now, local_wall))
         })
         .count()
 }
@@ -3923,31 +3941,37 @@ fn local_api_project_allows_focus(task: &Map<String, Value>, data: &Value) -> bo
             || project.get("isFocused").and_then(Value::as_bool) == Some(true))
 }
 
-fn local_api_focus_schedule_key(task: &Map<String, Value>, now: OffsetDateTime) -> (u8, i128) {
+fn local_api_focus_schedule_key(
+    task: &Map<String, Value>,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> (u8, PrimitiveDateTime) {
     if task.get("isFocusedToday").and_then(Value::as_bool) == Some(true) {
-        return (0, 0);
+        return (0, PrimitiveDateTime::MIN);
     }
+    let utc = now.to_offset(time::UtcOffset::UTC);
+    let now_wall = local_wall(now).unwrap_or(PrimitiveDateTime::new(utc.date(), utc.time()));
     let mut scheduled = Vec::new();
-    if let Some(due) = local_api_due_schedule_time(task.get("dueDate")) {
-        if due.date() <= now.date() {
-            scheduled.push(due.unix_timestamp_nanos());
+    if let Some(due) = local_api_due_schedule_time(task.get("dueDate"), local_wall) {
+        if due.date() <= now_wall.date() {
+            scheduled.push(due);
         }
     }
-    if let Some(start) = local_api_schedule_time(task.get("startTime")) {
-        if start.date() == now.date() {
-            scheduled.push(start.unix_timestamp_nanos());
+    if let Some(start) = local_api_focus_schedule_time(task.get("startTime"), local_wall) {
+        if start.date() == now_wall.date() {
+            scheduled.push(start);
         }
     }
-    if local_api_review_is_due(task, now) {
-        if let Some(review) = local_api_schedule_time(task.get("reviewAt")) {
-            scheduled.push(review.unix_timestamp_nanos());
+    if local_api_review_is_due(task, now, local_wall) {
+        if let Some(review) = local_api_focus_schedule_time(task.get("reviewAt"), local_wall) {
+            scheduled.push(review);
         }
     }
     scheduled
         .into_iter()
         .min()
         .map(|time| (1, time))
-        .unwrap_or((2, i128::MAX))
+        .unwrap_or((2, PrimitiveDateTime::MAX))
 }
 
 fn local_api_focus_order(task: &Map<String, Value>, has_order: bool) -> f64 {
@@ -3959,7 +3983,13 @@ fn local_api_focus_order(task: &Map<String, Value>, has_order: bool) -> f64 {
             .filter(|value| value.is_finite())
             .unwrap_or(f64::INFINITY);
     }
-    local_api_schedule_time(task.get("createdAt"))
+    task.get("createdAt")
+        .and_then(Value::as_str)
+        .and_then(|value| {
+            parse_iso_date_bytes(value.as_bytes())
+                .map(|date| date.midnight().assume_utc())
+                .or_else(|| OffsetDateTime::parse(value, &Rfc3339).ok())
+        })
         .map(|value| value.unix_timestamp_nanos() as f64)
         .unwrap_or(f64::INFINITY)
 }
@@ -3968,6 +3998,7 @@ fn local_api_focus_candidate_is_sequential_first(
     candidate: &Map<String, Value>,
     data: &Value,
     now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
 ) -> bool {
     let Some(project_id) = candidate.get("projectId").and_then(Value::as_str) else {
         return true;
@@ -3998,7 +4029,7 @@ fn local_api_focus_candidate_is_sequential_first(
                 )
                 || !(task.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
                     || task.get("status").and_then(Value::as_str) == Some("next")
-                    || local_api_review_is_due(&task, now))
+                    || local_api_review_is_due(&task, now, local_wall))
             {
                 return None;
             }
@@ -4013,10 +4044,10 @@ fn local_api_focus_candidate_is_sequential_first(
             .is_some_and(|value| value.is_finite())
     });
     let mut best_id = None;
-    let mut best_schedule = (u8::MAX, i128::MAX);
+    let mut best_schedule = (u8::MAX, PrimitiveDateTime::MAX);
     let mut best_order = f64::INFINITY;
     for task in &candidates {
-        let schedule = local_api_focus_schedule_key(task, now);
+        let schedule = local_api_focus_schedule_key(task, now, local_wall);
         let order = local_api_focus_order(task, has_order);
         if best_id.is_none()
             || schedule < best_schedule
@@ -4061,11 +4092,11 @@ fn normalize_created_task_focus(
     let queued =
         promoted_status == "next" && has_non_empty_string(&candidate, "startTime") && future_start;
     let status_is_eligible = promoted_status == "next"
-        || (promoted_status != "inbox" && local_api_review_is_due(&candidate, now));
+        || (promoted_status != "inbox" && local_api_review_is_due(&candidate, now, local_wall));
     let eligible = status_is_eligible
         && local_api_project_allows_focus(&candidate, data)
         && (!future_start || queued)
-        && local_api_focus_candidate_is_sequential_first(&candidate, data, now);
+        && local_api_focus_candidate_is_sequential_first(&candidate, data, now, local_wall);
     let cap_is_available = queued
         || local_api_focused_task_count(data, now, local_wall) < local_api_focus_task_limit(data);
     if eligible && cap_is_available {
@@ -5211,6 +5242,116 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_api_patch_focus_accepts_past_no_offset_review_for_rest_and_mcp() {
+        use crate::storage::{local_operation_test_commit, local_operation_test_seed};
+        let data = json!({
+            "tasks": [{
+                "id": "waiting", "title": "Waiting", "status": "waiting",
+                "reviewAt": "2026-10-01T09:00", "isFocusedToday": false, "rev": 1,
+                "tags": [], "contexts": [],
+                "createdAt": "2026-10-01T08:00:00Z", "updatedAt": "2026-10-01T08:00:00Z"
+            }],
+            "projects": [], "sections": [], "areas": [], "people": [],
+            "settings": {"deviceId": "device-a", "gtd": {"focusTaskLimit": 3}}
+        });
+        let request = ApiRequest {
+            method: "PATCH".into(),
+            path: "/tasks/waiting".into(),
+            query: HashMap::new(),
+            headers: HashMap::new(),
+            body: serde_json::to_vec(&json!({"isFocusedToday": true})).unwrap(),
+        };
+        let rest = operation_from_api_request(&request).unwrap().unwrap();
+        let input = json!({"id": "waiting", "isFocusedToday": true});
+        let mcp =
+            crate::mcp_tools::operation("mindwtr_update_task", input.as_object().unwrap()).unwrap();
+        assert_eq!(rest, mcp);
+        for operation in [rest, mcp] {
+            let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+            local_operation_test_seed(&mut conn, &data).unwrap();
+            let persisted = local_operation_test_commit(
+                &conn,
+                TaskMutationReadScope::patch("waiting", None, None, None, true),
+                |data| mutate_task_operation(data, &operation),
+            )
+            .expect("past no-offset review must allow a Focus star below the cap");
+            let task = find_task(&persisted, "waiting").unwrap();
+            assert_eq!(task["status"], "waiting");
+            assert_eq!(task["isFocusedToday"], true);
+            assert_eq!(task["reviewAt"], "2026-10-01T09:00");
+        }
+    }
+
+    #[test]
+    fn local_api_b2a_review_focus_uses_local_midnight_and_exact_wall_time() {
+        let now = "2026-10-11T23:30:00Z";
+        let offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let local_wall = |instant: OffsetDateTime| {
+            let local = instant.to_offset(offset);
+            Some(PrimitiveDateTime::new(local.date(), local.time()))
+        };
+        for (review, due) in [
+            ("2026-10-12", true),
+            ("2026-10-12T08:30", true),
+            ("2026-10-12T08:30:00", true),
+            ("2026-10-12T08:30+09:00", true),
+            ("2026-10-11T23:30:00Z", true),
+            ("2026-10-12T08:31", false),
+            ("2026-10-13", false),
+        ] {
+            let mut task = json!({
+                "status": "waiting", "reviewAt": review, "isFocusedToday": true
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            normalize_created_task_focus(&mut task, &empty_local_api_data(), now, &local_wall);
+            assert_eq!(
+                task["isFocusedToday"], due,
+                "Tokyo review eligibility mismatch: {review}"
+            );
+            assert_eq!(task["status"], "waiting");
+        }
+    }
+
+    #[test]
+    fn local_api_b2a_sequential_focus_orders_local_schedule_values() {
+        let now = "2026-10-11T23:30:00Z";
+        let offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let local_wall = |instant: OffsetDateTime| {
+            let local = instant.to_offset(offset);
+            Some(PrimitiveDateTime::new(local.date(), local.time()))
+        };
+        for (field, schedule) in [
+            ("startTime", "2026-10-12T07:00"),
+            ("startTime", "2026-10-11T23:00:00Z"),
+            ("dueDate", "2026-10-12"),
+            ("dueDate", "2026-10-12T09:00"),
+            ("dueDate", "2026-10-11T23:00:00Z"),
+            ("reviewAt", "2026-10-12T08:00"),
+        ] {
+            let data = json!({
+                "tasks": [{
+                    "id": "unscheduled", "status": "next", "projectId": "project", "orderNum": 1
+                }],
+                "projects": [{"id": "project", "status": "active", "isSequential": true}]
+            });
+            let mut task = json!({
+                "id": "scheduled", "status": "next", "projectId": "project", "orderNum": 2,
+                "isFocusedToday": true, field: schedule
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            normalize_created_task_focus(&mut task, &data, now, &local_wall);
+            assert_eq!(
+                task["isFocusedToday"], true,
+                "sequential Focus must select local schedule: {field}={schedule}"
+            );
+        }
+    }
+
+    #[test]
     fn local_api_patch_focus_limit_refuses_atomically_for_rest_and_mcp() {
         use crate::storage::{
             local_operation_test_commit, local_operation_test_seed, read_sqlite_data,
@@ -5308,14 +5449,14 @@ mod tests {
     }
 
     #[test]
-    fn local_api_patch_focus_limit_matches_creation_eligibility_and_promotes_inbox() {
-        for (status, review, eligible) in [
+    fn local_api_patch_focus_matches_core_normalization_below_cap() {
+        for (status, review, focused) in [
             ("inbox", None, true),
             ("next", None, true),
             ("waiting", Some("2000-01-01"), true),
             ("someday", Some("2000-01-01"), true),
-            ("waiting", None, false),
-            ("someday", Some("9999-12-31"), false),
+            ("waiting", None, true),
+            ("someday", Some("9999-12-31"), true),
             ("reference", Some("2000-01-01"), false),
             ("done", None, false),
             ("archived", None, false),
@@ -5323,20 +5464,38 @@ mod tests {
             let mut data = empty_local_api_data();
             data["tasks"] =
                 json!([{"id": "task", "title": "Original", "status": status, "reviewAt": review}]);
-            let before = data.clone();
             let patch = json!({"isFocusedToday": true, "title": "Changed"});
-            let result = patch_task_in_data(&mut data, "task", patch.as_object().unwrap());
-            assert_eq!(result.is_ok(), eligible, "{status} {review:?}");
-            if eligible {
-                let task = result.unwrap();
-                assert_eq!(task["isFocusedToday"], true);
-                assert_eq!(
-                    task["status"],
-                    if status == "inbox" { "next" } else { status }
-                );
-            } else {
-                assert_eq!(result.unwrap_err(), "Focus limit of 3 reached");
-                assert_eq!(data, before);
+            let task = patch_task_in_data(&mut data, "task", patch.as_object().unwrap())
+                .expect("ineligible star below the cap must follow core normalization");
+            assert_eq!(task["isFocusedToday"], focused, "{status} {review:?}");
+            assert_eq!(
+                task["status"],
+                if status == "inbox" { "next" } else { status }
+            );
+            assert_eq!(task["title"], "Changed");
+        }
+    }
+
+    #[test]
+    fn local_api_b2a_patch_normalizes_deferred_stars_like_core() {
+        for status in ["waiting", "someday"] {
+            for (patch, focused) in [
+                (json!({"isFocusedToday": true}), true),
+                (
+                    json!({"isFocusedToday": true, "startTime": "9999-12-31"}),
+                    false,
+                ),
+            ] {
+                let mut data = empty_local_api_data();
+                data["tasks"] = json!([{
+                    "id": "task", "title": "Deferred", "status": status,
+                    "startTime": "9999-12-31", "focusOrder": 1
+                }]);
+                let task = patch_task_in_data(&mut data, "task", patch.as_object().unwrap())
+                    .expect("deferred star patch must follow core normalization");
+                assert_eq!(task["isFocusedToday"], focused, "{status} {patch}");
+                assert_eq!(task["status"], status);
+                assert_eq!(task.get("focusOrder"), Some(&json!(1)));
             }
         }
     }

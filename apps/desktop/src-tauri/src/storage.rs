@@ -10676,45 +10676,35 @@ mod tests {
             assert!(data["tasks"].as_array().unwrap().len() <= 1);
         }
         let patch = serde_json::json!({"isFocusedToday": true});
-        for (id, eligible) in [("first", true), ("second", false)] {
+        for id in ["first", "second"] {
             let scope = TaskMutationReadScope::patch(id, None, None, None, true);
             let (mut data, stats) = read_task_mutation_data(&conn, &scope, now).unwrap();
             assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 1);
             assert!(stats.task_rows <= 4);
             assert!(data["tasks"].as_array().unwrap().len() >= 2);
-            let before = data.clone();
-            let result =
-                crate::local_api::patch_task_in_data(&mut data, id, patch.as_object().unwrap());
-            assert_eq!(result.is_ok(), eligible, "{id}");
-            if !eligible {
-                assert_eq!(result.unwrap_err(), "Focus limit of 3 reached");
-                assert_eq!(data, before);
-            }
+            let task =
+                crate::local_api::patch_task_in_data(&mut data, id, patch.as_object().unwrap())
+                    .expect("core accepts sequential stars below the cap");
+            assert_eq!(task["isFocusedToday"], true, "{id}");
         }
         let scope = TaskMutationReadScope::patch("first", None, None, None, true);
         let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
-        let before = data.clone();
         let reordered = serde_json::json!({"isFocusedToday": true, "orderNum": 2});
-        let result = crate::local_api::patch_task_in_data(
+        let task = crate::local_api::patch_task_in_data(
             &mut data,
             "first",
             reordered.as_object().unwrap(),
-        );
-        assert!(
-            result.is_err(),
-            "PATCH must judge sequential eligibility after applying the patch"
-        );
-        assert_eq!(data, before);
+        )
+        .expect("core accepts a star when reordering below the cap");
+        assert_eq!(task["isFocusedToday"], true);
+        assert_eq!(task["orderNum"], 2);
         let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
-        let before = data.clone();
         let moved = serde_json::json!({"isFocusedToday": true, "sectionId": null});
-        let result =
-            crate::local_api::patch_task_in_data(&mut data, "first", moved.as_object().unwrap());
-        assert!(
-            result.is_err(),
-            "PATCH must load sequential candidates when clearing its section"
-        );
-        assert_eq!(data, before);
+        let task =
+            crate::local_api::patch_task_in_data(&mut data, "first", moved.as_object().unwrap())
+                .expect("core accepts a star when clearing its section below the cap");
+        assert_eq!(task["isFocusedToday"], true);
+        assert!(task.get("sectionId").is_none());
         conn.execute(
             "UPDATE projects SET status = 'someday' WHERE id = 'project'",
             [],
@@ -10722,14 +10712,10 @@ mod tests {
         .unwrap();
         let scope = TaskMutationReadScope::patch("first", None, None, None, true);
         let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
-        let before = data.clone();
-        assert!(crate::local_api::patch_task_in_data(
-            &mut data,
-            "first",
-            patch.as_object().unwrap()
-        )
-        .is_err());
-        assert_eq!(data, before);
+        let task =
+            crate::local_api::patch_task_in_data(&mut data, "first", patch.as_object().unwrap())
+                .expect("core accepts a star in an inactive project below the cap");
+        assert_eq!(task["isFocusedToday"], true);
     }
 
     #[test]
