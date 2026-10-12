@@ -193,6 +193,22 @@ describe('mobile attachment files: storage home and safe writes', () => {
       .toEqual({ sourceUri: 'file:external.pdf', targetUri: 'file:managed.txt' });
   });
 
+  // C1-c: a provider error can name a path this code never saw, and a file name may hold
+  // spaces. Nothing after an unknown path may reach the log.
+  it('drops the whole unknown path from a provider copy error', async () => {
+    const source = 'content://com.android.providers.downloads.documents/document/42';
+    const { files, memory, lines } = setup();
+    memory.put(source, bytes(7, 8));
+    memory.fail('copy', new Error("Unable to copy '/storage/emulated/0/Download/Secret Plan Q3.pdf': open failed: EACCES (Permission denied)"));
+    const result = await files.persistAttachmentLocallyDetailed(attachment({ uri: source, localStatus: undefined }));
+    expect(result.status).toBe('copied');
+    const logged = JSON.stringify(lines);
+    expect(logged).toContain('falling back to byte write');
+    expect(logged).not.toContain('Plan');
+    expect(logged).not.toContain('Q3');
+    expect(logged).toContain("Unable to copy [path] (EACCES)");
+  });
+
   it('refuses to persist or delete anything in sandbox mode', async () => {
     const { files, memory } = setup({ sandbox: true });
     memory.put(`${MANAGED}att-1.txt`, bytes(1));

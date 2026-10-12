@@ -168,6 +168,9 @@ const buildTempUri = (targetUri: string): string => {
   return `${parent}${ATTACHMENT_TEMP_FILE_PREFIX}${suffix}.tmp`;
 };
 
+// Errno codes a local fs error may carry after the path it names; fixed words, never user text.
+const FS_ERROR_CODE_PATTERN = /\b(EACCES|EPERM|ENOENT|ENOSPC|EEXIST|EISDIR|ENOTDIR|EROFS|EBUSY|EIO|EMFILE|ENFILE|EXDEV)\b/;
+
 const isTempAttachmentFile = (name: string): boolean => {
   return /^\.mindwtr-attachment-write-[0-9a-z]+-[0-9a-f]{12}\.tmp$/.test(name);
 };
@@ -279,10 +282,10 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
   /**
    * Local fs error text quotes the uris it failed on, and a picked file's name is the user's
    * text (#854). Known uris become their {@link describeAttachmentUriForLog} shape in every
-   * form a native error prints them (encoded, decoded, without `file://`); any other uri or
-   * absolute path becomes `[path]`. Hermes has no look-behind, so the path rule captures its
-   * prefix. Only callers that pass the local uris they touched get this: other callers'
-   * errors carry WebDAV/cloud URLs whose host a tester needs.
+   * form a native error prints them (encoded, decoded, without `file://`); the first other uri
+   * or absolute path becomes `[path]` and the rest of the text is dropped. Only callers that
+   * pass the local uris they touched get this: other callers' errors carry WebDAV/cloud URLs
+   * whose host a tester needs.
    */
   const describeErrorForLog = (error: unknown, knownUris: string[]): string => {
     let text = error instanceof Error ? error.message : String(error);
@@ -292,8 +295,12 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
         if (form) text = text.split(form).join(describeAttachmentUriForLog(uri));
       }
     }
-    // ponytail: an unknown unquoted path with spaces keeps its later words; pass the uris you know.
-    return text.replace(/(^|[\s'"(=:])(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/)[^\s'"]+/g, '$1[path]');
+    // A file name may hold spaces, quotes or brackets, so no end marker for an unknown path is
+    // safe: drop everything from its start and keep only a known errno code from the tail.
+    const start = /(^|[\s'"(=:])['"]?(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/)/.exec(text);
+    if (!start) return text;
+    const code = FS_ERROR_CODE_PATTERN.exec(text.slice(start.index))?.[1];
+    return `${text.slice(0, start.index)}${start[1]}[path]${code ? ` (${code})` : ''}`;
   };
 
   const logAttachmentWarn = (
