@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
     days: 0, loading: false, error: null as string | null, editLockCount: 0,
     run: vi.fn(async (_options: { syncConfigured: boolean }) => ({ success: true })),
-    syncStatus: vi.fn(async () => ({ backend: 'off', configured: false })),
+    syncStatus: vi.fn(async (): Promise<{ backend: string; configured: boolean; cloudProvider?: string }> => ({ backend: 'off', configured: false })),
 }));
 vi.mock('@mindwtr/core', () => ({
     isArchiveRetentionDays: (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 36500,
@@ -68,7 +68,17 @@ describe('useRootLayoutArchiveRetention', () => {
         await act(async () => tree.unmount());
     });
 
-    it('tells retention whether sync is configured so it waits for the first sync (R-2)', async () => {
+    it('keeps waiting while the selected Dropbox backend is disconnected', async () => {
+        vi.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: vi.fn() }));
+        harness.days = 30;
+        harness.syncStatus.mockResolvedValue({ backend: 'cloud', cloudProvider: 'dropbox', configured: false });
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(<Probe ready disabled={false} />); });
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        await act(async () => tree.unmount());
+    });
+
+    it('tells retention whether a sync backend is selected so it waits for the first sync (R-2)', async () => {
         let listener: ((state: AppStateStatus) => void) | null = null;
         vi.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => {
             listener = callback as (state: AppStateStatus) => void;

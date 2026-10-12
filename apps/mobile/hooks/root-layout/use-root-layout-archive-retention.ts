@@ -17,8 +17,10 @@ export function useRootLayoutArchiveRetention(canonicalDataReady: boolean, disab
             if (running || AppState.currentState === 'background' || AppState.currentState === 'inactive'
                 || state.isLoading || state.error || state.editLockCount > 0) return;
             running = true;
-            // An unreadable sync configuration counts as configured: waiting is the safe side (R-2).
-            void getMobileSyncConfigurationStatus().then((status) => status.configured, () => true)
+            // Any selected backend counts, even with missing or disconnected credentials: a purge made
+            // before this device syncs again would beat another device's restore. An unreadable
+            // configuration also counts as configured: waiting is the safe side (R-2).
+            void getMobileSyncConfigurationStatus().then((status) => status.backend !== 'off', () => true)
                 .then((syncConfigured) => useTaskStore.getState().runArchiveRetention({ syncConfigured }))
                 .then((result) => {
                     if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app' });

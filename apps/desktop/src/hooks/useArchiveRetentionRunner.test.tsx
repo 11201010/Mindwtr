@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
     days: 0, loading: false, error: null as string | null, editLockCount: 0, editingTaskId: null as string | null,
     run: vi.fn(async (_options: { syncConfigured: boolean }) => ({ success: true })),
-    syncConfigured: vi.fn(async () => false),
+    syncBackend: vi.fn(async (): Promise<string> => 'off'),
 }));
-vi.mock('@mindwtr/core', () => ({
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+    canAutoSync: (await importOriginal<typeof import('@mindwtr/core')>()).canAutoSync,
     isArchiveRetentionDays: (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 36500,
     useTaskStore: Object.assign(
         (selector: (state: unknown) => unknown) => selector({ settings: { gtd: { archiveRetentionDays: harness.days } } }),
@@ -15,8 +16,16 @@ vi.mock('@mindwtr/core', () => ({
 }));
 vi.mock('../store/ui-store', () => ({ useUiStore: { getState: () => ({ editingTaskId: harness.editingTaskId }) } }));
 vi.mock('../lib/app-log', () => ({ logError: vi.fn(async () => undefined) }));
-vi.mock('../lib/sync-service', () => ({ SyncService: {} }));
-vi.mock('../lib/desktop-auto-sync-eligibility', () => ({ canDesktopAutoSync: harness.syncConfigured }));
+// A stored backend with disconnected Dropbox credentials: selected, but unable to sync right now.
+vi.mock('../lib/sync-service', () => ({
+    SyncService: {
+        getPersistedSyncConfigurationSnapshot: async () => ({
+            backend: await harness.syncBackend(), syncPath: '', webdav: { url: '' }, cloud: { url: '' }, cloudProvider: 'dropbox',
+        }),
+        getDropboxAppKey: async () => 'app-id',
+        isDropboxConnected: async () => false,
+    },
+}));
 
 import { useArchiveRetentionRunner } from './useArchiveRetentionRunner';
 
@@ -29,7 +38,7 @@ describe('useArchiveRetentionRunner', () => {
         vi.useFakeTimers();
         harness.days = 0; harness.loading = false; harness.error = null;
         harness.editLockCount = 0; harness.editingTaskId = null; harness.run.mockClear();
-        harness.syncConfigured.mockReset(); harness.syncConfigured.mockResolvedValue(false);
+        harness.syncBackend.mockReset(); harness.syncBackend.mockResolvedValue('off');
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     });
     afterEach(() => {
@@ -78,22 +87,31 @@ describe('useArchiveRetentionRunner', () => {
         unmount();
     });
 
-    it('tells retention whether sync is configured so it waits for the first sync (R-2)', async () => {
+    it('tells retention whether a sync backend is selected so it waits for the first sync (R-2)', async () => {
         harness.days = 30;
-        harness.syncConfigured.mockResolvedValue(true);
+        harness.syncBackend.mockResolvedValue('webdav');
         const { unmount } = renderHook(() => useArchiveRetentionRunner(true, false));
         await settle();
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
-        harness.syncConfigured.mockResolvedValue(false);
+        harness.syncBackend.mockResolvedValue('off');
         act(() => window.dispatchEvent(new Event('focus')));
         await settle();
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: false });
         // An unreadable sync configuration must not count as "sync is off".
-        harness.syncConfigured.mockRejectedValue(new Error('config unavailable'));
+        harness.syncBackend.mockRejectedValue(new Error('config unavailable'));
         act(() => window.dispatchEvent(new Event('focus')));
         await settle();
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
         expect(harness.run).toHaveBeenCalledTimes(3);
+        unmount();
+    });
+
+    it('keeps waiting while the selected Dropbox backend is disconnected', async () => {
+        harness.days = 30;
+        harness.syncBackend.mockResolvedValue('cloud');
+        const { unmount } = renderHook(() => useArchiveRetentionRunner(true, false));
+        await settle();
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
         unmount();
     });
 });
