@@ -3986,13 +3986,10 @@ fn local_api_focus_schedule_key(
     let now_wall = local_wall(now).unwrap_or(PrimitiveDateTime::new(utc.date(), utc.time()));
     let mut scheduled = Vec::new();
     if let Some(due) = local_api_due_schedule_time(task.get("dueDate"), local_wall) {
-        if due.date() <= now_wall.date() {
+        if due.date() <= now_wall.date()
+            && task.get("status").and_then(Value::as_str) != Some("waiting")
+        {
             scheduled.push(due);
-        }
-    }
-    if let Some(start) = local_api_focus_schedule_time(task.get("startTime"), local_wall) {
-        if start.date() == now_wall.date() {
-            scheduled.push(start);
         }
     }
     if local_api_review_is_due(task, now, local_wall) {
@@ -5348,6 +5345,72 @@ mod tests {
     }
 
     #[test]
+    fn local_api_seqkey_create_start_today_does_not_displace_first_task() {
+        let now = "2026-10-11T23:30:00Z";
+        let offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let local_wall = |instant: OffsetDateTime| {
+            let local = instant.to_offset(offset);
+            Some(PrimitiveDateTime::new(local.date(), local.time()))
+        };
+        let data = json!({
+            "tasks": [{
+                "id": "first", "status": "next", "projectId": "project", "orderNum": 1
+            }],
+            "projects": [{"id": "project", "status": "active", "isSequential": true}]
+        });
+        let mut task = json!({
+            "id": "second", "status": "next", "projectId": "project", "orderNum": 2,
+            "startTime": "2026-10-12T07:00", "isFocusedToday": true, "focusOrder": 1
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        normalize_created_task_focus(&mut task, &data, now, &local_wall);
+
+        assert_eq!(
+            task["isFocusedToday"], false,
+            "SEQKEY: a start on Tokyo's today must not displace the first sequential task"
+        );
+        assert_eq!(task["status"], "next");
+        assert_eq!(task["startTime"], "2026-10-12T07:00");
+        assert!(!task.contains_key("focusOrder"));
+    }
+
+    #[test]
+    fn local_api_seqkey_waiting_due_does_not_outrank_review() {
+        let now = OffsetDateTime::parse("2026-10-11T23:30:00Z", &Rfc3339).unwrap();
+        let offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let local_wall = |instant: OffsetDateTime| {
+            let local = instant.to_offset(offset);
+            Some(PrimitiveDateTime::new(local.date(), local.time()))
+        };
+        let mut task = json!({
+            "status": "waiting", "dueDate": "2026-10-11", "reviewAt": "2026-10-12T08:00"
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        let review = local_api_focus_schedule_time(task.get("reviewAt"), &local_wall).unwrap();
+
+        assert_eq!(
+            local_api_focus_schedule_key(&task, now, &local_wall),
+            (1, review),
+            "SEQKEY: waiting tasks must rank by their due review, never their due date"
+        );
+        task.remove("reviewAt");
+        assert_eq!(
+            local_api_focus_schedule_key(&task, now, &local_wall),
+            (2, PrimitiveDateTime::MAX)
+        );
+        task.insert("isFocusedToday".into(), Value::Bool(true));
+        assert_eq!(
+            local_api_focus_schedule_key(&task, now, &local_wall),
+            (0, PrimitiveDateTime::MIN)
+        );
+    }
+
+    #[test]
     fn local_api_b2a_sequential_focus_orders_local_schedule_values() {
         let now = "2026-10-11T23:30:00Z";
         let offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
@@ -5355,31 +5418,42 @@ mod tests {
             let local = instant.to_offset(offset);
             Some(PrimitiveDateTime::new(local.date(), local.time()))
         };
-        for (field, schedule) in [
-            ("startTime", "2026-10-12T07:00"),
-            ("startTime", "2026-10-11T23:00:00Z"),
-            ("dueDate", "2026-10-12"),
-            ("dueDate", "2026-10-12T09:00"),
-            ("dueDate", "2026-10-11T23:00:00Z"),
-            ("reviewAt", "2026-10-12T08:00"),
+        for (field, schedule, focused) in [
+            ("startTime", "2026-10-12T07:00", false),
+            ("startTime", "2026-10-11T23:00:00Z", false),
+            ("dueDate", "2026-10-12", true),
+            ("dueDate", "2026-10-12T09:00", true),
+            ("dueDate", "2026-10-11T23:00:00Z", true),
+            ("dueDate", "2026-10-13", false),
+            ("reviewAt", "2026-10-12T08:00", true),
+            ("reviewAt", "2026-10-12T08:31", false),
         ] {
-            let data = json!({
+            let mut data = json!({
                 "tasks": [{
                     "id": "unscheduled", "status": "next", "projectId": "project", "orderNum": 1
                 }],
                 "projects": [{"id": "project", "status": "active", "isSequential": true}]
             });
-            let mut task = json!({
+            let task = json!({
                 "id": "scheduled", "status": "next", "projectId": "project", "orderNum": 2,
                 "isFocusedToday": true, field: schedule
             })
             .as_object()
             .unwrap()
             .clone();
-            normalize_created_task_focus(&mut task, &data, now, &local_wall);
+            let mut normalized = task.clone();
+            normalize_created_task_focus(&mut normalized, &data, now, &local_wall);
             assert_eq!(
-                task["isFocusedToday"], true,
-                "sequential Focus must select local schedule: {field}={schedule}"
+                normalized["isFocusedToday"], focused,
+                "sequential Focus must match core's local schedule rank: {field}={schedule}"
+            );
+
+            data["tasks"][0][field] = json!(schedule);
+            let mut normalized = task;
+            normalize_created_task_focus(&mut normalized, &data, now, &local_wall);
+            assert_eq!(
+                normalized["isFocusedToday"], false,
+                "equal schedule keys must keep manual sequence order: {field}={schedule}"
             );
         }
     }
