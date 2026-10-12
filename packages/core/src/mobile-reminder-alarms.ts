@@ -14,7 +14,8 @@
  *   time only passed, or the same reminder is remade): what it delivered stays, so a cycle
  *   5 s after a reminder fires never clears it from the tray.
  * - One-shot task and project reminders are capped per platform (Android 200, iOS 60),
- *   soonest first. A cycle runs again 5 s after the soonest fires, so the window tops up.
+ *   soonest first; a kept minute-shifted alarm counts against the cap. A cycle runs again 5 s
+ *   after the soonest fires, so the window tops up.
  * - Snooze is a new alarm outside the map, 10 minutes after the tap, so a cycle never
  *   cancels it. It can still fire after the task is done: a kept trade-off.
  * - Android start requests remove orphaned native rows (`findStaleNativeReminderAlarms`),
@@ -71,7 +72,8 @@ export type ReminderAlarmConfig = {
     data?: Record<string, string>;
 };
 
-export type ReminderAlarmEntry = { id: number; signature?: string; pending?: true };
+/** `fireAtMs`: when a taken minute moved the alarm later than its signature's time. */
+export type ReminderAlarmEntry = { id: number; signature?: string; pending?: true; fireAtMs?: number };
 
 export type ReminderAlarmRequest = { key: string; config: ReminderAlarmConfig; signature: string };
 
@@ -96,7 +98,13 @@ export function readReminderAlarmMap(raw: string | null): Map<string, ReminderAl
         const id = Number(value.id);
         if (!Number.isFinite(id)) continue;
         const signature = typeof value.signature === 'string' ? value.signature : undefined;
-        map.set(key, { id: Math.floor(id), signature, ...(value.pending === true ? { pending: true as const } : {}) });
+        const fireAtMs = Number(value.fireAtMs);
+        map.set(key, {
+            id: Math.floor(id),
+            signature,
+            ...(value.pending === true ? { pending: true as const } : {}),
+            ...(value.fireAtMs !== undefined && Number.isFinite(fireAtMs) ? { fireAtMs } : {}),
+        });
     }
     return map;
 }
@@ -107,8 +115,20 @@ export function writeReminderAlarmMap(map: ReadonlyMap<string, ReminderAlarmEntr
     return JSON.stringify(result);
 }
 
-/** What an alarm shows and when; repeating alarms by time of day (and weekday), in local time. */
-export function buildReminderAlarmSignature(config: ReminderAlarmConfig): string {
+/** The device's IANA time zone; '' where the runtime has no Intl (the native hosts' QuickJS). */
+function getDeviceTimeZone(): string {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * What an alarm shows and when; repeating alarms by time of day (and weekday), in local time,
+ * and the time zone that local time is in, so a time zone change re-arms them.
+ */
+export function buildReminderAlarmSignature(config: ReminderAlarmConfig, timeZone: string = getDeviceTimeZone()): string {
     const repeatSchedule = (() => {
         if (!config.repeatInterval) return config.fireAt.toISOString();
         const hours = String(config.fireAt.getHours()).padStart(2, '0');
@@ -123,6 +143,7 @@ export function buildReminderAlarmSignature(config: ReminderAlarmConfig): string
         message: config.message,
         fireAt: repeatSchedule,
         repeatInterval: config.repeatInterval ?? 'once',
+        ...(config.repeatInterval && timeZone ? { timeZone } : {}),
         hasSnoozeAction: config.hasSnoozeAction === true,
         ...(config.hasCompleteAction === true ? { hasCompleteAction: true } : {}),
         data: config.data ?? {},
@@ -208,8 +229,13 @@ export type ReminderAlarmPlan = {
     recurring: ReminderAlarmRequest[];
     /** Task and project reminders, soonest first and capped. */
     oneShot: ReminderAlarmRequest[];
-    /** Requested keys whose held alarm already matches. */
+    /** Held keys left alone: requested ones whose alarm already matches, and the `shifted` ones. */
     keep: string[];
+    /**
+     * Held alarms a taken minute moved later, whose reminder time has passed but which have not
+     * rung yet. Each stays until it rings, even when its key now names a later reminder.
+     */
+    shifted: string[];
     /** Requested keys to make (again): missing, changed or pending. */
     schedule: string[];
     /** Held keys that are not requested. */
@@ -295,6 +321,7 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
             recurring: [],
             oneShot: [],
             keep: [],
+            shifted: [],
             schedule: [],
             cancel: held,
             reasons: Object.fromEntries(held.map((key) => [key, 'withdrawn' as const])),
@@ -312,19 +339,35 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
     });
     const recurring = requests.filter((request) => request.repeatInterval).map(toReminderAlarmRequest);
     const oneShot = requests.filter((request) => !request.repeatInterval).map(toReminderAlarmRequest);
-    const requested = new Set<string>();
-    const keep: string[] = [];
-    const schedule: string[] = [];
-    for (const request of [...recurring, ...oneShot]) {
-        requested.add(request.key);
-        (isReminderAlarmCurrent(input.alarms.get(request.key), request.signature) ? keep : schedule).push(request.key);
-    }
-    const cancel = held.filter((key) => !requested.has(key));
+    const requested = new Set([...recurring, ...oneShot].map((request) => request.key));
     const context = {
         diagnostics,
         tasks: new Map(input.tasks.map((task) => [task.id, task])),
         projects: new Map(input.projects.map((project) => [project.id, project])),
     };
+    const nowMs = input.now.getTime();
+    const shifted = held.filter((key) => {
+        const entry = input.alarms.get(key)!;
+        const signedFireAtMs = getSignedFireAtMs(entry);
+        return entry.pending !== true && entry.fireAtMs !== undefined && entry.fireAtMs > nowMs
+            && signedFireAtMs !== null && signedFireAtMs <= nowMs
+            && getActiveCancelReason(key, entry, requested.has(key), context) === 'expired';
+    });
+    // A kept shifted alarm holds one of the platform's one-shot places: the latest new requests wait for a top-up.
+    let excess = oneShot.length + shifted.filter((key) => !requested.has(key)).length - input.maxOneShotReminders;
+    for (let index = oneShot.length - 1; excess > 0 && index >= 0; index -= 1) {
+        if (shifted.includes(oneShot[index].key)) continue;
+        requested.delete(oneShot[index].key);
+        oneShot.splice(index, 1);
+        excess -= 1;
+    }
+    const keep = held.filter((key) => shifted.includes(key) && !requested.has(key));
+    const schedule: string[] = [];
+    for (const request of [...recurring, ...oneShot]) {
+        const current = shifted.includes(request.key) || isReminderAlarmCurrent(input.alarms.get(request.key), request.signature);
+        (current ? keep : schedule).push(request.key);
+    }
+    const cancel = held.filter((key) => !requested.has(key) && !shifted.includes(key));
     const reasons: Record<string, ReminderAlarmCancelReason> = {};
     for (const key of [...schedule, ...cancel]) {
         const entry = input.alarms.get(key);
@@ -335,10 +378,15 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
         recurring,
         oneShot,
         keep,
+        shifted,
         schedule,
         cancel,
         reasons,
-        topUpDelayMs: getOneShotTopUpDelayMs(oneShot.map((request) => request.config.fireAt.getTime()), input.now.getTime()),
+        topUpDelayMs: getOneShotTopUpDelayMs(
+            [...oneShot.map((request) => request.config.fireAt.getTime()), ...shifted.map((key) => input.alarms.get(key)!.fireAtMs!)]
+                .sort((left, right) => left - right),
+            nowMs,
+        ),
         diagnostics,
     };
 }
@@ -412,25 +460,22 @@ export async function cancelReminderAlarm(
 
 /**
  * Makes one requested alarm unless the held one matches. A duplicate-minute refusal retries
- * a minute later; any other refusal throws, and the alarms made so far stay in `alarms`.
+ * a minute later. False when the library refused it: the refusal is logged, never thrown.
  */
 async function scheduleReminderAlarm(
     alarms: Map<string, ReminderAlarmEntry>,
     request: ReminderAlarmRequest,
     port: ReminderAlarmPort,
     plan: ReminderAlarmPlan,
-): Promise<void> {
+): Promise<boolean> {
     const { key, config, signature } = request;
-    if (isReminderAlarmCurrent(alarms.get(key), signature)) return;
+    if (plan.shifted.includes(key) || isReminderAlarmCurrent(alarms.get(key), signature)) return true;
 
     await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
 
     const baseFireAt = new Date(config.fireAt);
     baseFireAt.setMilliseconds(0);
     const detailsBase = buildReminderAlarmDetails(key, config);
-
-    let scheduledId: number | null = null;
-    let lastError: unknown = null;
 
     for (let retry = 0; retry <= MAX_DUPLICATE_ALARM_RETRIES; retry += 1) {
         const fireAt = getDuplicateAlarmRetryFireAt(baseFireAt, retry);
@@ -442,63 +487,55 @@ async function scheduleReminderAlarm(
             const id = Number(result?.id);
             if (!Number.isFinite(id)) {
                 port.logError(`Scheduled alarm returned invalid id for ${key}`);
-                return;
+                return false;
             }
-            scheduledId = Math.floor(id);
             port.logInfo('Alarm scheduled', {
                 alarmKey: key,
-                alarmId: scheduledId,
+                alarmId: Math.floor(id),
                 fireAt: fireAt.toISOString(),
                 retryCount: retry,
                 scheduleType: config.repeatInterval ? 'repeat' : 'once',
             });
-            break;
+            alarms.set(key, { id: Math.floor(id), signature, ...(retry > 0 ? { fireAtMs: fireAt.getTime() } : {}) });
+            return true;
         } catch (error) {
-            lastError = error;
             if (isDuplicateReminderAlarmError(error) && retry < MAX_DUPLICATE_ALARM_RETRIES) {
                 continue;
             }
             port.logError(`Failed to schedule alarm (${key})`, error);
-            throw error;
+            return false;
         }
     }
-
-    if (scheduledId === null) {
-        port.logError(`Failed to schedule alarm for ${key} after duplicate retries`, lastError);
-        return;
-    }
-
-    alarms.set(key, { id: scheduledId, signature });
-}
-
-async function scheduleReminderAlarmBatches(
-    alarms: Map<string, ReminderAlarmEntry>,
-    plan: ReminderAlarmPlan,
-    port: ReminderAlarmPort,
-): Promise<void> {
-    for (let index = 0; index < plan.oneShot.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
-        const batch = plan.oneShot.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE);
-        await Promise.all(batch.map((request) => scheduleReminderAlarm(alarms, request, port, plan)));
-    }
+    return false;
 }
 
 /**
  * Makes every requested alarm that is missing or changed: the repeating ones one at a time,
- * then the one-shots ten at a time. It updates `alarms` as it goes, so a refusal that aborts
- * the pass leaves the ids of the alarms already made there to be saved.
+ * then the one-shots ten at a time. A refused alarm is skipped, so the rest are still made;
+ * the next cycle tries it again. Returns how many were refused.
  */
 export async function scheduleReminderAlarms(
     plan: ReminderAlarmPlan,
     alarms: Map<string, ReminderAlarmEntry>,
     port: ReminderAlarmPort,
-): Promise<void> {
-    for (const request of plan.recurring) {
-        await scheduleReminderAlarm(alarms, request, port, plan);
+): Promise<number> {
+    let refused = 0;
+    const arm = async (request: ReminderAlarmRequest) => {
+        try {
+            if (await scheduleReminderAlarm(alarms, request, port, plan)) return;
+        } catch (error) {
+            port.logError(`Failed to schedule alarm (${request.key})`, error);
+        }
+        refused += 1;
+    };
+    for (const request of plan.recurring) await arm(request);
+    for (let index = 0; index < plan.oneShot.length; index += ALARM_SCHEDULE_BATCH_SIZE) {
+        await Promise.all(plan.oneShot.slice(index, index + ALARM_SCHEDULE_BATCH_SIZE).map(arm));
     }
-    await scheduleReminderAlarmBatches(alarms, plan, port);
+    return refused;
 }
 
-/** Cancels every held alarm the plan does not request, as `alarms` stands now. */
+/** Cancels every held alarm the plan does not request or keep, as `alarms` stands now. */
 export async function cancelUnrequestedReminderAlarms(
     plan: ReminderAlarmPlan,
     alarms: Map<string, ReminderAlarmEntry>,
@@ -506,7 +543,7 @@ export async function cancelUnrequestedReminderAlarms(
 ): Promise<void> {
     const requested = new Set([...plan.recurring, ...plan.oneShot].map((request) => request.key));
     for (const key of Array.from(alarms.keys())) {
-        if (requested.has(key)) continue;
+        if (requested.has(key) || plan.shifted.includes(key)) continue;
         await cancelReminderAlarm(alarms, key, port, getReminderAlarmCancelReason(plan, key));
     }
 }
@@ -575,7 +612,7 @@ export function shouldRescheduleReminderAlarms(state: ReminderStoreSnapshot, pre
 }
 
 /** An Android alarm row's `key==>value;;` data (or an object), as strings. */
-function readNativeAlarmData(value: unknown): Record<string, string> {
+export function readNativeAlarmData(value: unknown): Record<string, string> {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
         return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item)]));
     }

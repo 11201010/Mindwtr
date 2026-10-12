@@ -7,7 +7,7 @@ import {
     SyncFileLockUnavailableError,
 } from './sync-service-utils';
 import type { FastSyncState } from './sync-fast-sync';
-import type { SyncCycleIO, SyncCycleResult, SyncHistoryEntry } from './sync-types';
+import { PREPARED_UNCHANGED, type SyncCycleIO, type SyncCycleResult, type SyncHistoryEntry } from './sync-types';
 import type {
     SyncBackendIO,
     SyncRemoteWriteOutcome,
@@ -22,13 +22,15 @@ import type {
     SyncRunStorage,
     SyncRunStoreBridge,
 } from './sync-run-ports';
-import { SyncRemoteWriteConflict } from './sync-run-ports';
+import { SyncRemoteWriteConflict, type SyncFollowUpReason } from './sync-run-ports';
 import { LocalSyncAbort, ensureFreshLocalSyncSnapshot, getInMemoryAppDataSnapshot, shouldRunAttachmentCleanup } from './sync-client-helpers';
 import { hasFreshAttachmentCleanupWork } from './attachment-cleanup';
-import { isAttachmentUploadTooLargeError, isWebdavHostUploadLimitError } from './attachment-transfer';
+import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
+import { isAttachmentUploadTooLargeError, isCloudHostUploadLimitError, isWebdavHostUploadLimitError } from './attachment-transfer';
 import { isSyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { isHostResponseTooLargeError } from './http-utils';
 import { flushPendingSave, useTaskStore } from './store';
+import { markArchiveRetentionSyncCompleted } from './store-archive-retention';
 import {
     assertNoPendingAttachmentContentReplacements,
     assertNoPendingAttachmentUploads,
@@ -36,11 +38,10 @@ import {
     findPendingAttachmentUploads,
     hasPendingSyncSideEffects,
     isLocalPersistEquivalent,
+    fingerprintStableSyncJson,
     toStableSyncJson,
 } from './sync-helpers';
 import {
-    areRemoteSyncDocumentsEqual,
-    computeRemoteSyncDocumentFingerprint,
     parseSyncDocument,
     toRemoteSyncDocument,
 } from './sync-document';
@@ -51,6 +52,7 @@ import { normalizeAppData } from './sync-normalization';
 import { isWebdavInvalidJsonError } from './retry-utils';
 import { isRemoteSyncBackend } from './sync-service-utils';
 import { cloneAppData } from './sync-runtime-utils';
+import { traceSection, traceSectionAsync } from './perf-trace';
 import { buildMergeSummaryLog, buildPendingAttachmentUploadLogExtra } from './sync-log-utils';
 import { CLOCK_SKEW_THRESHOLD_MS } from './sync-types';
 import { appendSyncHistory, mergeAppData, performSyncCycle } from './sync';
@@ -618,14 +620,20 @@ class SharedSyncRunMachine {
     async run(): Promise<SyncRunResult> {
         let result!: SyncRunResult;
         let cleanupRetryAfterMs: number | null = null;
+        let cleanupUnconfirmed = false;
         try {
             try {
                 result = await this.runPhases();
             } catch (error) {
+                if (error instanceof NativeAttachmentCleanupUnconfirmedError) {
+                    cleanupUnconfirmed = true;
+                    throw error;
+                }
                 result = await this.handleRunError(error);
             }
         } finally {
-            cleanupRetryAfterMs = await this.releaseRemoteMutationFence();
+            // A retained native cleanup owner forbids another remote request; the lease expires naturally.
+            if (!cleanupUnconfirmed) cleanupRetryAfterMs = await this.releaseRemoteMutationFence();
         }
         if (cleanupRetryAfterMs !== null) {
             result.remoteFenceDeferred = 'cleanup';
@@ -677,13 +685,18 @@ class SharedSyncRunMachine {
         if (!this.options.activationProbe && !skipResult && !localOnlyUpload && this.policy.enableReadCheckSkip) {
             skipResult = await this.trySkipUnchangedReadSync();
         }
-        if (skipResult) {
-            return skipResult;
+        let result = skipResult;
+        if (!result) {
+            if (!this.policy.preSyncAttachmentsBeforeFastCheck) {
+                await this.runAttachmentPreSyncPhase();
+            }
+            result = await this.runMergePhase();
         }
-        if (!this.policy.preSyncAttachmentsBeforeFastCheck) {
-            await this.runAttachmentPreSyncPhase();
+        // Only a merged or confirmed-unchanged remote lets archive retention run (R-2).
+        if (!this.options.activationProbe && (!result.skipped || result.skipped === 'unchanged')) {
+            markArchiveRetentionSyncCompleted();
         }
-        return this.runMergePhase();
+        return result;
     }
 
     private get backend(): SyncBackend {
@@ -784,23 +797,33 @@ class SharedSyncRunMachine {
             // delayed availability without rewriting an otherwise valid run.
             this.notifier.logWarning('Failed to release remote sync mutation fence', error);
             const retryAfterMs = lease.retryAfterMs();
-            this.requestFollowUpAfter(retryAfterMs);
+            this.requestFollowUpAfter(retryAfterMs, 'remote-fence-release');
             return retryAfterMs;
         }
     }
 
-    private requestFollowUp(): void {
-        if (this.options.activationProbe) return;
-        this.hooks.requestFollowUp();
+    private notifyFollowUp(reason: SyncFollowUpReason, data?: AppData, previousData?: AppData | null): void {
+        try {
+            this.notifier.onDiagnostic?.({ event: 'follow-up-requested', followUpReason: reason,
+                data, previousData, extra: { step: this.state.step } });
+        } catch { /* Diagnostics must not change queue decisions. */ }
     }
 
-    private requestFollowUpAfter(delayMs: number): void {
+    private requestFollowUp(reason: SyncFollowUpReason, data?: AppData, previousData?: AppData | null): void {
+        if (this.options.activationProbe) return;
+        this.hooks.requestFollowUp();
+        this.notifyFollowUp(reason, data, previousData);
+    }
+
+    private requestFollowUpAfter(delayMs: number, reason: SyncFollowUpReason): void {
         if (this.options.activationProbe) return;
         if (this.hooks.requestFollowUpAfter) {
             this.hooks.requestFollowUpAfter(delayMs);
+            this.notifyFollowUp(reason);
             return;
         }
         this.hooks.requestFollowUp();
+        this.notifyFollowUp(reason);
     }
 
     private attachmentHelpers(
@@ -842,7 +865,7 @@ class SharedSyncRunMachine {
             acceptCoveredSnapshot: expectedData && this.hooks.acceptCoveredSnapshot
                 ? () => this.acceptCoveredLocalSnapshot(expectedData)
                 : undefined,
-            requestFollowUp: () => this.requestFollowUp(),
+            requestFollowUp: () => this.requestFollowUp('stale-local'),
             onStale: this.hooks.onStaleSnapshot
                 ? (details) => this.hooks.onStaleSnapshot?.({ ...details, step: this.state.step })
                 : undefined,
@@ -895,7 +918,7 @@ class SharedSyncRunMachine {
             });
             return carried.data;
         }
-        const inMemorySnapshot = this.store.getInMemorySnapshot();
+        const inMemorySnapshot = traceSection('sync:storeSnapshot', () => this.store.getInMemorySnapshot());
         // The persisted-vs-in-memory reconcile is a full-library merge — the
         // single most expensive step of an idle cycle at whale scale — and after
         // the flush at cycle start the two sides are almost always identical.
@@ -935,10 +958,10 @@ class SharedSyncRunMachine {
                 tasks: String(baseData.tasks.length),
             });
         } else {
-            const persisted = await this.storage.readPersistedLocal();
+            const persisted = await traceSectionAsync('sync:readPersisted', () => this.storage.readPersistedLocal());
             const reconcileStart = Date.now();
-            const aligned = computeSyncChangeFingerprint(persisted) === computeSyncChangeFingerprint(inMemorySnapshot);
-            const reconciled = aligned ? persisted : mergeAppData(persisted, inMemorySnapshot);
+            const aligned = traceSection('sync:reconcileCheck', () => computeSyncChangeFingerprint(persisted) === computeSyncChangeFingerprint(inMemorySnapshot));
+            const reconciled = aligned ? persisted : traceSection('sync:reconcileMerge', () => mergeAppData(persisted, inMemorySnapshot));
             baseData = restoreDeviceLocalAiSettings(reconciled, inMemorySnapshot);
             // A restored endpoint means this snapshot holds content the disk copy
             // does not, so it can no longer stand in for the disk document.
@@ -973,7 +996,7 @@ class SharedSyncRunMachine {
 
     private async persistLocalDataWithTracking(data: AppData): Promise<AppData> {
         await this.assertRemoteMutationFenceHeld();
-        const persisted = await this.storage.persistLocal(data) ?? data;
+        const persisted = await traceSectionAsync('sync:saveData', () => this.storage.persistLocal(data)) ?? data;
         this.ensureLocalSnapshotFresh(persisted);
         // Disk has moved past the snapshot this cycle read, so it is no longer
         // a baseline for the unchanged-write guard.
@@ -1028,7 +1051,7 @@ class SharedSyncRunMachine {
             // A genuinely absent remote stays merge-neutral. Every document
             // otherwise enters through the shared validation/normalization
             // seam before code that assumes all AppData arrays are present.
-            const parsed = raw == null ? null : parseSyncDocument(raw, 'remote');
+            const parsed = raw == null ? null : traceSection('sync:parseRemote', () => parseSyncDocument(raw, 'remote'));
             this.state.remoteLegacyAttachmentsChanged = parsed?.ok === true
                 && parsed.legacyAttachmentsChanged === true;
             if (parsed && !parsed.ok) {
@@ -1113,18 +1136,17 @@ class SharedSyncRunMachine {
             assertNoPendingAttachmentUploads(data);
         }
         const remoteDocument = toRemoteSyncDocument(data);
-        const previousRemoteDocument = state.remoteDataForCompare
-            ? toRemoteSyncDocument(state.remoteDataForCompare)
-            : null;
+        const previousRemoteData = state.remoteDataForCompare;
         const remoteNeedsTombstoneCompaction = state.remoteDataForCompare
             ? hasUncompactedPurgedTombstones(state.remoteDataForCompare)
             : false;
         if (!this.options.activationProbe
-            && previousRemoteDocument
+            && previousRemoteData
             && !remoteNeedsTombstoneCompaction
             && !state.remoteLegacyAttachmentsChanged
             && this.requireIo().requiresRemoteRepair?.() !== true
-            && areRemoteSyncDocumentsEqual(previousRemoteDocument, remoteDocument)) {
+            // areRemoteSyncDocumentsEqual over the two remote documents, through the memoized stable JSON.
+            && traceSection('sync:remoteCompare', () => this.stableDocument(previousRemoteData).json === this.stableDocument(data).json)) {
             if (this.backend !== 'cloudkit') {
                 this.notifier.tracePayload?.('remote-write-skipped-unchanged', remoteDocument, { backend: this.backend });
             }
@@ -1143,7 +1165,7 @@ class SharedSyncRunMachine {
         } catch (error) {
             if (error instanceof SyncRemoteWriteConflict) {
                 // Another device wrote between readRemote and writeRemote; retry next cycle.
-                this.requestFollowUp();
+                this.requestFollowUp('remote-conflict');
                 throw new LocalSyncAbort('remote-write-conflict', error.message);
             }
             throw error;
@@ -1157,7 +1179,7 @@ class SharedSyncRunMachine {
         state.lastRemoteWriteMergedServerData = serverMergedRemoteData;
         if (serverMergedRemoteData) {
             state.remoteDataForCompare = null;
-            this.requestFollowUp();
+            this.requestFollowUp('server-contribution', data, previousRemoteData);
         } else {
             state.remoteDataForCompare = remoteDocument;
         }
@@ -1185,6 +1207,21 @@ class SharedSyncRunMachine {
         }
     }
 
+    private hasPendingCycleSideEffects(data: AppData): boolean {
+        if (hasPendingSyncSideEffects(data)) return true;
+        if (!this.policy.attachmentPhasesEnabled
+            || !this.hooks.runAttachmentCleanup
+            || !hasFreshAttachmentCleanupWork(data)) return false;
+        try {
+            this.notifier.logInfo('Sync fast check retained fresh attachment cleanup', {
+                releaseCheck: 'v1.3.5/sync-cleanup-fast-check',
+                operation: 'attachment-cleanup',
+                outcome: 'required',
+            });
+        } catch { /* Diagnostics must not suppress required cleanup. */ }
+        return true;
+    }
+
     private async trySkipUnchangedFastSync(): Promise<SyncRunResult | null> {
         // User-initiated sync: never trust the cached fingerprint pair, so a
         // stale cached fingerprint can't hide remote data.
@@ -1196,7 +1233,7 @@ class SharedSyncRunMachine {
         if (this.state.preSyncedLocalData || this.hooks.hasDeferredAttachmentWork?.()) return null;
         const localData = await this.readLocalDataForSyncCycle();
         this.ensureLocalSnapshotFresh();
-        if (hasPendingSyncSideEffects(localData)) return null;
+        if (this.hasPendingCycleSideEffects(localData)) return null;
 
         const localFingerprint = this.localDocumentFingerprint(localData);
         const cached = await this.readFastSyncState(scope);
@@ -1296,7 +1333,7 @@ class SharedSyncRunMachine {
         this.ensureLocalSnapshotFresh();
         // Pending remote write marker, pending attachment uploads, pending
         // remote deletes: all need the full cycle's read.
-        if (hasPendingSyncSideEffects(localData)) return false;
+        if (this.hasPendingCycleSideEffects(localData)) return false;
 
         const cached = await this.readFastSyncState(scope);
         if (!cached) return false;
@@ -1337,7 +1374,7 @@ class SharedSyncRunMachine {
         if (this.state.preSyncedLocalData || this.hooks.hasDeferredAttachmentWork?.()) return null;
         const localData = await this.readLocalDataForSyncCycle();
         this.ensureLocalSnapshotFresh();
-        if (hasPendingSyncSideEffects(localData)) return null;
+        if (this.hasPendingCycleSideEffects(localData)) return null;
 
         const remoteData = await this.readRemoteForCycle();
         this.ensureLocalSnapshotFresh();
@@ -1351,7 +1388,7 @@ class SharedSyncRunMachine {
         // write records. Comparing documents here serialized both sides in
         // full to reach the identical verdict.
         const localFingerprint = this.localDocumentFingerprint(localData);
-        const remoteFingerprint = computeRemoteSyncDocumentFingerprint(toRemoteSyncDocument(remoteData));
+        const remoteFingerprint = this.documentFingerprint(remoteData);
         if (localFingerprint !== remoteFingerprint) return null;
 
         await this.recordFastSyncState(localData, { allowRemoteFingerprintRead: false });
@@ -1368,7 +1405,7 @@ class SharedSyncRunMachine {
         options: { allowRemoteFingerprintRead?: boolean } = {},
     ): Promise<void> {
         const scope = this.state.fastSyncScope;
-        if (!scope || hasPendingSyncSideEffects(data)) return;
+        if (!scope || this.hasPendingCycleSideEffects(data)) return;
         if (this.store.getLastDataChangeAt() > this.state.localSnapshotChangeAt) return;
         if (this.state.lastRemoteWriteMergedServerData) return;
 
@@ -1415,9 +1452,36 @@ class SharedSyncRunMachine {
     private localDocumentFingerprint(data: AppData): string {
         const cached = this.state.localDocumentFingerprint;
         if (cached && cached.data === data) return cached.fingerprint;
-        const fingerprint = computeRemoteSyncDocumentFingerprint(toRemoteSyncDocument(data));
+        const fingerprint = this.documentFingerprint(data);
         this.state.localDocumentFingerprint = { data, fingerprint };
         return fingerprint;
+    }
+
+    /**
+     * A snapshot's remote document as stable sync JSON (the form both
+     * computeRemoteSyncDocumentFingerprint and areRemoteSyncDocumentsEqual
+     * (sync-document.ts) serialize), and its fingerprint,
+     * memoized on the snapshot's identity for this run. Sync never changes a
+     * snapshot in place (every step makes a new object), so the same object
+     * is the same document: the read check's remote document is the one the
+     * write compares against, and the document the write compares is the one
+     * the fast-sync record fingerprints.
+     */
+    private readonly stableDocuments = new WeakMap<AppData, { json: string; fingerprint?: string }>();
+
+    private stableDocument(data: AppData): { json: string; fingerprint?: string } {
+        let entry = this.stableDocuments.get(data);
+        if (!entry) {
+            entry = { json: traceSection('sync:stableJson', () => toStableSyncJson(toRemoteSyncDocument(data))) };
+            this.stableDocuments.set(data, entry);
+        }
+        return entry;
+    }
+
+    private documentFingerprint(data: AppData): string {
+        const entry = this.stableDocument(data);
+        entry.fingerprint ??= traceSection('sync:fingerprint', () => fingerprintStableSyncJson(entry.json));
+        return entry.fingerprint;
     }
 
     /** Mirror of the remote write's `remote-write-skipped-unchanged` guard:
@@ -1504,7 +1568,7 @@ class SharedSyncRunMachine {
             if (isSyncRemoteMutationFenceError(error)) throw error;
             // A refusal to mix plaintext into a partly encrypted location ends the cycle; it is never a warning.
             if (isSyncEncryptionPartlyEncryptedError(error)) throw error;
-            if (isWebdavHostUploadLimitError(error)) throw error;
+            if (isWebdavHostUploadLimitError(error) || isCloudHostUploadLimitError(error)) throw error;
             if (isHostResponseTooLargeError(error)) throw error;
             if (this.hooks.isCycleAborted?.()) throw error;
             if (isAttachmentUploadTooLargeError(error)) {
@@ -1517,21 +1581,22 @@ class SharedSyncRunMachine {
     }
 
     /** Candidate attachment proof, or the normal final pending-upload pass,
-     *  immediately before the merged document is written remotely. */
-    private async prepareRemoteWriteData(data: AppData): Promise<AppData> {
+     *  immediately before the merged document is written remotely.
+     *  PREPARED_UNCHANGED when no pass ran: the cycle need not validate again. */
+    private async prepareRemoteWriteData(data: AppData): Promise<AppData | typeof PREPARED_UNCHANGED> {
         if (this.options.activationProbe) {
             // A device with no attachment storage (the web app) can never
             // download or upload a file, so it has nothing to prove: the
             // records stay unavailable here exactly as every later cycle keeps
             // them. Demanding proof refused every setup against a location
             // that held attachments (#1119).
-            if (!this.policy.attachmentPhasesEnabled) return data;
+            if (!this.policy.attachmentPhasesEnabled) return PREPARED_UNCHANGED;
             const activationSnapshot = prepareActivationAttachmentSnapshot(
                 data,
                 this.state.remoteDataForCompare,
                 this.state.localDataCache?.data ?? null,
             );
-            if (activationSnapshot.count === 0) return data;
+            if (activationSnapshot.count === 0) return PREPARED_UNCHANGED;
             const io = this.requireIo();
             if (!io.syncAttachments) {
                 throw new Error('Candidate backend cannot prove attachments');
@@ -1663,9 +1728,9 @@ class SharedSyncRunMachine {
             return provenData;
         }
         const pendingUploads = findPendingAttachmentUploads(data);
-        if (pendingUploads.length === 0) return data;
+        if (pendingUploads.length === 0) return PREPARED_UNCHANGED;
         const io = this.requireIo();
-        if (!io.syncAttachments) return data;
+        if (!io.syncAttachments) return PREPARED_UNCHANGED;
 
         this.setStep('attachments_finalize');
         await this.yieldToUi();
@@ -1744,7 +1809,7 @@ class SharedSyncRunMachine {
             if (isSyncRemoteMutationFenceError(error)) throw error;
             // A refusal to mix plaintext into a partly encrypted location ends the cycle; it is never a warning.
             if (isSyncEncryptionPartlyEncryptedError(error)) throw error;
-            if (isWebdavHostUploadLimitError(error)) throw error;
+            if (isWebdavHostUploadLimitError(error) || isCloudHostUploadLimitError(error)) throw error;
             if (isHostResponseTooLargeError(error)) throw error;
             if (isAttachmentUploadTooLargeError(error)) {
                 this.state.fileAttachmentUploadBlocked = 'too-large';
@@ -1807,7 +1872,7 @@ class SharedSyncRunMachine {
             flushPendingLocalBeforeRetryRead: () => this.options.activationProbe
                 ? Promise.resolve()
                 : this.store.flushPendingSave(),
-            isLocalPersistUnchanged: (data) => this.isLocalPersistUnchanged(data),
+            isLocalPersistUnchanged: (data) => traceSection('sync:unchangedCheck', () => this.isLocalPersistUnchanged(data)),
             persistSyncStatusOnly: async (data) => {
                 this.notifier.logInfo('Sync local write skipped; merged document matches stored', {
                     backend: this.backend,
@@ -1982,6 +2047,7 @@ class SharedSyncRunMachine {
             if (!this.options.activationProbe && retryAttempt < 1) {
                 if (this.hooks.requestFileSyncLockBusyFollowUpAfter) {
                     this.hooks.requestFileSyncLockBusyFollowUpAfter(error.retryAfterMs, retryAttempt + 1);
+                    this.notifyFollowUp('file-lock-busy');
                 }
             }
             return {
@@ -1995,7 +2061,7 @@ class SharedSyncRunMachine {
             // Attributable in the log: a holder with seconds left is a dead lease
             // (a live one renews every ttl/3), not a device actively syncing.
             this.notifier.logWarning('Remote sync location is reserved; retrying after the lease lapses', error);
-            if (!this.options.activationProbe) this.requestFollowUpAfter(error.retryAfterMs);
+            if (!this.options.activationProbe) this.requestFollowUpAfter(error.retryAfterMs, 'remote-fence-busy');
             return {
                 success: true,
                 skipped: 'remoteFenceBusy',

@@ -970,8 +970,12 @@ describe('InboxProcessingModal', () => {
 
   // #1088: mobile clarify never parsed the title at all, so even the date
   // commands desktop already understood were literal text here.
-  it('applies quick-add tokens typed into the clarify title', async () => {
-    storeState.tasks = [{ ...baseInboxTask, contexts: [], tags: [] }];
+  it.each([
+    { token: '/estimate:1h30m', selected: undefined, estimate: 'custom:90' },
+    { token: '/duration:45m', selected: '2hr', estimate: '2hr' },
+    { token: '/estimate:tomorrow', selected: undefined, estimate: undefined },
+  ] as const)('applies quick-add tokens while respecting the estimate selection: $token', async ({ token, selected, estimate }) => {
+    storeState.tasks = [{ ...baseInboxTask, contexts: [], tags: [], timeEstimate: selected }];
     storeState.projects = [workProject];
     storeState.areas = [workArea, homeArea];
     let tree: ReturnType<typeof create>;
@@ -983,7 +987,7 @@ describe('InboxProcessingModal', () => {
     const root = tree!.root;
     const titleInput = root.findByProps({ placeholder: 'taskEdit.titleLabel', accessibilityLabel: 'taskEdit.titleLabel' });
     act(() => {
-      titleInput.props.onChangeText('Call Alice @phone #urgent !Home /due:2026-09-01');
+      titleInput.props.onChangeText(`Call Alice @phone #urgent !Home /due:2026-09-01 ${token}`);
     });
 
     walkToFileStep(root);
@@ -994,12 +998,13 @@ describe('InboxProcessingModal', () => {
       'inbox-1',
       expect.objectContaining({
         status: 'next',
-        title: 'Call Alice',
+        title: estimate ? 'Call Alice' : `Call Alice ${token}`,
         contexts: ['@phone'],
         tags: ['#urgent'],
         areaId: homeArea.id,
       })
     );
+    expect(updateTask.mock.calls[0][1].timeEstimate).toBe(estimate);
     expect(updateTask.mock.calls[0][1].dueDate).toContain('2026-09-01');
   });
 

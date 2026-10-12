@@ -27,6 +27,16 @@
     "observations": [
      "encryption: a peer turned it off, mid-transition: the card offers \"Abandon setup\" under the incomplete-change error, and inside an open flow (here Disable) after its Cancel, as it does for every unfinished change."
     ]
+   },
+   {
+    "base": "fa35a5115",
+    "command": "MINDWTR_DUMP_SYNC_SETTINGS=/home/dd/task-logs/issue-1371-rn-capture.json TZ=UTC bun run --cwd apps/mobile test components/settings/sync-settings-screen.parity.test.tsx; generated observations replaced only after removing the new receipts made every changed observation match its frozen value exactly",
+    "observations": [
+     "webdav: set up from scratch: only the WebDAV setup compatibility probe log receipts were added; all UI, toasts, probes, activation, storage and other calls matched the frozen run.",
+     "webdav: failures: only the WebDAV setup compatibility probe log receipts were added; all UI, toasts, probes, activation, storage and other calls matched the frozen run.",
+     "webdav: encryption on and a legacy server: only the WebDAV setup compatibility probe log receipts were added; all UI, toasts, probes, activation, storage and other calls matched the frozen run.",
+     "webdav: an encrypted remote without the key: only the WebDAV setup compatibility probe log receipts were added; all UI, toasts, probes, activation, storage and other calls matched the frozen run."
+    ]
    }
   ]
  },
@@ -4870,6 +4880,17 @@
       }
      ],
      [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "completed",
+       "reason": "strong-etag",
+       "requireStrongEtag": "false"
+      }
+     ],
+     [
       "rememberWebdavCapabilityProof",
       {
        "allowInsecureHttp": false,
@@ -5107,6 +5128,17 @@
        "password": "hunter22",
        "timeoutMs": 10000,
        "requireStrongEtag": false
+      }
+     ],
+     [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "completed",
+       "reason": "strong-etag",
+       "requireStrongEtag": "false"
       }
      ],
      [
@@ -7704,6 +7736,17 @@
       }
      ],
      [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "completed",
+       "reason": "strong-etag",
+       "requireStrongEtag": "false"
+      }
+     ],
+     [
       "rememberWebdavCapabilityProof",
       {
        "allowInsecureHttp": false,
@@ -8462,6 +8505,17 @@
       }
      ],
      [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "completed",
+       "reason": "strong-etag",
+       "requireStrongEtag": "false"
+      }
+     ],
+     [
       "rememberWebdavCapabilityProof",
       {
        "allowInsecureHttp": true,
@@ -8871,6 +8925,17 @@
        "password": "hunter22",
        "timeoutMs": 10000,
        "requireStrongEtag": true
+      }
+     ],
+     [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "failed",
+       "reason": "strong-etag-required",
+       "requireStrongEtag": "true"
       }
      ]
     ]
@@ -9391,6 +9456,17 @@
        "password": "hunter22",
        "timeoutMs": 10000,
        "requireStrongEtag": false
+      }
+     ],
+     [
+      "logInfo",
+      "WebDAV setup compatibility probe",
+      {
+       "releaseCheck": "v1.3.5/webdav-setup-probe",
+       "phase": "compatibility",
+       "outcome": "completed",
+       "reason": "strong-etag",
+       "requireStrongEtag": "false"
       }
      ],
      [
@@ -22499,7 +22575,7 @@
      "Passphrase",
      [
       "danger",
-      "This encryption change may be incomplete because Mindwtr could not verify a remote file version. Sync remains paused. Retry the same encryption change before changing or disconnecting this sync location."
+      "Mindwtr could not confirm that the encryption change is complete. Sync remains paused. Retry the same encryption change before changing or disconnecting this sync location."
      ],
      "Show passphrase",
      "Enter passphrase",
@@ -24133,7 +24209,7 @@
      "Turn off encryption",
      [
       "danger",
-      "This encryption change may be incomplete because Mindwtr could not verify a remote file version. Sync remains paused. Retry the same encryption change before changing or disconnecting this sync location."
+      "Mindwtr could not confirm that the encryption change is complete. Sync remains paused. Retry the same encryption change before changing or disconnecting this sync location."
      ],
      "Abandon setup",
      "Settings sync options",

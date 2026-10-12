@@ -1,6 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createLocalAttachmentFs, resolveFileBackendPath, writeFileSafelyAbsolute } from './sync-service-utils';
+import {
+    createLocalAttachmentFs,
+    createManagedAttachmentSourcePredicate,
+    resolveFileBackendPath,
+    writeFileSafelyAbsolute,
+} from './sync-service-utils';
+
+const sourceGuardMocks = vi.hoisted(() => ({
+    dataDir: vi.fn(async () => '/os-data'),
+    getManagedDataDir: vi.fn(async () => '/os-data/mindwtr'),
+    logWarn: vi.fn(async () => null),
+}));
+
+vi.mock('@tauri-apps/api/path', () => ({ dataDir: sourceGuardMocks.dataDir }));
+vi.mock('./managed-paths', () => ({ getManagedDataDir: sourceGuardMocks.getManagedDataDir }));
+vi.mock('./app-log', () => ({ logWarn: sourceGuardMocks.logWarn }));
 
 const BASE_DATA_DIR = '/os-data';
 const MANAGED_DIR = '/new-profile/attachments';
@@ -211,6 +226,128 @@ describe('createLocalAttachmentFs flat-root fallback after the profile folder mo
 
         expect(await fs.localFilePresence(pasted, { id: 'a1' })).toBe('confirmed-not-found');
         expect(exists).toHaveBeenCalledTimes(1);
+    });
+});
+
+// R-1: an attachment `uri` arrives over sync, so the upload guard decides which local
+// files a hostile sync store can make this device publish. Only the folders desktop
+// ever wrote attachment bytes into may be read, never the OS data folder or config.
+describe('createManagedAttachmentSourcePredicate', () => {
+    const guardFor = async (osDataDir: string, managedDataDir: string) => {
+        sourceGuardMocks.dataDir.mockResolvedValue(osDataDir);
+        sourceGuardMocks.getManagedDataDir.mockResolvedValue(managedDataDir);
+        sourceGuardMocks.logWarn.mockClear();
+        return await createManagedAttachmentSourcePredicate();
+    };
+
+    it('refuses secrets.toml and other files of the profile or of other apps (POSIX)', async () => {
+        const canUpload = await guardFor('/home/alice/.local/share', '/home/alice/.local/share/mindwtr');
+        for (const hostile of [
+            '/home/alice/.local/share/mindwtr/config/secrets.toml',
+            '/home/alice/.local/share/mindwtr/secrets.toml',
+            '/home/alice/.local/share/mindwtr/data/mindwtr.db',
+            '/home/alice/.local/share/mindwtr/mindwtr.db',
+            '/home/alice/.local/share/keyrings/login.keyring',
+            '/home/alice/.local/share/OtherApp/x',
+            'file:///home/alice/.local/share/OtherApp/x',
+            '/home/alice/.local/share/mindwtr/attachments/../config/secrets.toml',
+            '/home/alice/.local/share/mindwtr/attachments-old/x.png',
+            '/home/alice/.ssh/id_rsa',
+        ]) {
+            expect(canUpload(hostile), hostile).toBe(false);
+        }
+    });
+
+    it('refuses secrets.toml on a migrated Windows profile and other apps under %APPDATA%', async () => {
+        const canUpload = await guardFor(
+            'C:\\Users\\Alice\\AppData\\Roaming',
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data',
+        );
+        for (const hostile of [
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\config\\secrets.toml',
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\secrets.toml',
+            'file:///C:/Users/Alice/AppData/Roaming/mindwtr/config/secrets.toml',
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data\\mindwtr.db',
+            'C:\\Users\\Alice\\AppData\\Roaming\\OtherApp\\x',
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data\\attachments\\..\\..\\config\\secrets.toml',
+        ]) {
+            expect(canUpload(hostile), hostile).toBe(false);
+        }
+    });
+
+    it('allows every folder desktop has written attachment bytes into', async () => {
+        // Windows/macOS after #1245: managed dir is <data>/mindwtr/data; files recorded
+        // before the move keep their flat-root path, and quick-add-images never moved.
+        const migrated = await guardFor(
+            'C:\\Users\\Alice\\AppData\\Roaming',
+            'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data',
+        );
+        for (const root of ['C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr']) {
+            for (const dir of ['attachments', 'audio-captures', 'quick-add-images']) {
+                const path = `${root}\\${dir}\\file.bin`;
+                expect(migrated(path), path).toBe(true);
+            }
+        }
+        expect(migrated('file:///C:/Users/Alice/AppData/Roaming/mindwtr/data/attachments/a1.pdf')).toBe(true);
+
+        // Portable profile (#855): the profile's own folders, plus the installed copy's.
+        const portable = await guardFor('/home/alice/.local/share', '/media/usb/Mindwtr/data');
+        for (const path of [
+            '/media/usb/Mindwtr/data/attachments/a1.pdf',
+            '/media/usb/Mindwtr/data/audio-captures/rec.wav',
+            '/media/usb/Mindwtr/data/quick-add-images/paste.png',
+            '/home/alice/.local/share/mindwtr/attachments/a1.pdf',
+        ]) {
+            expect(portable(path), path).toBe(true);
+        }
+        expect(portable('/media/usb/Mindwtr/config/secrets.toml')).toBe(false);
+    });
+
+    it('allows the old shared attachment folder in the OS data folder, and nothing else there', async () => {
+        // Before 02a9aafa2, sync downloads went to <OS data>/attachments with absolute URIs.
+        const canUpload = await guardFor('C:\\Users\\Alice\\AppData\\Roaming', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data');
+        const id = '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b';
+        expect(canUpload(`C:\\Users\\Alice\\AppData\\Roaming\\attachments\\${id}.pdf`)).toBe(true);
+        expect(canUpload(`file:///C:/Users/Alice/AppData/Roaming/attachments/${id}.pdf`)).toBe(true);
+        // The folder name is generic: other apps' files there, or anything in a subfolder, stay refused.
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\a1.pdf')).toBe(false);
+        expect(canUpload(`C:\\Users\\Alice\\AppData\\Roaming\\attachments\\other\\${id}.pdf`)).toBe(false);
+        const linux = await guardFor('/home/alice/.local/share', '/home/alice/.local/share/mindwtr');
+        expect(linux(`/home/alice/.local/share/attachments/${id}`)).toBe(true);
+        expect(linux('/home/alice/.local/share/attachments/notes.txt')).toBe(false);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\audio-captures\\rec.wav')).toBe(false);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\secrets.toml')).toBe(false);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\..\\mindwtr\\config\\secrets.toml')).toBe(false);
+    });
+
+    it('compares folders without case on Windows and macOS, with case on Linux', async () => {
+        // Windows and macOS file systems ignore case by default, so a stored URI may differ
+        // from the managed root only in case (drive letter, user name, folder name).
+        const windows = await guardFor('C:\\Users\\Alice\\AppData\\Roaming', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data');
+        expect(windows('file:///c:/Users/alice/AppData/Roaming/mindwtr/data/attachments/a1.pdf')).toBe(true);
+        expect(windows('c:\\users\\alice\\appdata\\roaming\\Mindwtr\\Attachments\\a1.pdf')).toBe(true);
+        expect(windows('c:/users/alice/appdata/roaming/MINDWTR/config/secrets.toml')).toBe(false);
+
+        const mac = await guardFor('/Users/Alice/Library/Application Support', '/Users/Alice/Library/Application Support/mindwtr/data');
+        expect(mac('/Users/alice/Library/Application Support/Mindwtr/data/Attachments/a1.pdf')).toBe(true);
+        expect(mac('/users/alice/library/application support/mindwtr/config/secrets.toml')).toBe(false);
+
+        const linux = await guardFor('/home/alice/.local/share', '/home/alice/.local/share/mindwtr');
+        expect(linux('/home/alice/.local/share/mindwtr/attachments/a1.pdf')).toBe(true);
+        expect(linux('/home/alice/.local/share/Mindwtr/attachments/a1.pdf')).toBe(false);
+        expect(linux('/home/Alice/.local/share/mindwtr/attachments/a1.pdf')).toBe(false);
+    });
+
+    it('logs one refusal reason per pass and never the refused path', async () => {
+        const canUpload = await guardFor('/os-data', '/os-data/mindwtr');
+        canUpload('/os-data/mindwtr/config/secrets.toml');
+        canUpload('/os-data/OtherApp/private-name.txt');
+        expect(sourceGuardMocks.logWarn).toHaveBeenCalledTimes(1);
+        const logged = JSON.stringify(sourceGuardMocks.logWarn.mock.calls);
+        expect(logged).toContain('v1.3.5/attachment-source-guard');
+        expect(logged).not.toContain('secrets');
+        expect(logged).not.toContain('os-data');
+        expect(canUpload('/os-data/mindwtr/attachments/a1.pdf')).toBe(true);
     });
 });
 

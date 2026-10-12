@@ -1006,7 +1006,7 @@ describe('cloud server utils', () => {
         const parsed = await readJsonBody(req, 10);
         expect(isBodyReadError(parsed)).toBe(true);
         if (!isBodyReadError(parsed)) throw new Error('Expected body read error');
-        expect(parsed.__mindwtrError.message).toBe('Payload too large');
+        expect(parsed.__mindwtrError.message).toBe('Payload too large: the limit is 10 bytes');
         expect(parsed.__mindwtrError.status).toBe(413);
     });
 
@@ -1300,7 +1300,7 @@ describe('cloud server utils', () => {
             if (contender) await waitForChildExit(contender, 1_000);
             rmSync(dir, { recursive: true, force: true });
         }
-    });
+    }, 20_000);
 
     test('serializes a real two-process read-modify-write stress run', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-lock-stress-'));
@@ -1329,7 +1329,7 @@ describe('cloud server utils', () => {
             for (const worker of workers) worker.kill('SIGKILL');
             rmSync(dir, { recursive: true, force: true });
         }
-    });
+    }, 20_000);
 
     test('writeData atomically replaces the JSON file and cleans up temp files', () => {
         const dir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-write-data-'));
@@ -1661,8 +1661,14 @@ describe('cloud server namespace mode', () => {
                 const splitAt = Math.floor(payload.length / 2);
                 controller.enqueue(new TextEncoder().encode(payload.slice(0, splitAt)));
                 void bodyGate.then(() => {
-                    controller.enqueue(new TextEncoder().encode(payload.slice(splitAt)));
-                    controller.close();
+                    // A refused write's body is cancelled by the server (its read starts before admission),
+                    // which closes this stream first; the rest has nowhere to go then.
+                    try {
+                        controller.enqueue(new TextEncoder().encode(payload.slice(splitAt)));
+                        controller.close();
+                    } catch {
+                        // Already closed by the server's cancel.
+                    }
                 });
             },
         });
@@ -1722,8 +1728,14 @@ describe('cloud server namespace mode', () => {
                 const splitAt = Math.floor(payload.length / 2);
                 controller.enqueue(new TextEncoder().encode(payload.slice(0, splitAt)));
                 void bodyGate.then(() => {
-                    controller.enqueue(new TextEncoder().encode(payload.slice(splitAt)));
-                    controller.close();
+                    // A refused write's body is cancelled by the server (its read starts before admission),
+                    // which closes this stream first; the rest has nowhere to go then.
+                    try {
+                        controller.enqueue(new TextEncoder().encode(payload.slice(splitAt)));
+                        controller.close();
+                    } catch {
+                        // Already closed by the server's cancel.
+                    }
                 });
             },
         });
@@ -2010,6 +2022,145 @@ describe('cloud server api', () => {
         }
         dataDir = '';
         baseUrl = '';
+    });
+
+    test('accepts a sync document larger than the small JSON limit and refuses the same size elsewhere', async () => {
+        const iso = '2026-10-07T00:00:00.000Z';
+        const tasks = Array.from({ length: 3_000 }, (_, index) => makeTestTask({
+            id: `large-library-${index}`,
+            title: `Large library task ${index} ${'x'.repeat(900)}`,
+            createdAt: iso,
+            updatedAt: iso,
+        }));
+        const body = JSON.stringify({ tasks, projects: [], sections: [], areas: [], people: [], settings: {} });
+        expect(body.length).toBeGreaterThan(3_000_000);
+
+        const dataResponse = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body,
+        });
+        expect(dataResponse.status).toBe(200);
+
+        const taskResponse = await fetch(`${baseUrl}/v1/tasks`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Too big', description: 'x'.repeat(3_000_000) }),
+        });
+        expect(taskResponse.status).toBe(413);
+        expect(await taskResponse.json()).toEqual({ error: 'Payload too large: the limit is 2000000 bytes' });
+
+        const captureResponse = await fetch(`${baseUrl}/v1/capture`, {
+            method: 'POST',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            // A short transcription: only the small JSON cap refuses this, not the attachment cap.
+            body: JSON.stringify({ transcription: 'Short note', pad: 'x'.repeat(3_000_000) }),
+        });
+        expect(captureResponse.status).toBe(413);
+        expect(await captureResponse.json()).toEqual({ error: 'Payload too large: the limit is 2000000 bytes' });
+    });
+
+    test('uses the configured sync document limit for the data write only', async () => {
+        stopServer?.();
+        const isolatedServer = await startCloudServer({
+            host: '127.0.0.1',
+            port: 0,
+            dataDir,
+            maxBodyBytes: 100,
+            maxDataBodyBytes: 1_000,
+            allowedAuthTokens: new Set([integrationToken]),
+        });
+        baseUrl = `http://127.0.0.1:${isolatedServer.port}`;
+        stopServer = isolatedServer.stop;
+
+        const put = (pad: string) => fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], settings: {}, pad }),
+        });
+        expect((await put('x'.repeat(500))).status).toBe(200);
+        const refused = await put('x'.repeat(2_000));
+        expect(refused.status).toBe(413);
+        expect(await refused.json()).toEqual({
+            error: 'Payload too large: the limit is 1000 bytes',
+            limitBytes: 1_000,
+        });
+    });
+
+    /** Sends only the headers and one byte of a large POST /v1/tasks; returns the raw reply. */
+    const postOversizedTaskHeaders = async (serverPort: number, contentLength: number): Promise<string> => {
+        const socket = connect({ host: '127.0.0.1', port: serverPort });
+        let rawResponse = '';
+        socket.setEncoding('utf8');
+        socket.on('data', (chunk) => {
+            rawResponse += chunk;
+        });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                socket.once('connect', resolve);
+                socket.once('error', reject);
+            });
+            socket.write([
+                'POST /v1/tasks HTTP/1.1',
+                `Host: 127.0.0.1:${serverPort}`,
+                `Authorization: Bearer ${integrationToken}`,
+                'Content-Type: application/json',
+                `Content-Length: ${contentLength}`,
+                'Connection: close',
+                '',
+                '{',
+            ].join('\r\n'));
+            for (let attempt = 0; attempt < 400 && !rawResponse.includes('}'); attempt += 1) {
+                await delay(5);
+            }
+        } finally {
+            socket.destroy();
+        }
+        return rawResponse;
+    };
+
+    const restartWithLimits = async (limits: { maxBodyBytes?: number; maxDataBodyBytes?: number; maxAttachmentBytes?: number }) => {
+        stopServer?.();
+        const isolatedServer = await startCloudServer({
+            host: '127.0.0.1',
+            port: 0,
+            dataDir,
+            allowedAuthTokens: new Set([integrationToken]),
+            ...limits,
+        });
+        baseUrl = `http://127.0.0.1:${isolatedServer.port}`;
+        stopServer = isolatedServer.stop;
+        return isolatedServer.port;
+    };
+
+    test('lets the app answer a body above the Bun default transport limit with JSON', async () => {
+        // 139 MB is above Bun's 128 MiB default but inside the largest configured
+        // limit, so the small-endpoint check must be the one that refuses it.
+        const port = await restartWithLimits({ maxDataBodyBytes: 140_000_000 });
+        const rawResponse = await postOversizedTaskHeaders(port, 139_000_000);
+        expect(rawResponse.startsWith('HTTP/1.1 413')).toBe(true);
+        expect(rawResponse).toContain('"error": "Payload too large: the limit is 2000000 bytes"');
+    });
+
+    test('keeps the app JSON 413 up to Bun default when every configured limit is small', async () => {
+        const port = await restartWithLimits({ maxBodyBytes: 100, maxDataBodyBytes: 1_000, maxAttachmentBytes: 1_000 });
+        const rawResponse = await postOversizedTaskHeaders(port, 100_000_000);
+        expect(rawResponse.startsWith('HTTP/1.1 413')).toBe(true);
+        expect(rawResponse).toContain('"error": "Payload too large: the limit is 100 bytes"');
+    });
+
+    test('refuses a sync document over the data limit with the limit in the JSON answer', async () => {
+        const body = JSON.stringify({ tasks: [], projects: [], sections: [], areas: [], settings: { pad: 'x'.repeat(50_000_000) } });
+        const response = await fetch(`${baseUrl}/v1/data`, {
+            method: 'PUT',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body,
+        });
+        expect(response.status).toBe(413);
+        expect(await response.json()).toEqual({
+            error: 'Payload too large: the limit is 50000000 bytes',
+            limitBytes: 50_000_000,
+        });
     });
 
     test('search tolerates stored malformed assignees without rewriting data (#1233)', async () => {
@@ -3413,6 +3564,52 @@ describe('cloud server api', () => {
         });
         expect(refused.status).toBe(409);
         expect((await refused.json()).error).toBe('Focus limit of 3 reached');
+    });
+
+    test('enforces the Focus cap when a PATCH activates a queued star', async () => {
+        const queuedId = crypto.randomUUID();
+        const plainId = crypto.randomUUID();
+        expect((await seedFocusData([
+            makeTestTask({ id: queuedId, title: 'Queued', status: 'next', startTime: '2099-01-01', isFocusedToday: true }),
+            makeTestTask({ id: plainId, title: 'Plain', status: 'next', isFocusedToday: false }),
+        ], 1)).status).toBe(200);
+
+        const plainStar = await fetch(`${baseUrl}/v1/tasks/${plainId}`, {
+            method: 'PATCH',
+            headers: { ...authHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ isFocusedToday: true }),
+        });
+        expect(plainStar.status).toBe(200);
+
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
+        });
+        let activate: Response;
+        try {
+            activate = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, {
+                method: 'PATCH',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ startTime: null }),
+            });
+        } finally {
+            stdoutSpy.mockRestore();
+        }
+        expect(activate.status).toBe(409);
+        expect((await activate.json()).error).toBe('Focus limit of 1 reached');
+        const receipt = captured.map((line) => JSON.parse(line) as { message: string; context?: Record<string, unknown> })
+            .find((entry) => entry.context?.releaseCheck === 'v1.3.5/cloud-focus-queued-activation');
+        expect(receipt?.message).toBe('Cloud refused a queued Focus star on activation');
+        expect(receipt?.context).toEqual({
+            releaseCheck: 'v1.3.5/cloud-focus-queued-activation', operation: 'patch', outcome: 'refused-limit', count: 1,
+        });
+        expect(captured.join('')).not.toContain('Queued');
+        expect(captured.join('')).not.toContain(queuedId);
+
+        const unchanged = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, { headers: authHeaders });
+        expect(unchanged.status).toBe(200);
+        expect((await unchanged.json()).task.startTime).toBe('2099-01-01');
     });
 
     test('preserves a valid over-cap Focus snapshot on PUT', async () => {

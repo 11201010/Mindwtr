@@ -54,6 +54,8 @@ class CoreHost(
     private val widgets: HostWidgets? = null,
     /** The background sync job kept scheduled or cancelled, as core decides (CoreWork.scheduleSync); null: this host has none. */
     private val scheduleBackgroundSync: ((Boolean) -> Unit)? = null,
+    /** The build as Settings › About reports it (AboutSettings.kt aboutAppInfo, JSON); null: this host has no About. */
+    private val appInfo: String? = null,
 ) {
     /**
      * Reminder alarms on the platform (pilot/Reminders.kt): core's plan applied in core's order, the notification permission as RN
@@ -95,6 +97,8 @@ class CoreHost(
 
         /** How long a timed-out operation may take to end once cancelled, before the host stops for good. */
         const val DRAIN_MS = 10_000L
+        /** One idle pump turn takes host-call answers and due timers until this much time has passed (D9). */
+        const val PUMP_TURN_MS = 8
         /**
          * How long a caller waits for a long operation ([callLong]: a Sync screen command, whose sync can make several requests
          * of up to HostIo's 5 min each). Past it the caller stops waiting; the operation holds no engine time, so it goes on.
@@ -144,6 +148,12 @@ class CoreHost(
 
     private fun <T> onEngine(work: () -> T): T {
         if (Thread.currentThread() === engineThread) return work()
+        // The caller's wait, queue and run, as a trace section (merge profiling: how long a call waits behind the engine's other work).
+        return traced("core:wait") { onEngineQueued(work) }
+    }
+
+    /** [work] on the engine, queued behind the tasks before it; the caller waits. */
+    private fun <T> onEngineQueued(work: () -> T): T {
         val task = synchronized(lifecycleLock) {
             check(shutdown == null) { "Core host is closed" }
             executor.submit(Callable { work() })
@@ -345,6 +355,10 @@ class CoreHost(
         bridge.setProperty("kvMultiRemove", guarded { args -> keyValue.multiRemove(stringList(args[0] as String)); null })
         // Debug builds only (check-ai-device.mjs): RN's AI consent record goes before boot, so the check sees RN's question again.
         if (debugFault("ai_consent_reset") == "1") keyValue.remove("mindwtr-ai-provider-consent-v1")
+        // Debug builds only (check-about-device.mjs): the day's heartbeat and the update check's day go before boot, so the check
+        // sees this boot's heartbeat and About's silent check (RN's keys: core's HEARTBEAT_LAST_SENT_DAY_KEY, UPDATE_BADGE_*).
+        if (debugFault("about_reset") == "1") keyValue.multiRemove(listOf("mindwtr-analytics-last-heartbeat-day", "mindwtr-update-last-check",
+            "mindwtr-update-available", "mindwtr-update-latest"))
         // An event for the screens: handed on as text; a listener that throws never reaches JS.
         bridge.setProperty("hostEvent", guarded { args -> runCatching { onEvent?.invoke(args[0] as String) }; null })
         // The pending-captures queue (core's ingestPendingCaptures): app-private files only.
@@ -382,6 +396,8 @@ class CoreHost(
         engine.globalObject.setProperty("__mindwtrNative", bridge)
         // The build's flavor (D8): core reads it as RN's isFossBuild.
         engine.globalObject.setProperty("__mindwtrFossBuild", BuildConfig.FOSS)
+        // The build's version, channel and endpoints for About, feedback and the heartbeat (host-about.ts).
+        appInfo?.let { engine.globalObject.setProperty("__mindwtrAppInfo", it) }
     }
 
     /**
@@ -641,6 +657,16 @@ class CoreHost(
     fun aiRequest(name: String, json: String, handle: LongCall = LongCall()): JSONObject = callLong("aiRequest", name, json, handle = handle)
 
     /**
+     * A Settings › About request (host-entry.ts ABOUT_REQUESTS) with [json] unchanged: an update check, a feedback send, the
+     * heartbeat, the prompts' active day or the store review's gate. Each may wait on the network, so it never holds the engine
+     * ([callLong]); none is a journaled write.
+     */
+    fun aboutRequest(name: String, json: String): JSONObject = callLong("aboutRequest", name, json)
+
+    /** One of RN's AsyncStorage values (RnKeyValue), read on the engine thread; null when it has none. */
+    fun rnValue(key: String): String? = onEngine { keyValue.get(key) }
+
+    /**
      * An attachment's Download, Open (the bytes first) or the editor's draft settlement (host-entry.ts ATTACHMENT_REQUESTS) with
      * [json] unchanged: a download waits on the network for minutes, so it never holds the engine ([callLong]). None is a journaled
      * write: a project download's availability fields are identity-guarded and run again by the next Download or sync.
@@ -716,9 +742,60 @@ class CoreHost(
      * Every host call. A write ([WriteJournal.WRITES]) is on disk in the journal before the engine sees it, and core's reply
      * settles it: a final reply drops it, SAVE_FAILED keeps it for the owed retry, and no reply (a timeout, a stopped engine,
      * process death) keeps it for the next boot's replay.
+     *
+     * A caller off the engine thread never holds the engine while its operation waits (D9): the engine starts the operation and
+     * answers at once when it ended in that turn; otherwise the operation goes on in the pump's turns ([pollCalls]), and the
+     * host calls queued meanwhile run between them. A caller on the engine thread (a nested call) pumps until its answer.
      */
-    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = deadlineOf(method, args.toList())): JSONObject = onEngine {
-        stopped?.let { throw IllegalStateException(it) }
+    private fun callAsync(method: String, vararg args: Any?, deadlineMs: Long = deadlineOf(method, args.toList())): JSONObject {
+        val done = CompletableFuture<JSONObject>()
+        val wait = {
+            try { done.get() } catch (failure: ExecutionException) { throw failure.cause ?: failure }
+        }
+        if (Thread.currentThread() === engineThread) {
+            stopped?.let { throw IllegalStateException(it) }
+            finish(begin(method, args, deadlineMs, done), answer(method, args, deadlineMs))
+            return wait()
+        }
+        // The caller's whole wait, queue, start and answer, as one trace section (merge profiling).
+        return traced("core:wait") {
+            onEngineQueued {
+                stopped?.let { throw IllegalStateException(it) }
+                // A journaled write waits for the write before it (writeQueue); a read starts now.
+                begin(method, args, deadlineMs, done).let { if (writeQueue.admit(it)) start(it) }
+            }
+            wait()
+        }
+    }
+
+    /** A host call on its way: its operation's id, its journal entry (a write), the debug stop hook, and its caller's answer. */
+    private class Call(val method: String, val args: Array<out Any?>, val deadlineMs: Long, val entry: WriteJournal.Entry?, val stop: String,
+                       val done: CompletableFuture<JSONObject>) {
+        var id = ""
+        var deadlineAt = 0L
+        /** Its deadline check, cancelled once it is answered (D9 review: no check outlives its call). */
+        var deadlineCheck: ScheduledFuture<*>? = null
+    }
+
+    /** Calls whose operation has not answered yet, in start order; engine thread only. */
+    private val calls = ArrayList<Call>()
+
+    /** Journaled writes start one at a time, in the journal's order (D9a review); engine thread only. */
+    private val writeQueue = WriteQueue<Call> { it.entry != null }
+
+    /** [call] ended: the write waiting behind it starts in the engine's next task (never inside this call's own poll). */
+    private fun startNextWrite(call: Call) {
+        val next = writeQueue.ended(call) ?: return
+        runCatching {
+            executor.execute {
+                if (stopped == null && context != null) start(next)
+                else next.done.completeExceptionally(IllegalStateException(stopped ?: "Core host is closed"))
+            }
+        }.onFailure { next.done.completeExceptionally(it) }
+    }
+
+    /** [method]'s journal entry on disk (a write) and the debug hooks before its send; engine thread. */
+    private fun begin(method: String, args: Array<out Any?>, deadlineMs: Long, done: CompletableFuture<JSONObject>): Call {
         val entry = if (method in WriteJournal.WRITES) checkNotNull(journal).append(method, args.toList()) else null
         val stop = if (entry != null) debugFault("journal_stop") else ""
         if (entry != null) {
@@ -726,14 +803,84 @@ class CoreHost(
             debugDelay("delay_before_ms")
             journalStop(stop, "before", entry)
         }
-        val result = answer(method, args, deadlineMs)
-        if (entry != null) {
+        return Call(method, args, deadlineMs, entry, stop, done)
+    }
+
+    /** [call]'s reply [result]: the debug hooks after it, its journal entry settled, then its caller answered; engine thread. */
+    private fun finish(call: Call, result: JSONObject) {
+        call.deadlineCheck?.cancel(false)
+        if (call.entry != null) {
             debugDelay("delay_after_ms")
-            journalStop(stop, "after", entry)
+            journalStop(call.stop, "after", call.entry)
         }
-        if (method in WriteJournal.WRITES) settle(entry, result, replay = false)
-        if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
-        result.getJSONObject("value")
+        try {
+            if (call.method in WriteJournal.WRITES) settle(call.entry, result, replay = false)
+            if (!result.getBoolean("ok")) throw IllegalStateException(result.getString("error"))
+            call.done.complete(result.getJSONObject("value"))
+        } catch (failure: Throwable) {
+            call.done.completeExceptionally(failure)
+        }
+        startNextWrite(call)
+    }
+
+    /**
+     * Starts [call]'s operation. One that ended in this turn is answered now, without pumping: a screen's read never runs the
+     * work queued behind it (a sync's continuation). Otherwise the pump's turns carry it, and a check at its deadline ends it.
+     */
+    private fun start(call: Call) = traced("core:${call.method}") {
+        call.id = call(call.method, *call.args) as String
+        call.deadlineAt = SystemClock.uptimeMillis() + call.deadlineMs
+        val answer = call("poll", call.id) as String?
+        if (answer != null) {
+            finish(call, JSONObject(answer))
+        } else {
+            calls += call
+            runCatching {
+                call.deadlineCheck = executor.schedule({ pollCalls() }, call.deadlineMs, TimeUnit.MILLISECONDS)
+                executor.execute { idlePump() }
+            }
+        }
+        // This start may have finished other calls' operations (a promise they awaited).
+        settleWatched()
+        pollCalls()
+        schedulePump()
+    }
+
+    /** Answers each call whose operation answered, and ends each one past its deadline; engine thread, after every pump turn. */
+    private fun pollCalls() {
+        if (calls.isEmpty() || context == null || stopped != null) return
+        for (call in calls.toList()) {
+            val answer = call("poll", call.id) as String?
+            if (answer != null) {
+                calls.remove(call)
+                traced("core:${call.method}") { finish(call, JSONObject(answer)) }
+            } else if (SystemClock.uptimeMillis() >= call.deadlineAt) {
+                calls.remove(call)
+                traced("core:${call.method}") { expire(call) }
+                if (stopped != null) return
+            }
+        }
+    }
+
+    /**
+     * [call] passed its deadline: its signal fires, its fetches reject and new host calls are refused, so it ends now, before
+     * the failure is reported. One that still has not ended stops the host: no JS runs again, so it never resumes.
+     */
+    private fun expire(call: Call) {
+        call.deadlineCheck?.cancel(false)
+        call("cancel", call.id)
+        if (pumpUntil(call.id, DRAIN_MS) == null) {
+            val reason = "Core host stopped: ${call.method} did not end after its deadline"
+            stopped = reason
+            Log.e(TAG, reason)
+            call.done.completeExceptionally(IllegalStateException(reason))
+            closeOnEngine()
+            return
+        }
+        checkNotNull(context).globalObject.getJSFunction("__resumeHostCalls").call()
+        schedulePump()
+        call.done.completeExceptionally(IllegalStateException("Core ${call.method} timed out"))
+        startNextWrite(call)
     }
 
     /**
@@ -791,8 +938,24 @@ class CoreHost(
         pumpAt = Long.MAX_VALUE
         val engine = context ?: return
         if (stopped != null) return
-        runCatching { global(engine, "__pumpTimers").call() }.onFailure { Log.w(TAG, "Native Android idle pump failed error=${it.javaClass.simpleName}") }
+        // One bounded turn (D9): one answer or due timer at a time (__pumpOne), each timed with the promise jobs it set off
+        // (they run before the call returns), until PUMP_TURN_MS has passed. What is left waits for the next turn, queued
+        // behind the host calls that came meanwhile.
+        val turnStart = SystemClock.uptimeMillis()
+        var ran = 0
+        runCatching {
+            traced("core:idlePump") {
+                val one = global(engine, "__pumpOne")
+                do {
+                    ran = (one.call() as? Number)?.toInt() ?: 0
+                } while (ran > 0 && SystemClock.uptimeMillis() - turnStart < PUMP_TURN_MS)
+            }
+        }.onFailure { Log.w(TAG, "Native Android idle pump failed error=${it.javaClass.simpleName}") }
         settleWatched()
+        pollCalls()
+        if (context == null || stopped != null) return
+        // The turn ended on its budget with an item just run: there may be more, so the next turn is queued now.
+        if (ran > 0) runCatching { executor.execute { idlePump() } }
         schedulePump()
     }
 
@@ -830,8 +993,9 @@ class CoreHost(
             schedulePump()
             throw IllegalStateException("Core $method timed out")
         }
-        // Work this call's pump advanced: a long operation it finished, and the timers it left.
+        // Work this call's pump advanced: a long operation or a waiting call it finished, and the timers it left.
         settleWatched()
+        pollCalls()
         schedulePump()
         JSONObject(answer)
     }
@@ -914,7 +1078,7 @@ class CoreHost(
         val nextDelay = engine.globalObject.getJSFunction("__nextTimerDelay")
         val deadline = System.currentTimeMillis() + ms
         while (System.currentTimeMillis() < deadline) {
-            pump.call()
+            traced("core:pump") { pump.call() }
             (call("poll", id) as String?)?.let { return it }
             val delay = (nextDelay.call() as? Number)?.toLong() ?: 1L
             // An open fetch or secret call wakes the loop as soon as its answer is queued.
@@ -931,6 +1095,9 @@ class CoreHost(
         pumpTask = null
         watched.values.forEach { it.completeExceptionally(IllegalStateException(stopped ?: "Core host is closed")) }
         watched.clear()
+        calls.forEach { it.done.completeExceptionally(IllegalStateException(stopped ?: "Core host is closed")) }
+        calls.clear()
+        writeQueue.close().forEach { it.done.completeExceptionally(IllegalStateException(stopped ?: "Core host is closed")) }
         io.close()
         try {
             sqlite?.close()

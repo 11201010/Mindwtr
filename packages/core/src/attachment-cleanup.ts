@@ -48,8 +48,18 @@ export interface CleanupResult {
     errors: Array<{ id: string; error: string }>;
 }
 
-export function findOrphanedAttachments(appData: AppData): Attachment[] {
-    const allAttachments = new Map<string, Attachment>();
+export type AttachmentCleanupPolicyAttachment = Pick<Attachment, 'id' | 'uri'> & {
+    deletedAt?: string | null;
+    cloudKey?: string | null;
+    localStatus?: Attachment['localStatus'] | null;
+};
+export type AttachmentCleanupPolicyData<T extends AttachmentCleanupPolicyAttachment> = {
+    tasks: readonly { attachments?: readonly T[]; purgedAt?: string | null }[];
+    projects: readonly { attachments?: readonly T[]; purgedAt?: string | null }[];
+};
+
+export function findOrphanedAttachments<T extends AttachmentCleanupPolicyAttachment>(appData: AttachmentCleanupPolicyData<T>): T[] {
+    const allAttachments = new Map<string, T>();
     const activeReferenceIds = new Set<string>();
 
     for (const task of appData.tasks) {
@@ -104,6 +114,18 @@ function findPurgedParentAttachmentIds(appData: AppData): Set<string> {
  * pendingRemoteDeletes, which deliberately waits for the interval so retries
  * don't burn the attempt budget in minutes.
  */
+const attachmentHasFreshCleanupWork = (
+    attachment: Attachment,
+    parentPurged: boolean,
+    pendingCloudKeys: ReadonlySet<string>,
+): boolean => {
+    if (parentPurged) return true;
+    if (!attachment.deletedAt) return false;
+    if (attachment.kind === 'file' && attachment.localStatus !== 'missing') return true;
+    const cloudKey = sanitizeAttachmentCloudKeyForSyncMerge(attachment.cloudKey);
+    return Boolean(cloudKey && !pendingCloudKeys.has(cloudKey));
+};
+
 export function hasFreshAttachmentCleanupWork(appData: AppData): boolean {
     const pendingRemoteDeletes = normalizePendingRemoteDeletes(appData.settings.attachments?.pendingRemoteDeletes);
     // Drain an attempt-zero digest-qualified entry left by versions that used
@@ -117,22 +139,15 @@ export function hasFreshAttachmentCleanupWork(appData: AppData): boolean {
         return true;
     }
     const pendingCloudKeys = new Set(pendingRemoteDeletes.map((entry) => entry.cloudKey));
-    const hasWork = (attachments: readonly Attachment[] | undefined, parentPurged: boolean): boolean => {
-        if (!attachments?.length) return false;
-        if (parentPurged) return true;
-        return attachments.some((attachment) => {
-            if (!attachment.deletedAt) return false;
-            if (attachment.kind === 'file' && attachment.localStatus !== 'missing') return true;
-            const cloudKey = sanitizeAttachmentCloudKeyForSyncMerge(attachment.cloudKey);
-            return Boolean(cloudKey && !pendingCloudKeys.has(cloudKey));
-        });
-    };
+    const hasWork = (attachments: readonly Attachment[] | undefined, parentPurged: boolean): boolean => (
+        Boolean(attachments?.some((attachment) => attachmentHasFreshCleanupWork(attachment, parentPurged, pendingCloudKeys)))
+    );
     return appData.tasks.some((task) => hasWork(task.attachments, Boolean(task.purgedAt)))
         || appData.projects.some((project) => hasWork(project.attachments, Boolean(project.purgedAt)));
 }
 
-export function findDeletedAttachmentsForFileCleanup(appData: AppData): Attachment[] {
-    const deleted = new Map<string, Attachment>();
+export function findDeletedAttachmentsForFileCleanup<T extends AttachmentCleanupPolicyAttachment>(appData: AttachmentCleanupPolicyData<T>): T[] {
+    const deleted = new Map<string, T>();
 
     for (const task of appData.tasks) {
         for (const attachment of task.attachments || []) {
@@ -184,7 +199,7 @@ export type AttachmentCleanupLifecycleOptions = {
     isRemoteMissingError?: (error: unknown) => boolean;
     onRemoteAttachmentMissing?: (target: AttachmentCleanupRemoteTarget) => void;
     onRemoteDeleteError?: (target: AttachmentCleanupRemoteTarget, error: unknown) => void;
-    onBatchLimitReached?: (info: { limit: number; total: number }) => void;
+    onBatchLimitReached?: (info: { limit: number; total: number; fresh: number }) => void;
 };
 
 export type AttachmentCleanupLifecycleResult = {
@@ -223,11 +238,11 @@ export function normalizeAttachmentCleanupUri(uri?: string): string | undefined 
     return /^[a-z]:\//i.test(path) ? path.toLowerCase() : path;
 }
 
-export function findLiveAttachmentResourceReferences(appData: AppData): LiveAttachmentResourceReferences {
+export function findLiveAttachmentResourceReferences(appData: AttachmentCleanupPolicyData<AttachmentCleanupPolicyAttachment>): LiveAttachmentResourceReferences {
     const localUris = new Set<string>();
     const cloudKeys = new Set<string>();
 
-    const collect = (attachments: readonly Attachment[] | undefined, parentDeleted: boolean) => {
+    const collect = (attachments: readonly AttachmentCleanupPolicyAttachment[] | undefined, parentDeleted: boolean) => {
         if (parentDeleted) return;
         for (const attachment of attachments || []) {
             if (attachment.deletedAt) continue;
@@ -251,11 +266,20 @@ export function findLiveAttachmentResourceReferences(appData: AppData): LiveAtta
 }
 
 export function isAttachmentLocalResourceReferenced(
-    attachment: Attachment,
+    attachment: Pick<Attachment, 'uri'>,
     references: LiveAttachmentResourceReferences,
 ): boolean {
     const localUri = normalizeAttachmentCleanupUri(attachment.uri);
     return Boolean(localUri && references.localUris.has(localUri));
+}
+
+/** Processed tombstones keep their metadata without granting another local delete. */
+export function shouldDeleteAttachmentLocalResource(
+    attachment: Pick<AttachmentCleanupPolicyAttachment, 'uri' | 'deletedAt' | 'localStatus'>,
+    references: LiveAttachmentResourceReferences,
+): boolean {
+    const alreadyStampedTombstone = Boolean(attachment.deletedAt) && attachment.localStatus === 'missing';
+    return !alreadyStampedTombstone && !isAttachmentLocalResourceReferenced(attachment, references);
 }
 
 export function isAttachmentCloudResourceReferenced(
@@ -405,20 +429,27 @@ export async function runAttachmentCleanupLifecycle(
     let reachedBatchLimit = cleanupTargets.size > maxAttachmentTargets;
     const orphanedIds = new Set(orphanedAttachments.map((attachment) => attachment.id));
     const purgedParentAttachmentIds = findPurgedParentAttachmentIds(options.appData);
+    // Processed tombstones stay in the doc, so a batch taken in doc order would spend
+    // itself on them every cycle and never reach the rest: unprocessed work goes first.
+    const pendingCloudKeys = new Set(previousPendingByCloudKey.keys());
+    const hasFreshWork = (attachment: Attachment) => (
+        attachmentHasFreshCleanupWork(attachment, purgedParentAttachmentIds.has(attachment.id), pendingCloudKeys)
+    );
+    const orderedTargets = Array.from(cleanupTargets.values())
+        .sort((left, right) => Number(hasFreshWork(right)) - Number(hasFreshWork(left)));
     const processedOrphanedIds = new Set<string>();
     const processedFileTombstoneIds = new Set<string>();
     const clearedCloudKeys = new Set<string>();
     let processedCount = 0;
 
-    for (const attachment of cleanupTargets.values()) {
+    for (const attachment of orderedTargets) {
         if (processedCount >= maxAttachmentTargets) break;
         processedCount += 1;
         if (orphanedIds.has(attachment.id)) {
             processedOrphanedIds.add(attachment.id);
         }
         await options.beforeEachAttachment?.();
-        const alreadyStampedTombstone = Boolean(attachment.deletedAt) && attachment.localStatus === 'missing';
-        if (!alreadyStampedTombstone && !isAttachmentLocalResourceReferenced(attachment, liveResourceReferences)) {
+        if (shouldDeleteAttachmentLocalResource(attachment, liveResourceReferences)) {
             await options.deleteLocalAttachment(attachment);
         }
         // Attempted counts as processed: the pre-#1064 flow dropped the record
@@ -511,6 +542,7 @@ export async function runAttachmentCleanupLifecycle(
         options.onBatchLimitReached?.({
             limit: maxAttachmentTargets,
             total: Math.max(cleanupTargets.size, remoteCleanupTargets.size),
+            fresh: orderedTargets.filter(hasFreshWork).length,
         });
     }
 

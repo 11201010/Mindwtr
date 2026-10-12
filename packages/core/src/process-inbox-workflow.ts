@@ -46,7 +46,7 @@ function unionTokens(picked: readonly string[] | undefined, parsed: readonly str
 /** The half of a parsed processing title that maps onto decision fields. */
 export type ParsedProcessInboxTitleFields = Pick<
     Partial<Task>,
-    'contexts' | 'tags' | 'assignedTo' | 'priority' | 'energyLevel' | 'projectId' | 'areaId'
+    'contexts' | 'tags' | 'assignedTo' | 'priority' | 'energyLevel' | 'projectId' | 'areaId' | 'timeEstimate'
 >;
 
 /**
@@ -57,6 +57,7 @@ export type ParsedProcessInboxTitleFields = Pick<
  * Token lists join what the chips already hold — typing `@phone` adds a
  * context, it never replaces the ones the user toggled. Single-value tokens
  * win over the picker, which is the only way an explicit token can act at all.
+ * Estimates fill only an unset estimate: the selected duration stays in charge.
  * A parsed project still drops a directly assigned area (#958); a parsed area
  * leaves an existing project alone, since the project already carries one.
  *
@@ -73,6 +74,8 @@ export function mergeParsedProcessInboxFields(
     if (parsed.assignedTo) next.assignedTo = parsed.assignedTo;
     if (parsed.priority) next.priority = parsed.priority;
     if (parsed.energyLevel) next.energyLevel = parsed.energyLevel;
+    // The estimate control keeps its selected value; the token fills an unset estimate.
+    if (parsed.timeEstimate && !fields.timeEstimate) next.timeEstimate = parsed.timeEstimate;
     if (parsed.projectId || parsed.areaId) {
         Object.assign(next, resolveProcessInboxContainerFields(
             parsed.projectId || fields.projectId,

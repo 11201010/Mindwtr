@@ -44,7 +44,6 @@ vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ b
 vi.mock('lucide-react-native', () => ({ PauseCircle: () => null }));
 vi.mock('../task-edit-modal', () => ({ TaskEditModal: () => null }));
 vi.mock('../task-list/TaskListBulkBar', () => ({ getBulkMoveStatusOptions: () => [] }));
-vi.mock('../use-task-list-selection', () => ({ useTaskListSelection: () => ({}) }));
 vi.mock('../task-list-view', () => ({
   TaskListView: (props: unknown) => {
     mocked.taskListProps = props;
@@ -107,5 +106,19 @@ describe('WaitingView', () => {
 
     expect(mocked.state.updateProject).toHaveBeenCalledWith('p-parked', { status: 'active' });
     await vi.waitFor(() => expect(mocked.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error', message: 'disk full' })));
+  });
+
+  it('drops a selected task that a person filter hides', () => {
+    mocked.state.tasks = [{ ...waiting('alice-task'), assignedTo: 'Alice' }, { ...waiting('bob-task'), assignedTo: 'Bob' }];
+    act(() => { renderer!.update(<WaitingView />); });
+    act(() => { mocked.taskListProps.selection.toggleMultiSelect('alice-task'); });
+    expect(mocked.taskListProps.selection.selectedIdsArray).toEqual(['alice-task']);
+
+    const bobChip = renderer!.root.find((node) => typeof node.props.onPress === 'function'
+      && node.findAll((child) => child.props.children === 'Bob').length > 0);
+    act(() => { bobChip.props.onPress(); });
+
+    expect(mocked.taskListProps.tasks.map((task: Task) => task.id)).toEqual(['bob-task']);
+    expect(mocked.taskListProps.selection.selectedIdsArray).toEqual([]);
   });
 });

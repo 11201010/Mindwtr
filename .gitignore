@@ -107,6 +107,7 @@ docs/agents
 
 # CI artifacts
 scripts/ci/__pycache__/
+scripts/maintenance/__pycache__/
 
 # Wiki (maintained in separate repo)
 Mindwtr.wiki/

@@ -32,7 +32,7 @@ const HELP_BY_LOCALE: Record<string, Record<string, string>> = {
 
 describe('formatQuickAddHelp', () => {
     it('leaves the sentence untouched while Priorities is on', () => {
-        expect(formatQuickAddHelp(en['quickAdd.help'], { priorities: true })).toBe(en['quickAdd.help']);
+        expect(formatQuickAddHelp(en['quickAdd.help'], { priorities: true, timeEstimates: true })).toBe(en['quickAdd.help']);
     });
 
     it('strips the token and its separator in every locale that ships the sentence', () => {
@@ -40,7 +40,9 @@ describe('formatQuickAddHelp', () => {
             const source = strings['quickAdd.help'];
             expect(source, locale).toBeTruthy();
             expect(source, locale).toContain('/priority:');
-            const stripped = formatQuickAddHelp(source, { priorities: false });
+            expect(source, locale).toContain('/estimate:45m');
+            expect(source.match(/\/estimate:/g), locale).toHaveLength(1);
+            const stripped = formatQuickAddHelp(source, { priorities: false, timeEstimates: true });
             expect(stripped, locale).not.toContain('/priority:');
             // Only the token goes: neighbouring commands survive and no doubled
             // separator is left behind.
@@ -50,8 +52,23 @@ describe('formatQuickAddHelp', () => {
         }
     });
 
+    it('strips the estimate token in every locale while Time estimates is off', () => {
+        for (const [locale, strings] of Object.entries(HELP_BY_LOCALE)) {
+            const source = strings['quickAdd.help'];
+            const stripped = formatQuickAddHelp(source, { priorities: true, timeEstimates: false });
+            expect(stripped, locale).not.toContain('/estimate:');
+            expect(stripped, locale).toContain('/priority:');
+            expect(stripped, locale).toContain('/review:');
+            expect(stripped, locale).toContain('/note:');
+            expect(stripped, locale).not.toMatch(/[,،、]\s*[,،、]/u);
+            const both = formatQuickAddHelp(source, { priorities: false, timeEstimates: false });
+            expect(both, locale).not.toMatch(/\/(?:estimate|priority):/);
+            expect(both, locale).not.toMatch(/[,،、]\s*[,،、]/u);
+        }
+    });
+
     it('leaves a locale that reworded the token alone rather than mangling it', () => {
         const reworded = 'Quick add supports /prioridad:<nivel>, /next.';
-        expect(formatQuickAddHelp(reworded, { priorities: false })).toBe(reworded);
+        expect(formatQuickAddHelp(reworded, { priorities: false, timeEstimates: false })).toBe(reworded);
     });
 });

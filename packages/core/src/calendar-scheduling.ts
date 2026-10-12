@@ -236,6 +236,7 @@ export function buildCalendarQuickAddTaskDraft(
         status: 'next',
         ...parsed.props,
         startTime: options.start.toISOString(),
+        // The calendar duration control owns the scheduled block, including its estimate.
         timeEstimate: minutesToTimeEstimate(options.durationMinutes),
     };
 

@@ -31,6 +31,7 @@ import {
     repairMergedSyncReferences,
     resolveCaptureStatusForStart,
     resolveTaskFocusCreation,
+    resolveTaskFocusUpdate,
     selectFocusedCount,
     type Area,
     type AppData,
@@ -272,9 +273,12 @@ type BunRuntime = {
     serve: (options: {
         hostname: string;
         port: number;
+        maxRequestBodySize: number;
         fetch: (req: Request) => Response | Promise<Response>;
     }) => BunServer;
 };
+
+const BUN_DEFAULT_MAX_REQUEST_BODY_BYTES = 128 * 1024 * 1024;
 
 const getBunRuntime = (): BunRuntime | undefined => (
     (globalThis as typeof globalThis & { Bun?: BunRuntime }).Bun
@@ -794,27 +798,30 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
             // completion/recurrence logic in applyTaskUpdates runs, so
             // REST writes obey the same rules as the desktop/mobile store.
             const normalizedUpdates = normalizeTaskUpdate(existing, updates);
-            const isAddingFocus = normalizedUpdates.isFocusedToday === true
-                && existing.isFocusedToday !== true;
-            if (isAddingFocus) {
-                const focusedCount = selectFocusedCount([...data.tasks]);
-                const focusTaskLimit = normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit);
-                const queued = isTaskFutureFocusCandidate({ ...existing, ...normalizedUpdates });
-                if (!queued && focusedCount >= focusTaskLimit) {
-                    logInfo('Cloud task Focus write policy applied', {
-                        releaseCheck: 'v1.3.0/cloud-focus-write-parity',
-                        operation: 'patch',
-                        outcome: 'refused-limit',
-                        count: focusedCount,
-                    });
-                    return errorResponse(`Focus limit of ${focusTaskLimit} reached`, 409);
-                }
-                logInfo('Cloud task Focus write policy applied', {
-                    releaseCheck: queued ? 'v1.3.3/scheduled-focus-cloud-write' : 'v1.3.0/cloud-focus-write-parity',
+            const focusedCount = selectFocusedCount([...data.tasks]);
+            const focusDecision = resolveTaskFocusUpdate(existing, { ...existing, ...normalizedUpdates }, {
+                focusedCount,
+                focusTaskLimit: normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit),
+                now: new Date(),
+            });
+            if (focusDecision.outcome === 'refused-limit' && existing.isFocusedToday === true) {
+                // The star was already on but queued for a later day; this write made it current.
+                logInfo('Cloud refused a queued Focus star on activation', {
+                    releaseCheck: 'v1.3.5/cloud-focus-queued-activation',
                     operation: 'patch',
-                    outcome: queued ? 'queued' : 'focused',
-                    count: focusedCount + (queued ? 0 : 1),
+                    outcome: focusDecision.outcome,
+                    count: focusedCount,
                 });
+            } else if (focusDecision.outcome !== 'unchanged') {
+                logInfo('Cloud task Focus write policy applied', {
+                    releaseCheck: focusDecision.outcome === 'queued' ? 'v1.3.3/scheduled-focus-cloud-write' : 'v1.3.0/cloud-focus-write-parity',
+                    operation: 'patch',
+                    outcome: focusDecision.outcome,
+                    count: focusedCount + (focusDecision.outcome === 'focused' ? 1 : 0),
+                });
+            }
+            if (focusDecision.outcome === 'refused-limit') {
+                return errorResponse(focusDecision.message, 409);
             }
             const { updatedTask, nextRecurringTask } = applyTaskUpdates(
                 existing,
@@ -1122,6 +1129,7 @@ type CloudServerOptions = {
     maxPerWindow?: number;
     maxAttachmentPerWindow?: number;
     maxBodyBytes?: number;
+    maxDataBodyBytes?: number;
     maxAttachmentBytes?: number;
     requestTimeoutMs?: number;
     allowedAuthTokens?: AllowedAuthTokenInput;
@@ -1149,6 +1157,7 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
         rateMax: options.maxPerWindow,
         attachmentRateMax: options.maxAttachmentPerWindow,
         maxBodyBytes: options.maxBodyBytes,
+        maxDataBodyBytes: options.maxDataBodyBytes,
         maxAttachmentBytes: options.maxAttachmentBytes,
         anyTokenMaxNamespaces: options.maxAnyTokenNamespaces,
         requestTimeoutMs: options.requestTimeoutMs,
@@ -1163,6 +1172,7 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
     const maxPerWindow = runtimeConfig.rateMax;
     const maxAttachmentPerWindow = runtimeConfig.attachmentRateMax;
     const maxBodyBytes = runtimeConfig.maxBodyBytes;
+    const maxDataBodyBytes = runtimeConfig.maxDataBodyBytes;
     const maxAttachmentBytes = runtimeConfig.maxAttachmentBytes;
     const allowedAuthTokens = normalizeAllowedAuthTokens(
         options.allowedAuthTokens === undefined
@@ -1239,6 +1249,9 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
     const dataServerConfig: ServerConfig = {
         ...baseServerConfig,
         guardMethods: (method) => method === 'PUT' || method === 'GET',
+        readBodyBeforeAdmission: (req, signal) => (
+            req.method === 'PUT' ? readJsonBody(req, maxDataBodyBytes, signal) : undefined
+        ),
     };
     const calendarFeedServerConfig: ServerConfig = {
         ...baseServerConfig,
@@ -1357,6 +1370,13 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
     const server = bunRuntime.serve({
         hostname: host,
         port,
+        // Bun refuses a larger Content-Length with an empty 413 before the handler
+        // runs. Keep Bun's own 128 MiB default as the floor and sit just above the
+        // largest app limit, so the app's capped reads answer with JSON naming the limit.
+        maxRequestBodySize: Math.max(
+            BUN_DEFAULT_MAX_REQUEST_BODY_BYTES,
+            Math.max(maxBodyBytes, maxDataBodyBytes, maxAttachmentBytes) + 1_048_576,
+        ),
         async fetch(req: Request) {
             const requestId = generateRequestId();
             const requestStartedAt = performance.now();
@@ -1628,13 +1648,20 @@ export async function startCloudServer(options: CloudServerOptions = {}): Promis
                     }
 
                     if (req.method === 'PUT') {
-                        // Namespace admission has already reserved a valid empty
-                        // document, so body streaming and validation never hold the
+                        // The capped read started before namespace admission
+                        // (readBodyBeforeAdmission), so validation never holds the
                         // global admission lock.
-                        const body = await readJsonBody(req, maxBodyBytes, requestAbortController.signal);
+                        const body = await ctx.body;
                         if (isBodyReadError(body)) {
                             const err = body.__mindwtrError;
-                            return errorResponse(String(err?.message || 'Payload too large'), Number(err?.status) || 413);
+                            const status = Number(err?.status) || 413;
+                            // limitBytes lets a client name the server's limit without parsing the message.
+                            return jsonResponse(
+                                status === 413
+                                    ? { error: String(err?.message), limitBytes: maxDataBodyBytes }
+                                    : { error: String(err?.message) },
+                                { status },
+                            );
                         }
                         if (!body) return errorResponse('Missing body');
                         if (typeof body !== 'object') return errorResponse('Invalid JSON body');

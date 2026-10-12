@@ -1,3 +1,4 @@
+import { createChecklistProjectConversionActions } from './checklist-project-conversion';
 import { createWithEqualityFn } from 'zustand/traditional';
 import { useShallow } from 'zustand/react/shallow';
 import { subscribeWithSelector } from 'zustand/middleware';
@@ -21,7 +22,7 @@ import { markCoreStartupPhase } from './startup-profiler';
 import { createProjectActions } from './store-projects';
 import { createSettingsActions } from './store-settings';
 import { createTaskActions } from './store-tasks';
-import { createArchiveRetentionActions } from './store-archive-retention';
+import { createArchiveRetentionActions, resetArchiveRetentionSyncForTests } from './store-archive-retention';
 import { sleep } from './async-utils';
 import { instrumentStoreSubscribe } from './store-notify-profiler';
 import { runAfterStoreWriteLock } from './data-transfer-transaction';
@@ -243,6 +244,7 @@ export const resetForTests = () => {
         errorAutoClearTimer = null;
     }
     persistenceRetryInFlight = null;
+    resetArchiveRetentionSyncForTests();
 };
 
 type EntityCollectionConfig<T extends { id: string }> = {
@@ -636,6 +638,8 @@ const STORE_WRITE_ACTION_KEYS = [
     'purgeDeletedTasks',
     'duplicateTask',
     'promoteTaskToProject',
+    'convertChecklistToProject',
+    'undoChecklistToProject',
     'resetTaskChecklist',
     'moveTask',
     'batchUpdateTasks',
@@ -734,6 +738,7 @@ export const useTaskStore = createWithEqualityFn<TaskStore>()(subscribeWithSelec
             getSaveGeneration: () => pendingVersion,
             getStorage: () => storage,
         }),
+        ...createChecklistProjectConversionActions({ set, get, debouncedSave, flushPendingSave }),
         ...createTaskActions({
             set,
             get,

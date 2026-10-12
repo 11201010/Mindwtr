@@ -13,14 +13,38 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // inactive-sync-credential: fixed service category only; no endpoint or secret.
+    'service',
+    // webdav-settings-clear reuses backend and outcome below.
+    // webdav-setup-probe: fixed posture/outcome categories and an optional validated HTTP status.
+    'requireStrongEtag', 'httpStatus',
+    // mobile-sync-follow-up: fixed request class, one aggregate comparison; no IDs, values or paths.
+    'requestClass', 'comparison',
+    'outgoingTasksSig', 'outgoingProjectsSig', 'outgoingSectionsSig', 'outgoingAreasSig', 'outgoingPeopleSig', 'outgoingSettingsSig',
+    'priorRemoteTasksSig', 'priorRemoteProjectsSig', 'priorRemoteSectionsSig', 'priorRemoteAreasSig', 'priorRemotePeopleSig', 'priorRemoteSettingsSig',
+    // reminder-boot-recovery: native scheduling acknowledgments, not a DB-row inventory count.
+    'requested', 'rearmed', 'skipped', 'failed', 'bootEnabled', 'exactAllowed',
+    // renderer-navigation: fixed route categories, a runtime token, and coarse library sizes.
+    'rendererRun', 'navigationSequence', 'previousView', 'nextView', 'actualView',
+    'taskCountBucket', 'projectCountBucket', 'trashCountBucket', 'historyCountBucket',
+    'referenceCountBucket', 'boardCountBucket', 'density', 'showDetails', 'editorOpen', 'documentVisibility',
+    // task-link-open reuses releaseCheck and outcome below.
+    // task-copy-diagnostics reuses releaseCheck and outcome below; source is the menu/shortcut category.
+    'source', 'documentFocused', 'activationSupported', 'activationActive', 'clipboardAvailable', 'errorKind',
+    // ios-search-publication reuses releaseCheck, operation, outcome, enabled, and count below.
+    // ios-search-snapshot reuses releaseCheck and count below.
+    // ios-entity-link reuses releaseCheck, kind, and outcome below.
+    // obsidian-inline-tag reuses releaseCheck and count below.
     // webdav-host-upload-limit and webdav-host-download-limit reuse releaseCheck, operation, and outcome below.
     // ios-local-attachment-host, ios-attachment-draft-owned, ios-http-transport, ios-secure-storage, ios-sync-crypto, ios-device-storage and ios-legacy-secret-retirement reuse releaseCheck, operation, and outcome below.
     // automation concurrent-write replay; capture routing reuses outcome below.
+    'enabled',
     'retryCount',
     // deferred-attachment-pass: which pass owes the deferred pre-sync phase's work.
     'owed',
     // candidate-ciphertext-probe: what the activation candidate's folder held (plaintext, encrypted or mixed).
     'found',
+    // native-splash-cap reuses releaseCheck, stage, and durationMs below.
     // widget-publication-after-content: what ran the held widget publication (content, boot-timeout, resume-fallback).
     'trigger',
     // calendar-mirror-filter reuses releaseCheck, platform, stage, and count below.
@@ -29,6 +53,7 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'allDayNonMidnightCount', 'localDayAheadCount', 'localDayBehindCount',
     'nativeColorCount', 'fallbackColorCount',
     // someday-section-move reuses releaseCheck, count, and operation below.
+    // start-only-recurrence reuses releaseCheck, outcome, and count below; no task data.
     // archive-reactivation-validation reuses releaseCheck, outcome, and count below.
     // mcp-core-log-stderr: count of the first event actually forwarded.
     'forwardedEventCount',
@@ -93,6 +118,12 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'route', 'elapsedMs', 'moduleElapsedMs',
     // Global shortcut startup: bounded configured and applied shortcut names.
     'requestedShortcut', 'appliedShortcut',
+    // cleanup-batch-fresh-first: batch size and how many targets still had work (with total below).
+    'limit', 'fresh',
+    // ios-reminder-apply: confirmed native effect counts.
+    'scheduled', 'cancelled',
+    // PR1348 native reminder replacement fields.
+    'tagged', 'replaced', 'taggedRemoved',
     'releaseCheck', 'backend', 'statusPublished', 'lastSyncAt', 'lastSyncStatus',
     'artifact', 'cloudProvider', 'scheme', 'host', 'delivery', 'deduped',
     // UpNote handoff diagnostics contain only the surface, scheme and outcome.
@@ -106,6 +137,8 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // desktop-reminder-fired / desktop-notification-path (apps/desktop/src/lib/notification-service.tsx)
     'kind', 'entity', 'fireAt', 'path', 'error',
     'deferred', 'ids',
+    // cloud-data-body-limit reuses status below: the sync data size and the server's limit, in bytes.
+    'limitBytes', 'bodyBytes',
     // streamed-upload-head-fallback (core WebDAV attachment pass): the attachment id only.
     'id',
     // webdav-activation-batches (core activation coordinator)
@@ -154,9 +187,33 @@ const RELEASE_CHECK_FIELD_NAMES = [
     // ios-share-capture (mobile incoming share host and capture form)
     'stage', 'type', 'providerReady', 'dataReady', 'disabled',
     'fileCount', 'candidateCount', 'attachedCount', 'skippedCount',
+    // native-about-update-check, native-about-feedback, native-analytics-heartbeat, native-analytics-opt-out and
+    // native-store-review (v1.3.5) reuse releaseCheck, mode and outcome above.
+    'source', 'play', 'badge', 'notice', 'diagnostics', 'channel', 'request', 'optedOut',
+    // android-installer-source (v1.3.5) reuses source above.
+    'installer',
+    // Android quick-capture IME observations (#1347): geometry and lifecycle only.
+    'captureRun', 'captureAttempt', 'phase', 'appliedInset', 'avoidanceEnabled',
+    'expanded', 'autoRecord', 'inputMounted', 'focusTracked',
+    'windowWidth', 'windowHeight', 'screenWidth', 'screenHeight',
+    'imeVisible', 'imeMetricsX', 'imeMetricsY', 'imeMetricsWidth', 'imeMetricsHeight',
+    'imeEventX', 'imeEventY', 'imeEventWidth', 'imeEventHeight',
+    'inputX', 'inputY', 'inputWidth', 'inputHeight', 'inputBottom',
 ];
 
 describe('release diagnostics field names', () => {
+    it('preserves the bounded WebDAV setup probe receipt', () => {
+        const receipt = {
+            releaseCheck: 'v1.3.5/webdav-setup-probe', phase: 'compatibility', outcome: 'failed',
+            reason: 'http', requireStrongEtag: 'false', httpStatus: '401',
+        };
+        expect(sanitizeLogContext(receipt)).toEqual(receipt);
+    });
+    it('preserves the content-free start-only recurrence receipt', () => {
+        const receipt = { releaseCheck: 'v1.3.5/start-only-recurrence', outcome: 'generated', count: 1 };
+        expect(sanitizeLogContext(receipt)).toEqual({ ...receipt, count: '1' });
+    });
+
     it('preserves the fixed iOS legacy secret retirement receipt', () => {
         const receipt = { releaseCheck: 'v1.3.5/ios-legacy-secret-retirement', operation: 'legacy-secret-retirement', outcome: 'delivered' };
         expect(sanitizeLogContext(receipt)).toEqual(receipt);

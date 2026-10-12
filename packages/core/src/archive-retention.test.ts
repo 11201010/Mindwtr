@@ -8,6 +8,7 @@ import type { AppData, Project, Section, Task } from './types';
 import { mergeAppDataWithStats } from './sync';
 import { repairMergedSyncReferences } from './sync-normalization';
 import { mockAppData } from './sync-test-utils';
+import { markArchiveRetentionSyncCompleted } from './store-archive-retention';
 
 const NOW = '2026-10-01T12:00:00.000Z';
 const OLD = '2026-08-01T12:00:00.000Z';
@@ -116,7 +117,7 @@ describe('Archive retention', () => {
         expect(useTaskStore.getState()._allProjects[0].archivedAt).toBe(NOW);
         expect(useTaskStore.getState().settings.gtd?.archiveRetentionDays).toBe(30);
         expect(saveData).toHaveBeenCalledTimes(1);
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         expect(useTaskStore.getState()._allTasks.every((row) => !row.purgedAt)).toBe(true);
         for (const invalid of [-1, 1.5, 36501, NaN, Infinity]) {
             expect((await useTaskStore.getState().setArchiveRetentionDays(invalid)).success).toBe(false);
@@ -143,7 +144,7 @@ describe('Archive retention', () => {
         const preview = getArchiveRetentionPreview(data, 30, Date.parse(NOW));
         expect(preview.projectIds).toEqual(['group']);
         await useTaskStore.getState().updateProject('group', { status: 'active' });
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         expect(useTaskStore.getState()._projectsById.get('group')?.purgedAt).toBeUndefined();
         expect(useTaskStore.getState()._tasksById.get('child')?.projectId).toBe('group');
         await useTaskStore.getState().updateProject('group', { status: 'archived' });
@@ -153,7 +154,7 @@ describe('Archive retention', () => {
         install(data.tasks, data.projects, data.sections);
         logs = [];
         saveData.mockClear();
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         const saved = saveData.mock.calls.at(-1)?.[0] as AppData;
         expect(saved.tasks.find((row) => row.id === 'child')).toMatchObject({ deletedAt: NOW, purgedAt: NOW });
         expect(saved.projects.find((row) => row.id === 'group')).toMatchObject({ deletedAt: NOW, purgedAt: NOW });
@@ -161,8 +162,36 @@ describe('Archive retention', () => {
         expect(saved.tasks.find((row) => row.id === 'child')?.projectId).toBeUndefined(); // compact tombstone, never detached live
         expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.4/archive-retention')).toHaveLength(1);
         saveData.mockClear();
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('waits for this session to sync so a restore on another device is not purged (R-2)', async () => {
+        // Laptop was offline for days: its copy of the task is still archived (rev 2).
+        // Meanwhile the phone un-archived and edited it (rev 4).
+        install([task('restored-elsewhere', { rev: 2 }), task('still-archived')]);
+        const phone = mockAppData([
+            task('restored-elsewhere', { status: 'next', archivedAt: undefined, updatedAt: RECENT, rev: 4, revBy: 'phone' }),
+            task('still-archived'),
+        ]);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: true })).success).toBe(true);
+        expect(saveData).not.toHaveBeenCalled();
+        expect(useTaskStore.getState()._allTasks.every((row) => !row.purgedAt)).toBe(true);
+        await useTaskStore.getState().runArchiveRetention({ syncConfigured: true });
+        expect(logs.filter((entry) => entry.context?.releaseCheck === 'v1.3.5/archive-retention-after-sync')).toHaveLength(1);
+
+        // The first sync merges the phone's restore; only then may retention run.
+        const state = useTaskStore.getState();
+        const laptop = mockAppData(state._allTasks, state._allProjects);
+        laptop.settings = state.settings;
+        const merged = mergeAppDataWithStats(laptop, phone, { nowIso: NOW }).data;
+        install(merged.tasks, merged.projects, merged.sections, state.settings);
+        markArchiveRetentionSyncCompleted();
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: true })).success).toBe(true);
+        const saved = saveData.mock.calls.at(-1)?.[0] as AppData;
+        expect(saved.tasks.find((row) => row.id === 'restored-elsewhere')).toMatchObject({ status: 'next', rev: 4 });
+        expect(saved.tasks.find((row) => row.id === 'restored-elsewhere')?.deletedAt).toBeUndefined();
+        expect(saved.tasks.find((row) => row.id === 'still-archived')).toMatchObject({ deletedAt: NOW, purgedAt: NOW });
     });
 
     it('keeps shared attachment bytes when another task or project survives', async () => {
@@ -170,7 +199,7 @@ describe('Archive retention', () => {
             cloudKey: 'attachments/shared', createdAt: OLD, updatedAt: OLD };
         install([task('expire', { attachments: [file] }), task('keep', { status: 'next', attachments: [file] })],
             [project('keep-project', { status: 'active', attachments: [file] })]);
-        await useTaskStore.getState().runArchiveRetention();
+        await useTaskStore.getState().runArchiveRetention({ syncConfigured: false });
         expect(useTaskStore.getState().settings.attachments?.pendingRemoteDeletes).toBeUndefined();
         expect(useTaskStore.getState()._tasksById.get('keep')?.attachments).toEqual([file]);
         expect(useTaskStore.getState()._projectsById.get('keep-project')?.attachments).toEqual([file]);
@@ -182,20 +211,20 @@ describe('Archive retention', () => {
         expect(getArchiveRetentionPreview(data, 30, Date.parse(NOW)).projectIds).toEqual([]);
         install([task('standalone')]);
         useTaskStore.setState({ editLockCount: 1 });
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         expect((await useTaskStore.getState().setArchiveRetentionDays(10)).success).toBe(false);
         expect(saveData).not.toHaveBeenCalled();
         useTaskStore.setState({ editLockCount: 0, persistenceFailure: {
             message: 'disk unavailable', failedAt: NOW, retrying: false,
         } });
-        expect((await useTaskStore.getState().runArchiveRetention()).success).toBe(true);
+        expect((await useTaskStore.getState().runArchiveRetention({ syncConfigured: false })).success).toBe(true);
         expect(saveData).not.toHaveBeenCalled();
     });
 
     it('does not claim successful cleanup when durable save fails', async () => {
         saveData.mockRejectedValue(new Error('disk unavailable'));
         install([task('standalone')]);
-        const operation = useTaskStore.getState().runArchiveRetention();
+        const operation = useTaskStore.getState().runArchiveRetention({ syncConfigured: false });
         await vi.advanceTimersByTimeAsync(30_000);
         expect((await operation).success).toBe(false);
         expect(logs.some((entry) => entry.context?.releaseCheck === 'v1.3.4/archive-retention')).toBe(false);

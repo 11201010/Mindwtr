@@ -40,7 +40,7 @@ const serializeHiddenExternalCalendarIds = (ids: Iterable<string>): string => (
     JSON.stringify([...ids].sort())
 );
 
-const readHiddenExternalCalendarIds = (): { serialized: string; value: Set<string> } => {
+export const readHiddenExternalCalendarIds = (): { serialized: string; value: Set<string> } => {
     if (typeof window === 'undefined') {
         return { serialized: '[]', value: new Set() };
     }
@@ -53,6 +53,19 @@ const readHiddenExternalCalendarIds = (): { serialized: string; value: Set<strin
     } catch {
         return { serialized: '[]', value: new Set() };
     }
+};
+
+/**
+ * Review modals show only calendars the user can see on the Calendar screen:
+ * enabled sources that are not switched off. Area filters do not apply.
+ */
+export const filterVisibleReviewCalendarEvents = (
+    events: readonly ExternalCalendarEvent[],
+    calendars: readonly ExternalCalendarSubscription[],
+): ExternalCalendarEvent[] => {
+    const hiddenIds = readHiddenExternalCalendarIds().value;
+    return filterCalendarEventsForAreas(events, calendars, { included: [], excluded: [] }, [])
+        .filter((event) => !hiddenIds.has(event.sourceId));
 };
 
 const eventDayRangeForVisibleRange = (

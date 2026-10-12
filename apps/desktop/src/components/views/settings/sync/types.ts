@@ -251,6 +251,7 @@ export type SyncEncryptionErrorKind =
     | 'wrong-passphrase'
     | 'rotation-first'
     | 'backend-required'
+    | 'backend-incompatible'
     | 'transition-incomplete'
     | 'generic';
 

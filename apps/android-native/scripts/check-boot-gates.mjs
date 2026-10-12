@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 import { build } from 'esbuild';
+import ts from 'typescript';
 
 const app = resolve(import.meta.dirname, '..');
 const consoleState = {
@@ -146,6 +147,15 @@ assert.equal(String(new consoleState.URL('https://host/dav/?dir=a+b')), 'https:/
 // A context automation link names a context with a space as "+" (core's parseContextAutomationUrl reads the query).
 assert.equal(new consoleState.URL('mindwtr://contexts?token=home+office&contextAction=activate').searchParams.get('token'), 'home office');
 assert.equal(new consoleState.URL('mindwtr://activate-context?name=%40home+office%2Bgym').searchParams.get('name'), '@home office+gym');
+// Query decoding is forgiving like the platform URL parser; response-body decoding stays fatal by default.
+for (const init of ['?task=%', '?task=%A', '?task=%GG', '?task=%E0%A4%A', '?task=%E0%A4', '?task=%80',
+    '?task=%C0%AF', '?task=%ED%A0%80', '?task=%F4%90%80%80', '?task=%F0%9F%98%80',
+    '?task=home+office%2Bgym', '?task=漢😀', '?task=%EF%BB%BFtask', '?task=\uD800',
+    '?task=%E0%A4%A&task=valid&project=p', '?ta%73k=first&task=second']) {
+    const expected = JSON.stringify([...new URLSearchParams(init)]);
+    assert.equal(JSON.stringify([...new consoleState.URLSearchParams(init)]), expected, `query decode ${JSON.stringify(init)}`);
+    assert.equal(JSON.stringify([...new consoleState.URL('mindwtr://open' + init).searchParams]), expected, `URL query decode ${JSON.stringify(init)}`);
+}
 // URLSearchParams.toString() has no "?", as WHATWG writes it: core posts it as a form body (dropbox-auth-tokens.ts) and puts
 // its own "?" before it (sync-helpers.ts); String(url) still writes the "?" before a query.
 for (const init of ['?a=1&b=x+y', 'a=1', '', { grant_type: 'refresh_token', refresh_token: 'r t+s' }, { a: 'x y', b: '1+1' }]) {
@@ -402,6 +412,44 @@ for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 
     assert.deepEqual([...new Uint8Array(await looseResponse.clone().arrayBuffer())], [0x20, 0xe2, 0x20]);
     assert.deepEqual(await failure(looseResponse.clone().text()), { name: 'TypeError', message: 'The encoded data was not valid for encoding utf-8' });
     assert.deepEqual(await failure(looseResponse.json()), { name: 'TypeError', message: 'The encoded data was not valid for encoding utf-8' });
+    // D9 A2: a body the host decoded (HostIo.read: strict UTF-8, `utf8` with its byte count) arrives as text. text() and json()
+    // read it, core's readDecodedResponseText finds its bytes, and arrayBuffer() and a clone give the exact bytes back (a BOM, an
+    // astral character and a NUL included).
+    const decodedValue = '\ufeff{"t":"Grüße ✓ 😀\u0000"}';
+    const decodedBytes = Buffer.from(decodedValue, 'utf8');
+    const decoded = run("fetch('https://dav.example/decoded')");
+    answer({ id: String(ids), status: 200, statusText: 'OK', url: 'https://dav.example/decoded', redirected: false, headers: [], utf8: true, bytes: decodedBytes.length, base64: `T${decodedValue}` });
+    net.__pumpTimers();
+    const decodedResponse = await decoded;
+    assert.equal(decodedResponse.mindwtrDecodedTextBytes, decodedBytes.length);
+    assert.equal(await decodedResponse.clone().text(), decodedValue);
+    assert.ok(Buffer.from(await decodedResponse.clone().arrayBuffer()).equals(decodedBytes), 'bytes from decoded text are exact');
+    assert.equal(await decodedResponse.text(), decodedValue);
+    assert.equal(decodedResponse.bodyUsed, true);
+    assert.equal(looseResponse.mindwtrDecodedTextBytes, undefined, 'a base64 body is not marked decoded');
+    // Review (Codex 1): a text body that starts like a bridge error is still the body, and a body the bridge cannot hand over
+    // fails its own fetch instead of stranding it.
+    const markerText = '!MindwtrNativeError:not an error';
+    const marker = run("fetch('https://dav.example/marker')");
+    answer({ id: String(ids), status: 200, statusText: 'OK', url: 'https://dav.example/marker', redirected: false, headers: [], utf8: true, bytes: markerText.length, base64: `T${markerText}` });
+    net.__pumpTimers();
+    assert.equal(await (await marker).text(), markerText);
+    const broken = run("fetch('https://dav.example/broken')");
+    answer({ id: String(ids), status: 200, statusText: 'OK', url: 'https://dav.example/broken', redirected: false, headers: [], body: true, base64: '!MindwtrNativeError:Answers closed' });
+    net.__pumpTimers();
+    assert.deepEqual(await failure(broken), { name: 'TypeError', message: 'I/O response body is unavailable' });
+    // The host's decoder and the polyfill's fatal one agree on the shared cases (StrictUtf8Test reads the same file). The file's
+    // answers are Node's own fatal decoder with the BOM kept, as the polyfill keeps it.
+    const parity = JSON.parse(readFileSync(resolve(app, 'scripts/utf8-parity-cases.json'), 'utf8'));
+    net.parity = parity.map(({ hex }) => new Uint8Array(Buffer.from(hex, 'hex')));
+    parity.forEach(({ hex, text: expected }, i) => {
+        let reference = null;
+        try { reference = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.from(hex, 'hex')); } catch { /* malformed */ }
+        assert.equal(expected, reference, `utf8-parity-cases.json is Node's answer for ${hex}`);
+        let polyfill = null;
+        try { polyfill = run(`new TextDecoder().decode(parity[${i}])`); } catch { /* malformed */ }
+        assert.equal(polyfill, expected, `the polyfill decodes ${hex} as the file says`);
+    });
 
     // Review 2: the host's deadline passed. Every open fetch rejects with an AbortError and is cancelled at the host, and a
     // new fetch or secret call is refused (it never reaches the host) until the host resumes calls.
@@ -434,6 +482,38 @@ for (const [init, key] of [['?token=first&a=1&token=second', 'token'], ['?a=1', 
     net.__resumeHostCalls();
     run("fetch('https://dav.example/later')");
     assert.equal(sent.at(-1).url, 'https://dav.example/later', 'calls reach the host again once it resumes them');
+
+    // D9: a bounded idle pump turn (CoreHost.idlePump) takes one answer or due timer at a time (__pumpOne) and times each with
+    // the promise jobs it set off, which run before the call returns; the turn ends once its budget is spent. Review (Codex 8):
+    // fifty cheap timers whose promise continuations take 10 ms each fill one turn with one timer, not all fifty.
+    net.__pumpTimers();
+    bridge.tick = (ms) => { clock += ms; };
+    run('globalThis.continued = 0; for (let i = 0; i < 50; i += 1) setTimeout(() => { Promise.resolve().then(() => { globalThis.continued += 1; __mindwtrNative.tick(10); }); }, 0)');
+    const turn = async () => {
+        const start = clock;
+        let ran = 0;
+        let taken = 0;
+        do {
+            ran = net.__pumpOne();
+            await new Promise((done) => setImmediate(done));
+            taken += ran;
+        } while (ran > 0 && clock - start < 8);
+        return taken;
+    };
+    assert.equal(await turn(), 1, 'one 10 ms continuation spends an 8 ms turn');
+    assert.equal(run('continued'), 1);
+    assert.equal(net.__nextTimerDelay(), 0, 'the other timers are still due, for the next turns');
+    let turns = 1;
+    while (net.__nextTimerDelay() === 0) { await turn(); turns += 1; }
+    assert.equal(run('continued'), 50);
+    assert.equal(turns, 50);
+    // Answers too: one per item, and a cancelled call's late answer counts as taken but settles nothing.
+    const slow = run("[fetch('https://dav.example/s1'), fetch('https://dav.example/s2')]");
+    for (const id of [String(ids - 1), String(ids)]) answer({ id, status: 200, statusText: 'OK', url: 'https://dav.example/s', redirected: false, headers: [], base64: '' });
+    assert.equal(net.__pumpOne(), 1);
+    assert.equal(net.__pumpOne(), 1);
+    assert.equal(net.__pumpOne(), 0, 'nothing left');
+    assert.equal((await Promise.all(slow)).length, 2);
 }
 
 // S4b: sync encryption's primitives on the host's crypto calls (host-polyfills.js __mindwtrCryptoCall, host-sync.ts
@@ -563,13 +643,14 @@ const sqliteBridge = readFileSync(resolve(app, 'android/app/src/main/java/tech/d
 const hostEntry = readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8');
 assert.match(hostEntry, /new ValidatedSqliteAdapter\(sqlite, \{ rejectConcurrentWrites: true \}\)/);
 // Review 11: sync's service, its Save commit and its screen use the secrets no other call's deadline refuses.
-assert.equal(/createNativeSync\(\{[\s\S]*?localData:/.exec(hostEntry)[0].match(/__mindwtrSyncSecrets/g)?.length, 3, 'sync binds the unrefused secrets');
+assert.equal(/const nativeSyncBindings: NativeSyncBindings = \{[\s\S]*?localData:/.exec(hostEntry)?.[0].match(/__mindwtrSyncSecrets/g)?.length, 3, 'sync binds the unrefused secrets');
+assert.match(hostEntry, /createNativeSync\(nativeSyncBindings\)/);
 // Durable request receipts: core's adapter commits a write's receipt in its data's transaction (the hook right before
 // COMMIT in both data saves, into native_request_receipts), and boot loads them before activation and the journal's replay.
 {
     assert.match(hostEntry, /class ValidatedSqliteAdapter extends NativeReceiptSqliteAdapter \{/);
     const bootBody = hostEntry.slice(hostEntry.indexOf('const boot = '), hostEntry.indexOf('globalThis.MindwtrHost ='));
-    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
+    const bootOrder = ['setStorageAdapter(adapter)', 'if (journaled) await loadNativeRequestReceipts(sqlite)', "else await loadNativeRequestReceipts(sqlite, { durableCommands: ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'] })", 'await adapter.getData()', 'await activateAndVerify(adapter'].map((text) => bootBody.indexOf(text));
     assert(bootOrder.every((index, i) => index > (i ? bootOrder[i - 1] : -1)), `receipts boot order ${bootOrder}`);
     assert.match(hostEntry, /pruneReceipts\(\): string \{\s*return submit\(async \(\) => \(\{ pruned: await pruneNativeRequestReceipts\(sqlite\) \}\)\);/);
     const coreAdapter = readFileSync(resolve(app, '../../packages/core/src/sqlite-adapter.ts'), 'utf8');
@@ -800,7 +881,19 @@ const kotlinFiles = [activity, model, owner, editorUi, focusUi, projectsUi, labe
 assert.equal(kotlinFiles.join('\n').match(/(?<!class )CoreHost\(/g).length, 1);
 // The dev build keeps its own database. The upgradetest build gets the RN database and RN's state
 // only from the guard, before CoreHost exists: before any open of it, the checkpoint, and any core write.
-assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+assert.match(owner, /val legacy = if \(BuildConfig\.RN_STORAGE\) \{\s*LegacyRnStoreGuard\.requireClear\(app\.dataDir, File\(app\.cacheDir, "legacy-rn-guard"\)\)\s*\} else \{\s*null\s*\}\s*val installer = HostInstaller\(app\.filesDir, app\.cacheDir\)\s*val keyValue = RnKeyValue\(app\.getDatabasePath\("RKStorage"\)\)\s*val runtime = CoreHost\(legacy\?\.database \?: File\(app\.filesDir, "mindwtr-native-dev\.db"\), legacy\?\.let \{ app\.dataDir \}, HostIo\(app\),\s*File\(app\.filesDir, "journal"\), deviceStore\(app\),\s*File\(app\.filesDir, DiagnosticsLogFile\.RELATIVE_PATH\),\s*keyValue, HostFiles\(app\.filesDir, app\.cacheDir, content = AndroidContentSource\(app\)\), installer,\s*ReminderAlarms\(app, keyValue, checkpointRnState = \{ if \(legacy != null\) LegacyRnStoreGuard\.checkpointRnState\(app\.dataDir\) \}\),\s*HostWidgets\(app\) \{ appState \},\s*scheduleBackgroundSync = \{ on -> CoreWork\.scheduleSyncStored\(app, on\) \}, appInfo = aboutAppInfo\(\)\)\s*try \{\s*runtime\.start\([^\n]*, legacy\?\.bootState \?: "", legacy\?\.backup \?: ""\)/);
+// Once the guard passes, it copies RN's RKStorage before it returns, so before RnKeyValue (or anything) opens it: an open can
+// checkpoint RN's WAL away when it closes.
+assert.match(guard, /check\(blocked == null\)[^\n]*\n(?:(?!return Opened\()[\s\S])*?\n\s*checkpointRnState\(dataDir\)\n(?:(?!fun )[\s\S])*?return Opened\(/);
+// About asks Google Play only through aboutPlayAnswer (AboutEndpointsTest), after core's preflight answered; a device check's stub
+// never reaches Play's referrer.
+{
+    const about = source('AboutSettings.kt');
+    assert.equal(about.match(/PlayServices\.updateInfo\(/g)?.length, 1);
+    assert.match(about, /val due = runtime\.aboutRequest\("isAboutUpdateCheckDue", [^\n]*\)\.getBoolean\("due"\)\n\s*val play = aboutPlayAnswer\(source, due, stubbed\) \{ PlayServices\.updateInfo\(app\) \}/);
+    assert.equal(about.match(/PlayServices\.installReferrer\(/g)?.length, 1);
+    assert.match(about, /if \(stubbed\) debugProperty\("about_referrer"\) else PlayServices\.installReferrer\(app\)/);
+}
 // RN's installer journal recovery runs at boot after the validated load and before the journal's replay, the first write that
 // can reach files/attachments (pass A2); it is RN's own Kotlin, compiled as it is.
 assert.match(owner, /loadTheme\(runtime, legacy\?\.theme\)\s*(?:\/\/[^\n]*\n\s*)*recoverInstalls\(installer\)\s*if \(replay\(runtime\)\) recovered\(app, runtime, deferSync = true\)/);
@@ -1029,9 +1122,23 @@ assert.match(coreHost, /private fun kvFault\(\) = check\(debugFault\("fail_kv_se
     const deadline = product(/const val OPERATION_DEADLINE_MS = ([^\n]+)/.exec(coreHost)[1]);
     assert(deadline >= product(/export const DEFAULT_TIMEOUT_MS = ([^;]+);/.exec(coreHttp)[1]) && deadline >= product(/const STORAGE_TIMEOUT_MS = ([^;]+);/.exec(coreStorage)[1]));
     assert.match(coreHost, /const val NETWORK_DEADLINE_MS = HostIo\.CALL_TIMEOUT_MS \+ OPERATION_DEADLINE_MS/);
-    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadlineOf\(method, args\.toList\(\)\)\): JSONObject = onEngine \{\s*stopped\?\.let \{ throw IllegalStateException\(it\) \}/);
+    assert.match(coreHost, /private fun callAsync\(method: String, vararg args: Any\?, deadlineMs: Long = deadlineOf\(method, args\.toList\(\)\)\): JSONObject \{/);
+    // D9: a nested call (on the engine) pumps until its answer; any other starts its operation in one engine task and is answered
+    // from the pump's turns, so it never holds the engine while the operation waits. Past its deadline it is cancelled, drained,
+    // or stops the host, as a nested one.
+    assert.match(coreHost, /if \(Thread\.currentThread\(\) === engineThread\) \{\s+stopped\?\.let \{ throw IllegalStateException\(it\) \}\s+finish\(begin\(method, args, deadlineMs, done\), answer\(method, args, deadlineMs\)\)/);
+    // D9a review: a journaled write starts only after the write before it answered (WriteQueue, JVM-tested), reads at once;
+    // each ending call starts the next waiting write, and a closing host fails the writes that never started.
+    assert.match(coreHost, /onEngineQueued \{\s+stopped\?\.let \{ throw IllegalStateException\(it\) \}[^}]*?begin\(method, args, deadlineMs, done\)\.let \{ if \(writeQueue\.admit\(it\)\) start\(it\) \}\s+\}/);
+    assert.match(coreHost, /private val writeQueue = WriteQueue<Call> \{ it\.entry != null \}/);
+    assert.match(coreHost, /call\.done\.completeExceptionally\(failure\)\s+\}\s+startNextWrite\(call\)\s+\}/, 'an answered write starts the next');
+    assert.match(coreHost, /timed out"\)\)\s+startNextWrite\(call\)\s+\}/, 'a timed-out write starts the next');
+    assert.match(coreHost, /writeQueue\.close\(\)\.forEach \{ it\.done\.completeExceptionally/);
+    assert.match(coreHost, /private fun expire\(call: Call\) \{\s+call\.deadlineCheck\?\.cancel\(false\)\s+call\("cancel", call\.id\)\s+if \(pumpUntil\(call\.id, DRAIN_MS\) == null\) \{[\s\S]{0,300}?stopped = reason[\s\S]{0,300}?closeOnEngine\(\)\s+return\s+\}\s+checkNotNull\(context\)\.globalObject\.getJSFunction\("__resumeHostCalls"\)\.call\(\)\s+schedulePump\(\)\s+call\.done\.completeExceptionally\(IllegalStateException\("Core \$\{call\.method\} timed out"\)\)/);
+    assert.match(coreHost, /calls \+= call\s+runCatching \{\s+call\.deadlineCheck = executor\.schedule\(\{ pollCalls\(\) \}, call\.deadlineMs, TimeUnit\.MILLISECONDS\)/, 'a waiting call is checked at its deadline even with no pump due');
+    assert.match(coreHost, /private fun finish\(call: Call, result: JSONObject\) \{\s+call\.deadlineCheck\?\.cancel\(false\)/, 'an answered call\'s deadline check is cancelled');
     assert.match(coreHost, /val answer = pumpUntil\(id, deadlineMs\) \?: run \{[^}]*?call\("cancel", id\)\s*if \(pumpUntil\(id, DRAIN_MS\) == null\) \{[^}]*?stopped = reason[^}]*?closeOnEngine\(\)\s*throw IllegalStateException\(reason\)\s*\}\s*checkNotNull\(context\)\.globalObject\.getJSFunction\("__resumeHostCalls"\)\.call\(\)\s*schedulePump\(\)\s*throw IllegalStateException\("Core \$method timed out"\)/);
-    assert.equal(coreHost.match(/pumpUntil\(/g).length, 3, 'callAsync pumps only through pumpUntil');
+    assert.equal(coreHost.match(/pumpUntil\(/g).length, 4, 'a call pumps itself only through pumpUntil: a nested one, and a drain');
     assert.match(coreHost, /callAsync\("netCheck", port, deadlineMs = NETWORK_DEADLINE_MS\)/);
     assert.match(hostIo, /response\.use \{ read\(id, it, redirect\) \}/);
     // RN's connect timeout (#1150).
@@ -1071,8 +1178,10 @@ assert.equal(coreHost.match(/getprop/g).length, 1);
 assert.match(coreHost, /private fun debugFault\(name: String\): String = debugProperty\(name\)/);
 assert.match(coreHost, /fun debugProperty\(name: String\): String \{\s*if \(!BuildConfig\.DEBUG\) return ""/);
 // The only other debug properties: the capture check's clipboard, put there for the field's real Paste, and the projects
-// check's held user action (delay_action_ms, perform's worker thread; release builds read nothing).
-assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 2);
+// check's held user action (delay_action_ms, perform's worker thread; release builds read nothing), and the splash check's slow
+// boot (boot_delay_ms, on the startup thread).
+assert.equal([activity, model, owner, editorUi, focusUi, projectsUi, labelsKt, captureUi].join('\n').match(/debugProperty\(/g).length, 3);
+assert.match(model, /debugProperty\("boot_delay_ms"\)\.toLongOrNull\(\)\?\.let\(Thread::sleep\)\s+val runtime = ProcessCoreHost\.get\(/);
 assert.match(captureUi, /withContext\(Dispatchers\.IO\) \{ debugProperty\("clipboard"\) \}\.takeIf \{ it\.isNotEmpty\(\) \}\?\.let \{ clipboard\.setText\(/);
 // The command path's fault hook, and the same hook for a journal replay (a replay can meet a failed save too).
 assert.equal(coreHost.match(/failCommits =/g).length, 2);
@@ -1098,15 +1207,18 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     const iosPreparedCommits = ['captureCommit', 'draftCommit'];
     // The iOS host's task attachment link/remove methods (taskAttachmentLinks, taskAttachmentRemove) are its own; Kotlin sends
     // the same core writes through MENU_COMMANDS and the journal (pass A2).
-    const iosOnlyWrites = ['setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment'];
-    // Core writes no host method calls yet (Settings › Calendar's edits):
+    const iosOnlyWrites = ['commitPreparedNotificationSetting', 'commitReminderCompletion', 'retryReminderCompletion', 'commitReminderSnooze', 'retryReminderSnooze', 'setCalendarPreference', 'setFocusGroupChecked', 'commitPreparedSomedaySectionTask', 'submitAttachmentLinks', 'removeAttachment', 'setCalendarSetting'];
+    // Core writes no host method calls yet (generic Calendar subscription Add):
     // wiring one into host-entry fails the write-list checks above until the journal takes it.
-    const unwiredWrites = ['setCalendarSetting', 'addCalendarFeed'];
+    const unwiredWrites = ['addCalendarFeed'];
     assert.equal(coreHost.match(new RegExp(`"(${iosPreparedCommits.join('|')})"`, 'g')), null, 'Kotlin never calls the iOS prepared commits');
     assert.deepEqual(methods.filter((m) => m.body.includes('taskResult(') && !iosPreparedCommits.includes(m.name)).map((m) => m.name).sort(), writes, 'the journal\'s write list is host-entry\'s task commands');
     const table = (name) => hostEntry.slice(hostEntry.indexOf(`const ${name}`), hostEntry.indexOf('\n};', hostEntry.indexOf(`const ${name}`)));
     const called = (text) => [...text.matchAll(/contract\.(\w+)\(/g)].map((m) => m[1]);
     assert.deepEqual(called(hostEntry).filter((name) => unwiredWrites.includes(name)), [], 'no host method calls an unwired core write');
+    const pushSetting = methods.find((method) => method.name === 'iosCalendarPushSetting');
+    assert(pushSetting && pushSetting.body.includes('iosCalendarPushOwned('), 'Calendar push settings require the private iOS owner');
+    assert.deepEqual(called(pushSetting.body), ['setCalendarSetting'], 'the private push facade delegates only its shared setting');
     const iosOnlyMethods = methods.filter((m) => called(m.body).some((name) => iosOnlyWrites.includes(name))).map((m) => m.name);
     {
         assert.equal(iosOnlyMethods.length, iosOnlyWrites.length, 'each iOS-only write has its host method');
@@ -1132,7 +1244,9 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // A reminder notification's Done and Snooze (pass R1), sent by CoreWork under the request UUID the notification was posted with.
         'completeReminderTask', 'snoozeReminder',
         // Project details: the user's edit (journaled ahead; core reads, prepares and commits it, a replay of an applied edit unchanged).
-        'runProjectEdit'];
+        'runProjectEdit',
+        // Settings › Notifications' controls (pass R2): each the state it asks for, under its receipt.
+        'setNotificationsSetting'];
     const contractFiles = readdirSync(resolve(app, '../../packages/core/src')).filter((name) => /^native-host-contract[\w-]*\.ts$/.test(name) && !name.endsWith('.test.ts'))
         .map((name) => readFileSync(resolve(app, '../../packages/core/src', name), 'utf8'));
     const contractSource = contractFiles.join('\n');
@@ -1188,7 +1302,11 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     assert.match(hostEntry, /const nativeAI = nativeSync \? createNativeAI\(keyValue, \(\) => globalThis\.__mindwtrSecrets as HostSecrets, isFossBuild\) : null;/);
     assert.match(hostEntry, /const localAttachments = nativeSync \? null : createNativeLocalAttachmentsForHost\(\);/);
     assert.match(hostEntry, /const attachmentsHost = nativeSync\?\.attachmentsHost \?\? localAttachments\?\.contractHost;/);
-    assert.match(hostEntry, /createNativeHostContract\(\{ \.\.\.\(nativeSync \? \{ syncSettings: nativeSync\.settingsHost \} : \{\}\), \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*\.\.\.\(attachmentsHost \? \{ attachments: attachmentsHost \} : \{\}\) \}\)/);
+    assert.match(hostEntry, /createNativeHostContract\(\{ reminderPlatform: globalThis\.__mindwtrHostPlatform === 'ios' \? 'ios' : 'android', get syncSettings\(\) \{ return nativeSync\?\.settingsHost \?\? iosManualSync\?\.settingsHost; \}, \.\.\.\(nativeAI \? \{ ai: nativeAI \} : \{\}\),\s*calendar: iosCalendar,\s*get attachments\(\) \{\s*const selected = iosProjectAttachmentDownload \? iosSelfHostedProjectAttachments\?\.contractHost \?\? iosManualSync\?\.attachmentsHost : attachmentsHost;\s*if \(!iosRelocatedProjectAvailability \|\| !selected\) return selected \?\? undefined;/);
+    assert.match(hostEntry, /const result = await \(iosSelfHostedProjectAttachments \?\? iosManualSync\)\?\.prepareAttachmentAvailableDetailed\?\.\(attachment\);/);
+    assert.match(hostEntry, /\.\.\.\(persistentCapture \? \{ persistentCapture \} : \{\}\) \}\);/);
+    // The persistent capture switch on RN's AsyncStorage key, on the host with RN's AsyncStorage (pass R2).
+    assert.match(hostEntry, /const persistentCapture = nativeSync \? \{\s+read: \(\) => \(JSON\.parse\(checked\(native\(\)\.kvGet\(PERSISTENT_CAPTURE_STORAGE_KEY\)\)\) as \[string \| null\]\)\[0\] === 'true',/);
     assert.match(host, /menuCommand\(name: string, json: string\): string \{\s*return submit\(async \(\) => \{\s*const command = MENU_COMMANDS\[name as MenuCommand\];/);
     // An entry replays only while it fits its write as host-entry takes it (WriteJournal.SHAPES): a JSON object for `json`, a
     // boolean for a boolean, a Menu command for menuCommand's name, text for the rest; MENU names exactly host-entry's
@@ -1234,6 +1352,30 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
                     assert.match(file, /receipts\.run<AppLockResult>\(request\.requestId, key,/);
                     continue;
                 }
+                if (site[1] === 'notificationSetting' && file.includes('const payload = (request: NotificationSettingRequest)')) {
+                    assert.match(file, /const payload = \(request: NotificationSettingRequest\) => JSON\.stringify\(\['notificationSetting', request\.edit\.type,/);
+                    assert.match(file, /receipts\.run<NotificationSettingResult>\(request\.requestId, key,/);
+                    assert.match(file, /async commitPreparedNotificationSetting\(input:/);
+                    continue;
+                }
+                const completionHelper = 'const completionPayload = (request: ReminderCompletionRequest) => ';
+                if (site[1] === 'reminderComplete' && file.includes(completionHelper)
+                    && site.index === file.indexOf(completionHelper) + completionHelper.length) {
+                    assert.match(file, /const completionPayload = \(request: ReminderCompletionRequest\) => JSON\.stringify\(\['reminderComplete', request\.taskId\]\);/);
+                    assert.match(file, /methods\.completeReminderTask\(request\)/);
+                    assert.match(file, /receipts\.saved<unknown>\(request\.requestId, completionPayload\(request\)\)/);
+                    // The original writer's literal remains attributed below; this helper only probes or retries it.
+                    continue;
+                }
+                const snoozeHelper = 'const snoozePayload = (request: ReminderSnoozeRequest) => ';
+                if (site[1] === 'reminderSnooze' && file.includes(snoozeHelper)
+                    && site.index === file.indexOf(snoozeHelper) + snoozeHelper.length) {
+                    assert.match(file, /const snoozePayload = \(request: ReminderSnoozeRequest\) => JSON\.stringify\(\['reminderSnooze', request\.requestedAt, request\.details\]\);/);
+                    assert.match(file, /methods\.snoozeReminder\(request\)/);
+                    assert.match(file, /receipts\.saved<unknown>\(request\.requestId, snoozePayload\(request\)\)/);
+                    // The legacy writer still owns its original payload; this helper only probes or retries it.
+                    continue;
+                }
                 const owner = defs.filter((def) => def.index < site.index).at(-1);
                 assert(owner, `core's receipt payload '${site[1]}' sits inside a core write`);
                 receiptNames.get(owner[1]).push(site[1]);
@@ -1243,7 +1385,7 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         assert(sites >= 26, 'core\'s receipt payloads parsed');
         // A name is a receipt payload's, or a core write that keeps no payload at all (Settings › Sync's screen commands).
         for (const name of unjournaledCore) assert([...receiptNames.values()].flat().includes(name) || receiptNames.get(name)?.length === 0, `core's unjournaled ${name} is a core write's receipt payload, or a payload-less core write`);
-        const menuKeys = [...table('MENU_COMMANDS').matchAll(/\n    (\w+): \(input\) => contract\.(\w+)\(input\),/g)].map(([, key, write]) => ({ key, writes: [write] }));
+        const menuKeys = [...table('MENU_COMMANDS').matchAll(/\n    (\w+): \((input)?\) => contract\.(\w+)\(\2\),/g)].map(([, key, , write]) => ({ key, writes: [write] }));
         assert.equal(menuKeys.length, table('MENU_COMMANDS').match(/\n    \w+: /g).length, 'every Menu command parsed');
         const keys = [...methods.filter((m) => writes.includes(m.name) && m.name !== 'menuCommand').map((m) => ({ key: m.name, writes: called(m.body) })), ...menuKeys];
         const expected = keys.filter((key) => key.writes.some((write) => unjournaledCore.includes(write) || receiptNames.get(write).some((name) => unjournaledCore.includes(name))))
@@ -1257,8 +1399,10 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
         // only an unjournaled write or a read, so no journaled write can skip the journal through it.
         assert.match(journalKt, /fun unjournaled\(method: String, args: List<Any\?>\): Boolean = method in WRITES && key\(method, args\) in UNJOURNALED/);
         assert.match(coreHost, /private fun callLong\(method: String, vararg args: Any\?, handle: LongCall = LongCall\(\)\): JSONObject \{\s+require\(method !in WriteJournal\.WRITES \|\| WriteJournal\.unjournaled\(method, args\.toList\(\)\)\)/);
-        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['backgroundSync', 'menuCommand', 'aiRequest', 'attachmentRequest'],
-            'only CoreWork\'s background sync run, Settings › Sync\'s commands, the AI\'s requests and the attachments\' downloads take the long path');
+        assert.deepEqual([...coreHost.matchAll(/\bcallLong\("(\w+)"/g)].map((m) => m[1]), ['backgroundSync', 'menuCommand', 'aiRequest', 'aboutRequest', 'attachmentRequest'],
+            'only CoreWork\'s background sync run, Settings › Sync\'s commands, the AI\'s and About\'s requests and the attachments\' downloads take the long path');
+        // O1: About's requests (an update check, a feedback send, the heartbeat, the prompts) are reads of core: never journaled.
+        assert(!writes.includes('aboutRequest'), 'an About request is no journaled write');
         // S4a: CoreWork's background run (core's runner) is a read-and-sync like Sync now: no journaled write.
         assert.match(coreHost, /fun backgroundSync\(trigger: String, stored: Int\): JSONObject =\s+callLong\("backgroundSync", trigger, stored, debugFault\("bgsync_deadline_ms"\)\.toIntOrNull\(\) \?: 0\)/);
         assert(!writes.includes('backgroundSync'), 'a background sync run is no journaled write');
@@ -1313,12 +1457,14 @@ assert.equal(coreHost.match(/debugFault\("language"\)/g).length, 1);
     // callAsync journals before the engine call and settles after the reply; answer() is the only engine call, used by callAsync
     // and the replay; nothing else calls a host method.
     const callAsyncFn = coreHost.slice(coreHost.indexOf('private fun callAsync('), coreHost.indexOf('private fun answer('));
-    assert.match(callAsyncFn, /val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null[\s\S]*?val result = answer\(method, args, deadlineMs\)\s+if \(entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(stop, "after", entry\)\s+\}\s+if \(method in WriteJournal\.WRITES\) settle\(entry, result, replay = false\)/);
+    assert.match(callAsyncFn, /private fun begin\([^)]*\): Call \{\s+val entry = if \(method in WriteJournal\.WRITES\) checkNotNull\(journal\)\.append\(method, args\.toList\(\)\) else null/);
+    assert.match(callAsyncFn, /private fun finish\(call: Call, result: JSONObject\) \{\s+call\.deadlineCheck\?\.cancel\(false\)\s+if \(call\.entry != null\) \{\s+debugDelay\("delay_after_ms"\)\s+journalStop\(call\.stop, "after", call\.entry\)\s+\}\s+try \{\s+if \(call\.method in WriteJournal\.WRITES\) settle\(call\.entry, result, replay = false\)/);
+    assert.equal(callAsyncFn.match(/\bcall\(call\.method, \*call\.args\)/g).length, 1, 'start() starts a call\'s operation, after begin() journaled it');
     assert.match(callAsyncFn, /if \(entry != null\) \{\s+checkNotNull\(sqlite\)\.failCommits = debugFault\("fail_commit"\) == "1"\s+debugDelay\("delay_before_ms"\)\s+journalStop\(stop, "before", entry\)\s+\}/);
     assert.equal(coreHost.match(/\banswer\(/g).length, 3, 'answer(): its definition, callAsync and replayJournal');
     assert.equal(coreHost.match(/\bcall\(method, \*args\)/g).length, 2, 'answer() and callLong (an unjournaled command only) start host methods');
     assert.deepEqual([...new Set([...coreHost.matchAll(/\bcall\("(\w+)"/g)].map((m) => m[1]))].sort(), ['abort', 'cancel', 'poll'], 'the engine\'s own calls: abort (a long call no longer wanted), cancel and poll');
-    assert.equal(coreHost.match(/journalStop\(stop, /g).length, 2, 'the stop hooks run for a first send only, never for a replay');
+    assert.equal(coreHost.match(/journalStop\((?:call\.)?stop, /g).length, 2, 'the stop hooks run for a first send only, never for a replay');
     assert.match(coreHost, /val stop = if \(entry != null\) debugFault\("journal_stop"\) else ""/, 'the stop hook is debug-only');
     // Drop and keep: SAVE_FAILED keeps an entry, every other reply drops it; no reply (a throw) leaves it.
     assert.match(journalKt, /fun keeps\(error: String\?\): Boolean = error\?\.startsWith\("SAVE_FAILED"\) == true/);
@@ -1613,7 +1759,7 @@ assert.match(source('CoreWork.kt'), /fun retryDrain\(context: Context\) = enqueu
     const tested = spawnSync('bun', ['test', 'apps/android-native/bundle/host-sync.test.ts'], { cwd: resolve(app, '../..'), encoding: 'utf8' });
     assert.equal(tested.status, 0, `bundle/host-sync.test.ts: ${tested.stderr.slice(-1500)}`);
     // D8: the channel is the build's flavor, read by core as RN's isFossBuild; no host passes a fixed false any more.
-    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /create\("play"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "false"\)\s+\}\s+create\("foss"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "true"\)/);
+    assert.match(readFileSync(resolve(app, 'android/app/build.gradle.kts'), 'utf8'), /create\("play"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "false"\)[^}]*\}\s+create\("foss"\) \{\s+dimension = "channel"\s+buildConfigField\("boolean", "FOSS", "true"\)/);
     assert.match(coreHost, /engine\.globalObject\.setProperty\("__mindwtrFossBuild", BuildConfig\.FOSS\)/);
     assert.match(hostEntry, /const isFossBuild = globalThis\.__mindwtrFossBuild === true;/);
     const bundleHosts = ['host-sync.ts', 'host-ai.ts'].map((name) => readFileSync(resolve(app, 'bundle', name), 'utf8')).join('\n');
@@ -1978,7 +2124,7 @@ assert.deepEqual([.../val ATTACHMENT_COMMANDS = setOf\(([^)]*)\)/.exec(coreHost)
     assert.match(menuModel, /"savedSearchDelete"\) \+ SETTINGS_KINDS/);
     const kinds = [...[...new RegExp('val MENU_KINDS = setOf\\(([^)]*)\\)').exec(menuModel)[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind),
         ...[...new RegExp('val SETTINGS_KINDS = setOf\\(([^)]*)\\)').exec(source('SettingsModel.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind)];
-    const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \(input\) => contract\.\w+\(input\),$/gm)].map(([, kind]) => kind);
+    const hostKinds = [...hostEntry.slice(hostEntry.indexOf('const MENU_COMMANDS'), hostEntry.indexOf('};', hostEntry.indexOf('const MENU_COMMANDS'))).matchAll(/^\s+(\w+): \((input)?\) => contract\.\w+\(\2\),$/gm)].map(([, kind]) => kind);
     // Settings › Sync's screen commands are Menu commands too, sent by SyncSettings.kt through CoreHost.syncCommand, never by send().
     const syncKinds = [.../val SYNC_COMMANDS = setOf\(([^)]*)\)/.exec(source('SyncSettings.kt'))[1].matchAll(/"(\w+)"/g)].map(([, kind]) => kind);
     // Settings › AI's screen writes too (its open, a key, a base URL), sent by AISettings.kt; its controls' setAISetting is a Settings kind.
@@ -2522,7 +2668,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(code(settingsModel), /menuCommand\(|\bsend\(|shell\.perform\(action|\.perform\([A-Za-z]/, 'SettingsModel writes only through MenuModel.command or create');
     // Core's device writes are stored under RN's keys before the command counts as done; a new language reloads core's words, a theme its colors.
     assert.match(menuModel, /if \(action\.kind in SETTINGS_KINDS\) settings\.applied\(runtime, reply\)\s+shell\.acknowledged\(action\)/);
-    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
+    assert.match(settingsModel, /internal fun applied\(runtime: CoreHost, reply: JSONObject\) \{\s+(?:\/\/[^\n]*\s+)*reply\.optJSONObject\("persistentCapture"\)\?\.let \{ PersistentCapture\.apply\(shell\.getApplication<Application>\(\), it, runtime::logLine\) \}\s+val writes = reply\.optJSONArray\("deviceWrites"\) \?: return\s+val keys = /);
     // A setting's deviceWrites are stored in CoreHost's one call path (the first send and the journal's replay), durably, before the
     // write's journal entry settles; the Settings screen only reloads the language and theme after.
     assert.doesNotMatch(settingsModel.slice(settingsModel.indexOf('internal fun applied(')), /^\s+store\(writes\)/m);
@@ -2545,7 +2691,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     }
     assert.match(model, /app\.getSharedPreferences\(DEVICE_PREFS, /);
     assert.match(coreHost, /private fun settle\(entry: WriteJournal\.Entry\?, result: JSONObject, replay: Boolean\): Boolean \{\s+result\.optJSONObject\("value"\)\?\.optJSONArray\("deviceWrites"\)\?\.let \{ devices\.store\(it, entry\?\.sequence, replay\) \}\s+return entry != null && checkNotNull\(journal\)\.settle\(entry, result\.error\(\), replay\)/);
-    assert.equal(coreHost.match(/(?<!\.)\bsettle\(entry, /g).length, 2, 'settle(): the first send and the replay');
+    assert.equal(coreHost.match(/(?<!\.)\bsettle\((?:call\.)?entry, /g).length, 2, 'settle(): the first send (finish) and the replay');
     assert.match(settingsModel, /runtime\.language\(prefs\.getString\(LANGUAGE_KEY, null\)\.orEmpty\(\), Locale\.getDefault\(\)\.toLanguageTag\(\)\)\s+Labels\.load\(runtime\.strings\(LABEL_KEYS\)\)/);
     assert.match(model, /val runtime = ProcessCoreHost\.get\(getApplication\(\), prefs\.getString\(LANGUAGE_KEY, null\)\)\s+\/\/[^\n]*\s+applyDeviceChoices\(runtime, prefs\)/, 'the device\'s own language and theme apply at boot, before any screen');
     for (const [kotlin, file, core] of [['LANGUAGE_KEY', 'i18n/i18n-constants.ts', 'LANGUAGE_STORAGE_KEY'], ['THEME_KEY', 'general-settings-model.ts', 'MOBILE_THEME_STORAGE_KEY'],
@@ -2865,7 +3011,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.match(gradle, /buildConfigField\("String", "URL_SCHEME", "\\"\$scheme\\""\)\s+manifestPlaceholders\["urlScheme"\] = scheme/);
     for (const type of ['debug', 'release']) assert.match(gradle, new RegExp(`getByName\\("${type}"\\) \\{ urlScheme\\(\\) \\}`));
     assert.match(gradle, /create\("upgradetest"\) \{[^}]*urlScheme\(\)\s+\}/);
-    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller\) \}/);
+    assert.match(gradle, /tasks\.named\("preBuild"\) \{ dependsOn\(buildCoreBundle, buildShortcuts, buildWidgets, rnAttachmentInstaller, rnPersistentCapture\) \}/);
     // The bytecode cache's keys (BytecodeCache.kt): the engine version is the QuickJS dependency's, and the bundle carries the
     // SHA-256 of its own body in its first line, written with it in one file (build-bundle.mjs), so a bundle and a hash from
     // two builds cannot pair up. Every variant's merged assets are checked by verify-bundle.mjs before packaging.
@@ -3050,8 +3196,21 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     assert.doesNotMatch(clearBody, /logInfo\(|logWarn\(|diagnosticsLog\.append\(/, 'Clear cannot append a line that recreates its target');
     assert.match(clearBody, /logClearChecked\(\): string \{\s+return submit\(\(\) => diagnosticsLog\.clearChecked\(\)\);/);
     assert.match(hostEntry, /logClear\(\): string \{\s+return submit\(async \(\) => \{\s+await diagnosticsLog\.clear\(\);/);
-    // The host's diagnostic lines put their fields in the payload's context, the part the log file keeps.
-    assert.doesNotMatch(hostEntry, /\bextra: \{|, extra \}/);
+    // Direct log payloads require context; the shared entry builder accepts extra and sanitizes it into context.
+    const checkDiagnosticFields = (source) => {
+        const visit = (node) => {
+            if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && node.name.getText() === 'extra') {
+                const object = node.parent, call = object.parent;
+                assert(ts.isCallExpression(call) && call.expression.getText() === 'buildDiagnosticsLogEntry'
+                    && call.arguments[2] === object, 'Direct diagnostic payloads must use context');
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(ts.createSourceFile('host-entry.ts', source, ts.ScriptTarget.Latest, true));
+    };
+    assert.throws(() => checkDiagnosticFields('diagnosticsLog.append({ extra: { outcome: "lost" } });'));
+    assert.throws(() => checkDiagnosticFields('diagnosticsLog.append({ message, extra });'));
+    checkDiagnosticFields(hostEntry);
     assert.match(hostEntry, /^\s+dataSettings: \(\) => contract\.getDataSettings\(\),$/m);
     assert.match(hostEntry, /^\s+dataSetting: \(input\) => contract\.setDataSetting\(input\),$/m);
     // Share log: only the logs folder is shareable, through a private FileProvider and the system share sheet; nothing is sent by the app.
@@ -3177,7 +3336,7 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
     const rnStyles = readFileSync(resolve(app, '../../apps/mobile/components/settings/settings.styles.ts'), 'utf8');
     assert.match(rnStyles, /settingRow: \{[^}]*alignItems: 'flex-start',/);
     const settingsKt = source('SettingsScreen.kt');
-    const row = code(settingsKt.slice(settingsKt.indexOf('private fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('private fun SettingRow('))));
+    const row = code(settingsKt.slice(settingsKt.indexOf('internal fun SettingRow('), settingsKt.indexOf('\n}\n', settingsKt.indexOf('internal fun SettingRow('))));
     assert.match(row, /\.padding\(16\.dp\),\s+verticalAlignment = Alignment\.Top\)/, 'SettingRow aligns its trailing control to the top, as RN');
 }
 
@@ -3527,17 +3686,37 @@ assert.match(model, /val sheet = runCatching \{ menu\.readSheet\(runtime\) \}\.g
 }
 
 const fakeCore = `
+export { createDeviceCalendarSettingsMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-device-calendar-settings.ts'))};
+export { createCalendarSubscriptionSettingsMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-calendar-subscription-settings.ts'))};
+export { createCalendarSubscriptionAddMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-calendar-subscription-add.ts'))};
+export { buildCalendarSubscriptionSettingsModel } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-settings-calendar.ts'))};
+export { REMINDER_STORE_RESCHEDULE_DELAY_MS, shouldRescheduleReminderAlarms } from ${JSON.stringify(resolve(app, '../../packages/core/src/mobile-reminder-alarms.ts'))};
+export { nameNotifyListener } from ${JSON.stringify(resolve(app, '../../packages/core/src/store-notify-profiler.ts'))};
+export { buildShortcutsSnapshot } from ${JSON.stringify(resolve(app, '../../packages/core/src/widget-payload.ts'))};
+export { getNextFutureStartRevealAt } from ${JSON.stringify(resolve(app, '../../packages/core/src/task-utils.ts'))};
+export { resolveEntityOpenTarget } from ${JSON.stringify(resolve(app, '../../packages/core/src/entry-points.ts'))};
+export { compareAppVersions, fetchAppStoreInfo, UPDATE_BADGE_AVAILABLE_KEY, UPDATE_BADGE_LAST_CHECK_KEY, UPDATE_BADGE_LATEST_KEY, shouldCheckForAppUpdate } from ${JSON.stringify(resolve(app, '../../packages/core/src/app-store-update.ts'))};
+export { SYNC_BACKEND_KEY, CLOUD_PROVIDER_KEY } from ${JSON.stringify(resolve(app, '../../packages/core/src/sync-storage-keys.ts'))};
+export { getBaseSyncUrl } from ${JSON.stringify(resolve(app, '../../packages/core/src/attachment-paths.ts'))};
+import { NativeAttachmentCleanupUnconfirmedError as RealCleanupError } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-cleanup.ts'))};
+export { RealCleanupError as NativeAttachmentCleanupUnconfirmedError };
 import { mapSqliteTaskRow as hydrateTask285 } from ${JSON.stringify(resolve(app, '../../packages/core/src/sqlite-adapter.ts'))};
 globalThis.hydrateTaskAttachments285 = (attachments) => hydrateTask285({ id: 'task285', attachments: JSON.stringify(attachments) }).attachments;
 export { planAttachmentOpen, getAttachmentResolutionMessage } from ${JSON.stringify(resolve(app, '../../packages/core/src/attachment-editor-model.ts'))};
 import { logInfo as realLogInfo, setLogger as setRealLogger } from ${JSON.stringify(resolve(app, '../../packages/core/src/logger.ts'))};
-export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
+export { createDiagnosticsLog, diagnosticsEntryFromLogPayload, isDiagnosticsLoggingEnabled, buildDiagnosticsLogEntry } from ${JSON.stringify(resolve(app, '../../packages/core/src/diagnostics-log.ts'))};
+export { createFeedbackDiagnosticsBuffer, buildFeedbackDiagnostics, buildFeedbackDiagnosticsSnapshot, FEEDBACK_DIAGNOSTICS_SOURCE_CHARS, feedbackDiagnosticEntry, sanitizeSavedFeedbackLog } from ${JSON.stringify(resolve(app, '../../packages/core/src/feedback-diagnostics.ts'))};
+export { buildFeedbackSubmissionPayload, submitFeedbackSubmission, FEEDBACK_CATEGORIES } from ${JSON.stringify(resolve(app, '../../packages/core/src/feedback.ts'))};
+export { sanitizeForLog, sanitizeLogContext } from ${JSON.stringify(resolve(app, '../../packages/core/src/log-sanitize.ts'))};
+export { getBreadcrumbs } from ${JSON.stringify(resolve(app, '../../packages/core/src/log-breadcrumbs.ts'))};
 export { validateNativeAttachmentDraftBeginV3, validateNativeAttachmentDraftLineageV3,
     validateNativeAttachmentDraftBeginV4, validateNativeAttachmentDraftLineageV4,
+    validateNativeAttachmentDraftBeginV5, validateNativeAttachmentDraftLineageV5,
     prepareNativeAttachmentDraftAddV4, prepareNativeAttachmentDraftRemoveV4, completeNativeAttachmentDraftAddV4,
     prepareNativeAttachmentDraftAddV3, prepareNativeAttachmentDraftRemoveV3,
-    readNativeAttachmentDraftRemoveFrozen } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-draft.ts'))};
-export { prepareNativeAttachmentDraftDiscardCandidates, prepareNativeAttachmentDraftDiscardCandidatesV3, prepareNativeAttachmentDraftDiscardCandidatesV4 } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-draft-discard.ts'))};
+    readNativeAttachmentDraftRemoveFrozen, prepareNativeAttachmentDraftAvailability } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-draft.ts'))};
+export { prepareNativeAttachmentDraftDiscardCandidates, prepareNativeAttachmentDraftDiscardCandidatesV3, prepareNativeAttachmentDraftDiscardCandidatesV4, prepareNativeAttachmentDraftDiscardCandidatesV5 } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-draft-discard.ts'))};
+export { prepareNativeAttachmentCleanupWitness, isNativeAttachmentCleanupWitnessEligible } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-attachment-cleanup.ts'))};
 import { createOwnedEditorFileEditTaskDraftSaveMethods as createRealMixedSaveMethods } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract-owned-file-edit-save.ts'))};
 import { createNativeHostContract as createRealCompleteContract } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-host-contract.ts'))};
 import { NativeReceiptSqliteAdapter as RealCompleteAdapter } from ${JSON.stringify(resolve(app, '../../packages/core/src/native-request-receipts.ts'))};
@@ -3645,7 +3824,8 @@ export function setNativeReplayTokens(mode) { globalThis.replayTokens = mode; }
 export async function pruneNativeRequestReceipts() { return 3; }
 export function setStorageAdapter(adapter) { globalThis.adapter = adapter; }
 export function getStorageAdapter() { return globalThis.adapter; }
-export async function flushPendingSave() { globalThis.events.push('flush'); }
+export async function flushPendingSave() { globalThis.events.push('flush'); await globalThis.flushHold;
+  if (globalThis.flushError) throw new Error(globalThis.flushError); }
 export function getPersistenceStatus() { globalThis.onPersistenceStatus?.(); return globalThis.persistenceStatus ||
   { generation: 0, queued: false, inFlight: false, immediate: false, retrying: false, failed: false }; }
 export function isSupportedLanguage(value) { return ['en', 'zh', 'fa', 'de'].includes(value); }
@@ -3660,9 +3840,13 @@ export const PENDING_CAPTURE_LAST_APPLIED_STORAGE_KEY = 'mindwtr:pending-capture
 export const REMINDER_NOTIFICATION_CHANNEL_NAME = 'Mindwtr reminders';
 export const REMINDER_ALARM_MAP_STORAGE_KEY = 'mindwtr:local:alarms:v1';
 export const NATIVE_REMINDER_STATE_STORAGE_KEY = 'mindwtr:native:reminders:v1';
+// The persistent capture switch's key (pass R2).
+export const PERSISTENT_CAPTURE_STORAGE_KEY = 'mindwtr:persistentCaptureNotification';
 export const NATIVE_HOST_CONTRACT_VERSION = 1;
 export function buildImmediateNotificationDetails(title, message, data) { return { title, message, channel: 'mindwtr_reminders_v2', data: { kind: 'pomodoro', ...data } }; }
 export function isSandboxMode() { return globalThis.sandbox === true; }
+export const isEntityOpenUrl = () => false;
+export const parseEntityOpenUrl = () => null;
 export function isWorkspaceTransitionActive() { return globalThis.workspaceTransition === true; }
 // The debug net check's WebDAV calls: bundled, never run here.
 export const [cloudHeadJson, webdavDeleteFile, webdavGetFile, webdavGetJson, webdavGetSyncDocument, webdavHeadFile, webdavMakeDirectory, webdavPutFile, webdavPutJson] = Array(9).fill(async () => null);
@@ -3734,10 +3918,42 @@ export function createNativeHostContract(bindings = {}) {
     async addAttachmentFile(input) { globalThis.attachmentInputs.push(['draftAddFile', input]); return globalThis.attachmentReply; },
     async removeAttachment(input) { globalThis.attachmentInputs.push(['draftRemove', input]); return globalThis.attachmentReply; },
     getProjectAttachmentEditOptions(input) {
+      globalThis.projectOptionsReads = (globalThis.projectOptionsReads ?? 0) + 1;
       const project = globalThis.ownerProjects.find((item) => item.id === input.projectId);
       return project && !project.deletedAt && !project.purgedAt
         ? { ok: true, value: { revision: 'project-revision', project, canEdit: project.status !== 'archived' } }
         : { ok: false, error: { code: 'STALE_REVISION', message: 'Project unavailable' } };
+    },
+    async runSyncEncryptionAction(input) {
+      globalThis.encryptionInputs ??= [];
+      globalThis.encryptionInputs.push(input);
+      if (bindings.syncSettings?.encryption?.mode !== 'saved-webdav-or-local'
+          || bindings.syncSettings.encryption.unlockOnly !== undefined) throw new Error('Missing selected WebDAV or local encryption capability');
+      return globalThis.encryptionReply ?? { ok: true, value: { toasts: [], passphrase: null } };
+    },
+    getSyncSettings() { return { ok: true, value: { backend: { options: ['off', 'webdav', 'selfhosted', 'dropbox', 'cloudkit', 'file'].map(option => ({ option })) } } }; },
+    async openSyncSettings(input) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['openSyncSettings', input]); return this.getSyncSettings(); },
+    async selectSyncBackend(input) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['selectSyncBackend', input]); return globalThis.foregroundReply ?? { ok: true, value: { toasts: [] } }; },
+    async saveSyncBackend(input) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['saveSyncBackend', input]); return globalThis.foregroundReply ?? { ok: true, value: { toasts: [] } }; },
+    async syncNow(input) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['syncNow', input]); return globalThis.foregroundReply ?? { ok: true, value: { toasts: [] } }; },
+    async testSyncConnection(input) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['testSyncConnection', input]); return globalThis.foregroundReply ?? { ok: true, value: { toasts: [] } }; },
+    async downloadAttachment(input) {
+      globalThis.attachmentInputs.push(['downloadAttachment', input]);
+      globalThis.downloadHosts.push(bindings.attachments);
+      await globalThis.downloadHold;
+      if (globalThis.downloadFatal) throw new RealCleanupError();
+      if (globalThis.downloadError) throw new Error(globalThis.downloadError);
+      globalThis.afterDownload?.();
+      return globalThis.attachmentReply;
+    },
+    async downloadRelocatedProjectAttachment(input, currentTargetURI) {
+      globalThis.attachmentInputs.push(['downloadRelocatedProjectAttachment', input, currentTargetURI]);
+      globalThis.downloadHosts.push(bindings.attachments);
+      await globalThis.downloadHold;
+      if (globalThis.downloadFatal) throw new RealCleanupError();
+      if (globalThis.downloadError) throw new Error(globalThis.downloadError);
+      globalThis.afterDownload?.();
+      return globalThis.attachmentReply;
     },
     async openAttachment(input) { globalThis.attachmentInputs.push(['openAttachment', input]); return globalThis.attachmentReply; },
     async settleTaskDraftAttachments(input) { globalThis.attachmentInputs.push(['settleTaskDraftAttachments', input]); return globalThis.attachmentReply; },
@@ -3927,8 +4143,9 @@ export function createMobileAttachmentInstaller() {
   if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
   return { installAttachmentFileGeneration: async () => { throw new Error('no remote installer call'); } };
 }
-export function createMobileAttachmentCommon() {
+export function createMobileAttachmentCommon(host) {
   if (!globalThis.localAttachmentTest) throw new Error('local attachments unbound');
+  if (host.preparePlaintextDownload) return { prepareAttachmentDownloadBytes: async () => { throw new Error('Unexpected source creation in Off entry fixture'); } };
   return {};
 }
 export function setSha256HexProvider() {
@@ -3949,7 +4166,7 @@ assert(syncOnly.includes('createMobileSyncService') && syncOnly.includes('create
 // device with encryption off would upload plain attachments beside ciphertext. The card's "Check this location again" needs recheck.
 // The cycle names its own folder (an activation's candidate is not the stored one), passed through as it is.
 assert(/probeLocationCiphertext: \(target\) => transitions\.probeSyncLocationCiphertext\(target\),/.test(hostSyncTs), 'the native sync service asks whether the location holds ciphertext');
-assert(/recheck: \(\) => transitions\.recheckPartlyEncryptedLocation\(\),/.test(hostSyncTs), 'the native encryption card rechecks a partly encrypted location');
+assert(/recheck: async \(\) => \{\s*const outcome = await transitions\.recheckPartlyEncryptedLocation\(\);/.test(hostSyncTs), 'the native encryption card rechecks a partly encrypted location');
 const fakeCoreWithSync = `${fakeCore}\n${syncOnly.map((name) => `export const ${name} = () => { throw new Error('${name}: sync is not bound in the gates'); };`).join('\n')}\n`;
 const built = await build({
     entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
@@ -3958,7 +4175,7 @@ const built = await build({
         plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
     } }],
 });
-const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}) => {
+const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, configure = () => {}, source = built.outputFiles[0].text) => {
     const state = {
         fakeData: { tasks: [], projects: [], sections: [], areas: [], people: [], settings: {} },
         fakeDataSequence, activationCount: 0, saveCount: 0, queryCount: 0,
@@ -4037,13 +4254,71 @@ const makeState = (taskCount, fakeDataSequence = [], hostPlatform = undefined, c
         },
     };
     configure(state);
-    vm.runInNewContext(built.outputFiles[0].text, state);
+    vm.runInNewContext(source, state);
+    assert.equal(state.contractBindings.reminderPlatform, hostPlatform === 'ios' ? 'ios' : 'android');
     return state;
 };
 const poll = async (state, id) => {
     await new Promise((resolveTick) => setImmediate(resolveTick));
     return JSON.parse(state.MindwtrHost.poll(id));
 };
+// Task362: real pure route/projection and the production private-entry Off/admission path.
+// Native363 separately proves actual HTTP/receipt/intent/recovery with the real core bundle.
+{
+    const AT = '2026-10-07T00:00:00.000Z', taskID = 'task362';
+    const selected = { id: 'baseline362', kind: 'file', title: 'Fixture.txt', uri: '', cloudKey: 'attachments/baseline362.txt',
+        localStatus: 'missing', createdAt: AT, updatedAt: AT };
+    const request = { version: 1, requestId: '00000000-0000-4000-8000-000000000362',
+        sessionID: '00000000-0000-4000-8000-000000000363', generation: 0, attachmentId: selected.id,
+        identity: '' };
+    const beforePayloadJSON = JSON.stringify({ version: 2, taskID, attachmentsOwned: true,
+        attachmentsBase: [selected], attachments: [selected], opaque: 'Retain 文' });
+    // Use the actual shared identity grammar, not an independently guessed tuple.
+    const identityBuild = await build({ stdin: { contents: `export { getAttachmentDownloadIdentity } from './mobile-attachment-availability';`,
+        resolveDir: resolve(app, '../../packages/core/src'), loader: 'ts' }, bundle: true, write: false, format: 'iife', globalName: 'identity362' });
+    const identityState = {}; vm.runInNewContext(identityBuild.outputFiles[0].text, identityState);
+    request.identity = identityState.identity362.getAttachmentDownloadIdentity(selected);
+    const base = { version: 1, taskID, beforePayloadJSON, requestJSON: JSON.stringify(request) };
+    const route = { ...base, webdavURL: 'https://synthetic.invalid/dav/data.json', managedDirectoryURI: 'file:///library/documents/attachments/' };
+    const configure = (state) => {
+        state.localAttachmentTest = true; state.localShaInstallCount = 0; state.selectedIoCalls = 0;
+        for (const name of ['fileCall', 'installerCall', 'fileAbort', 'fileDeleteNow', 'ioNext', 'ioBody']) {
+            state.__mindwtrNative[name] = () => { state.selectedIoCalls++; throw new Error('Unexpected selected IO'); };
+        }
+        state.__mindwtrNative.fileDirectories = () => JSON.stringify({ document: 'file:///library/documents/', cache: 'file:///library/cache/' });
+        state.__mindwtrFileCall = async () => { state.selectedIoCalls++; throw new Error('Unexpected selected file IO'); };
+        state.__mindwtrInstallerCall = async () => { throw new Error('No selected installer'); };
+        state.__mindwtrSyncSecrets = { getSecret: async () => { state.selectedIoCalls++; throw new Error('No Off secret read'); } };
+    };
+    const state = makeState(0, [], 'ios', configure);
+    const preflight = () => poll(state, state.MindwtrHost.attachmentDraftAvailabilityPreflight(JSON.stringify(route)));
+    assert.match((await preflight()).error, /^NOT_READY:/);
+    assert.equal((await poll(state, state.MindwtrHost.boot())).ok, true);
+    assert.deepEqual((await preflight()).value, { version: 1, requestId: request.requestId, attachmentJSON: JSON.stringify(selected),
+        initialURL: 'https://synthetic.invalid/dav/attachments/baseline362.txt', targetURI: 'file:///library/documents/attachments/baseline362.txt' });
+    const rawConfigJSON = JSON.stringify({ backend: 'off', url: null, username: null, allowInsecureHttp: null, encryptionStateJSON: null });
+    const run = (input = { ...base, rawConfigJSON }, callback = () => { throw new Error('No Off source callback'); }) =>
+        poll(state, state.MindwtrHost.iosTaskDraftPrepareAvailability(JSON.stringify(input), callback));
+    const logBefore = state.logText, shaBefore = state.localShaInstallCount;
+    assert.deepEqual(await run(), { ok: true, value: { version: 1, requestId: request.requestId, status: 'unavailable' } });
+    assert.match((await run({ ...base, rawConfigJSON, extra: true })).error, /^INVALID_INPUT:/);
+    assert.deepEqual((await run()).value, { version: 1, requestId: request.requestId, status: 'unavailable' }, 'A refused invocation releases its private slot');
+    assert.match((await run(undefined, null)).error, /^NOT_READY:/);
+    for (const field of ['sandbox', 'workspaceTransition']) {
+        state[field] = true; assert.match((await run()).error, /^NOT_READY:/); assert.match((await preflight()).error, /^NOT_READY:/); state[field] = false;
+    }
+    assert.equal(state.selectedIoCalls, 0); assert.equal(state.localShaInstallCount, shaBefore); assert.equal(state.logText, logBefore);
+    const resolved = { ...selected, uri: route.managedDirectoryURI + 'baseline362.txt', localStatus: 'available', fileHash: 'a'.repeat(64) };
+    const proof = await poll(state, state.MindwtrHost.attachmentDraftPrepareAvailability(JSON.stringify({ version: 1, taskID,
+        requestId: request.requestId, attachmentId: selected.id, identity: request.identity, beforePayloadJSON,
+        status: 'available', resolvedAttachmentJSON: JSON.stringify(resolved) })));
+    assert.equal(proof.ok, true); assert.equal(proof.value.kind, 'prepared-file-availability');
+    assert.deepEqual(JSON.parse(proof.value.afterPayloadJSON).attachments, [resolved]);
+    assert.equal(JSON.parse(proof.value.afterPayloadJSON).opaque, 'Retain 文');
+    const android = makeState(0, [], 'android');
+    assert.match((await poll(android, android.MindwtrHost.attachmentDraftAvailabilityPreflight(JSON.stringify(route)))).error, /^NOT_READY:/);
+    assert.match((await poll(android, android.MindwtrHost.iosTaskDraftPrepareAvailability(JSON.stringify({ ...base, rawConfigJSON }), () => ''))).error, /^NOT_READY:/);
+}
 // HTTP transport alone enables no KV/sync/AI binding. Its private fixed
 // receipt uses the existing forced Diagnostics writer, without request input.
 {
@@ -4055,7 +4330,7 @@ const poll = async (state, id) => {
         state.__mindwtrNative.ioBody = () => '';
     };
     const local = makeState(0, [], 'ios', configureHTTP);
-    assert.deepEqual(Object.keys(local.contractBindings), []);
+    assert.deepEqual(Object.keys(local.contractBindings).filter((name) => local.contractBindings[name] !== undefined), ['reminderPlatform']);
     assert.equal(typeof local.__mindwtrNative.kvMultiGet, 'undefined');
     local.MindwtrHost.nativeHTTPDelivered();
     assert.equal(local.logText, null, 'No preboot transport receipt');
@@ -4097,7 +4372,7 @@ for (const [bridge, receipt, operation] of [
         state.__mindwtrNative.ioBody = () => '';
     };
     const local = makeState(0, [], 'ios', configurePort);
-    assert.deepEqual(Object.keys(local.contractBindings), []);
+    assert.deepEqual(Object.keys(local.contractBindings).filter((name) => local.contractBindings[name] !== undefined), ['reminderPlatform']);
     assert.equal(typeof local.__mindwtrNative.kvMultiGet, 'undefined');
     local.MindwtrHost[receipt]();
     assert.equal(local.logText, null, 'No preboot native primitive receipt');
@@ -4141,7 +4416,7 @@ for (const [bridge, receipt, operation] of [
         };
     };
     const local = makeState(0, [], 'ios', configureKV);
-    assert.deepEqual(Object.keys(local.contractBindings), [], 'KV does not enable iOS Sync or AI');
+    assert.deepEqual(Object.keys(local.contractBindings).filter((name) => local.contractBindings[name] !== undefined), ['reminderPlatform'], 'KV does not enable iOS Sync or AI');
     for (const name of names) assert.equal(typeof local.__mindwtrNative[name], 'function');
     for (const [method] of receipts) local.MindwtrHost[method]();
     assert.equal(local.logText, null, 'No preboot device storage receipt');
@@ -4177,6 +4452,341 @@ for (const [bridge, receipt, operation] of [
         assert.equal(typeof other.__mindwtrNative.kvMultiGet, 'undefined');
     }
 }
+// Task346 and selected encryption exercise the production entry with narrow factory/core stand-ins.
+// Actual contract state admission and availability/installer/crypto/JSC acceptance have separate suites.
+{
+    const syncFixture = `
+export function createHostSyncCrypto() { return {}; }
+export function isNativeIosSelfHostedProvider(value) { return !value?.trim() || value.trim() === 'selfhosted'; }
+export function createNativeSync() {
+  globalThis.syncFactoryCalls++;
+  return { attachmentsHost: globalThis.remoteAttachmentHost, settingsHost: { encryption: {} },
+    async assertSelfHostedSyncAdmission() { globalThis.admissionChecks = (globalThis.admissionChecks ?? 0) + 1;
+      if (globalThis.incompleteTransition) throw new Error('Sync encryption transition is incomplete'); },
+    async performStoredAutomaticSync(reason) { globalThis.foregroundInputs ??= []; globalThis.foregroundInputs.push(['stored', reason]);
+      return globalThis.storedReply ?? { success: true, skipped: false }; } };
+}
+`;
+    const downloadBuilt = await build({
+        entryPoints: [resolve(app, 'bundle/host-entry.ts')], bundle: true, write: false, format: 'iife',
+        plugins: [{ name: 'project-download-entry', setup(plugin) {
+            plugin.onResolve({ filter: /^\.\/host-sync$/ }, () => ({ path: 'sync', namespace: 'download-test' }));
+            plugin.onLoad({ filter: /.*/, namespace: 'download-test' }, () => ({ contents: syncFixture, loader: 'js' }));
+            plugin.onResolve({ filter: /^@mindwtr\/core$/ }, () => ({ path: 'core', namespace: 'test' }));
+            plugin.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: fakeCoreWithSync, loader: 'js', resolveDir: app }));
+        } }],
+    });
+    const input = { projectId: 'project346', attachmentId: 'attachment346', revision: 'project-revision' };
+    const attachment = { id: input.attachmentId, kind: 'file', title: 'Synthetic346', uri: 'file:///library/documents/attachments/attachment346.pdf' };
+    const create = (platform = 'ios') => makeState(0, [], platform, (state) => {
+        state.localAttachmentTest = true;
+        for (const name of ['fileCall', 'installerCall', 'fileAbort', 'fileDeleteNow', 'ioNext', 'ioBody']) state.__mindwtrNative[name] = () => '';
+        state.__mindwtrNative.fileDirectories = () => JSON.stringify({ document: 'file:///library/documents/', cache: 'file:///library/cache/' });
+        state.__mindwtrFileCall = async () => null; state.__mindwtrInstallerCall = async () => null;
+        state.syncFactoryCalls = 0; state.secretReads = 0; state.storedReads = 0; state.downloadHosts = [];
+        state.remoteAttachmentHost = { selected: 'remote-346' };
+        state.ownerProjects = []; // Install the selected row only after the empty VM boot verifies.
+        state.storedBackend = 'webdav';
+        // On non-iOS, avoid eager normal Sync so the explicit entry itself is tested.
+        if (platform === 'ios') state.__mindwtrNative.kvMultiGet = () => { throw new Error('Unexpected multi-read'); };
+        state.__mindwtrNative.kvGet = (key) => { state.storedReads++; return JSON.stringify([
+            key === '@mindwtr_cloud_provider' ? state.storedProvider ?? null : state.storedBackend ?? null]); };
+        state.__mindwtrSyncSecrets = { getSecret: () => { state.secretReads++; throw new Error('Unexpected secret read'); } };
+        state.attachmentReply = { ok: true, value: { status: 'available', message: null, update: null } };
+        state.settings = { diagnostics: { loggingEnabled: false } };
+    }, downloadBuilt.outputFiles[0].text);
+    const boot = async (state) => {
+        const answer = await poll(state, state.MindwtrHost.boot());
+        if (answer.ok) state.ownerProjects = [{ id: input.projectId, status: 'active', attachments: [{ ...attachment }] }];
+        return answer;
+    };
+    const command = (state, value = input) => poll(state,
+        state.MindwtrHost.iosForegroundSync('projectAttachmentDownload', JSON.stringify(value), () => ''));
+    const markerLines = (state) => (state.logText ?? '').split('\n').filter((line) => line.includes('v1.3.5/ios-project-file-download'));
+    // Selected encryption admission runs before any configured service or secret read.
+    const encrypted = create();
+    const unlock = { revision: 'saved-location', action: { type: 'open', flow: 'unlock' } };
+    const unlockCommand = (value) => poll(encrypted,
+        encrypted.MindwtrHost.iosForegroundSync('runSyncEncryptionAction', JSON.stringify(value), () => ''));
+    assert.equal((await boot(encrypted)).ok, true);
+    const invalidEncryptionInputs = [null, [], {}, { ...unlock, revision: '' }, { ...unlock, revision: 'r'.repeat(101) },
+        { ...unlock, requestId: '11111111-1111-1111-1111-111111111111' }, { ...unlock, extra: true },
+        { ...unlock, action: { type: 'open', flow: 'unknown' } },
+        ...['generate', 'reveal', 'recheck'].map((type) => ({ ...unlock, action: { type } })),
+        { ...unlock, action: { type: 'typed', field: 'unknown', value: 'synthetic' } },
+        ...['current', 'next', 'confirm'].map((field) => ({ ...unlock, action: { type: 'typed', field, value: 'x'.repeat(1001) } })),
+        { ...unlock, action: { type: 'typed', field: 'confirm', value: '🧠'.repeat(501) } },
+        ...['unlock', 'enable', 'change', 'disable', 'abandon'].map((flow) => ({ ...unlock, action: { type: 'submit', flow } })),
+        { ...unlock, action: { type: 'decline' }, requestId: 'invalid' },
+        { ...unlock, action: { type: 'recheck' }, requestId: 'invalid' },
+        { ...unlock, action: { type: 'open', flow: 'enable', extra: true } },
+        { ...unlock, action: { type: 'typed', field: 'next', value: 'synthetic', extra: true } }];
+    for (const value of invalidEncryptionInputs) {
+        assert.match((await unlockCommand(value)).error, /^INVALID_INPUT:/);
+    }
+    assert.equal(encrypted.storedReads, 0);
+    assert.equal(encrypted.syncFactoryCalls, 0);
+    assert.equal(encrypted.secretReads, 0);
+    const unsupportedEncryptionBackends = ['dropbox', 'file', 'cloud', 'cloudkit', 'unsupported'];
+    for (const backend of unsupportedEncryptionBackends) {
+        encrypted.storedBackend = backend;
+        assert.deepEqual((await unlockCommand(unlock)).value, { ok: false, error: { code: 'ACTION_FAILED',
+            message: 'This sync provider is not available in native iOS yet; the stored configuration is unchanged' } });
+        assert.equal(encrypted.storedBackend, backend);
+    }
+    assert.equal(encrypted.syncFactoryCalls, 0);
+    assert.equal(encrypted.secretReads, 0);
+    assert.equal(encrypted.encryptionInputs?.length ?? 0, 0, 'Unsupported providers never reach the selected contract');
+    // This entry routes Off/missing envelopes to core; it does not decide local state, revision or transition admission.
+    const localEncryptionActions = [{ type: 'open', flow: 'enable' },
+        ...['next', 'confirm'].map((field) => ({ type: 'typed', field, value: 'synthetic-local-388' })),
+        { type: 'submit', flow: 'enable' }, { type: 'open', flow: 'disable' }, { type: 'submit', flow: 'disable' }];
+    const locallyRoutedBackends = [undefined, '', 'off', ' off '];
+    for (const backend of locallyRoutedBackends) {
+        const localEncryption = create(); assert.equal((await boot(localEncryption)).ok, true);
+        localEncryption.storedBackend = backend;
+        const localCommand = (value) => poll(localEncryption,
+            localEncryption.MindwtrHost.iosForegroundSync('runSyncEncryptionAction', JSON.stringify(value), () => ''));
+        for (const action of localEncryptionActions) {
+            const value = { revision: unlock.revision, action,
+                ...(action.type === 'submit' ? { requestId: '11111111-1111-1111-1111-111111111111' } : {}) };
+            assert.deepEqual((await localCommand(value)).value, { ok: true, value: { toasts: [], passphrase: null } });
+            assert.deepEqual(JSON.parse(JSON.stringify(localEncryption.encryptionInputs.at(-1))), value);
+            assert.equal(localEncryption.storedBackend, backend, 'Routing never activates or rewrites a backend');
+        }
+        assert.equal(localEncryption.syncFactoryCalls, 1, 'Local routing retains one foreground service');
+        assert.equal(localEncryption.contractBindings.syncSettings.encryption.mode, 'saved-webdav-or-local');
+        localEncryption.encryptionReply = { ok: false, error: { code: 'ACTION_FAILED', message: 'Synthetic selected-state refusal' } };
+        assert.deepEqual(await localCommand({ ...unlock, action: { type: 'open', flow: 'disable' } }),
+            { ok: true, value: localEncryption.encryptionReply }, 'Core admission refusals survive local routing');
+        assert.equal(localEncryption.syncFactoryCalls, 1); assert.equal(localEncryption.secretReads, 0);
+        assert(!(localEncryption.logText ?? '').includes('synthetic-local-388'), 'Local field text never enters entry diagnostics');
+    }
+    encrypted.storedBackend = 'webdav';
+    const selectedEncryptionActions = [...['unlock', 'enable', 'change', 'disable', 'abandon'].map((flow) => ({ type: 'open', flow })),
+        ...['current', 'next', 'confirm'].map((field) => ({ type: 'typed', field, value: 'synthetic' })),
+        ...['unlock', 'enable', 'change', 'disable', 'abandon'].map((flow) => ({ type: 'submit', flow })),
+        { type: 'decline' }, { type: 'cancel' }, { type: 'retry' }, { type: 'recheck' }];
+    for (const action of selectedEncryptionActions) {
+        const value = { revision: unlock.revision, action,
+            ...(['submit', 'decline', 'recheck'].includes(action.type) ? { requestId: '11111111-1111-1111-1111-111111111111' } : {}) };
+        assert.equal((await unlockCommand(value)).value.ok, true);
+        assert.deepEqual(JSON.parse(JSON.stringify(encrypted.encryptionInputs.at(-1))), value);
+    }
+    assert.equal(encrypted.syncFactoryCalls, 1, 'Selected encryption uses the retained foreground service');
+    assert.equal(encrypted.secretReads, 0, 'Entry fixture reads no credentials');
+    assert(!(encrypted.logText ?? '').includes('synthetic'), 'Passphrase never enters entry diagnostics');
+    console.log(`Selected encryption: ${invalidEncryptionInputs.length} invalid envelopes refused before storage; ${unsupportedEncryptionBackends.length} providers refused before factory; ${selectedEncryptionActions.length} WebDAV and ${localEncryptionActions.length * locallyRoutedBackends.length} local envelopes routed with exact mode and UUID ownership; ${locallyRoutedBackends.length} core refusals preserved (NodeVM)`);
+    const foreground = create();
+    assert.equal((await boot(foreground)).ok, true);
+    const foregroundCommand = (name, value, currentTargetURI) => poll(foreground,
+        foreground.MindwtrHost.iosForegroundSync(name, JSON.stringify(value), () => '', currentTargetURI));
+    const selfHostedFields = { url: 'https://synthetic398.invalid/v1/data', token: null, allowInsecureHttp: false };
+    const webdavFields = { url: 'https://synthetic398.invalid/data.json', username: 'synthetic', password: null, allowInsecureHttp: false };
+    const request = { requestId: '11111111-1111-1111-1111-111111111111', revision: 'config-398' };
+    const malformedForms = [{}, { webdav: webdavFields, selfHosted: selfHostedFields }, { selfHosted: null },
+        { selfHosted: [] }, { selfHosted: { ...selfHostedFields, password: 'synthetic' } },
+        { webdav: { ...webdavFields, token: null } }, { selfHosted: { ...selfHostedFields, token: 1 } }];
+    for (const name of ['saveSyncBackend', 'syncNow', 'testSyncConnection']) for (const fields of malformedForms) {
+        assert.match((await foregroundCommand(name, { ...request, ...fields })).error, /^INVALID_INPUT:/);
+    }
+    assert.equal(foreground.storedReads, 0, 'Malformed/mixed forms never read configuration');
+    assert.equal(foreground.syncFactoryCalls, 0, 'Malformed/mixed forms never construct a service');
+    assert.equal(foreground.secretReads, 0);
+    foreground.storedBackend = 'cloud';
+    for (const provider of ['dropbox', 'cloudkit', 'file', 'unknown']) {
+        foreground.storedProvider = provider;
+        const refusal = await foregroundCommand('openSyncSettings', {});
+        assert.equal(refusal.value.error.code, 'ACTION_FAILED');
+        assert.equal(foreground.storedProvider, provider, 'Unsupported provider authority is never rewritten');
+    }
+    assert.equal(foreground.syncFactoryCalls, 0);
+    for (const provider of [undefined, '', 'selfhosted', ' selfhosted ']) {
+        foreground.storedProvider = provider;
+        const model = await foregroundCommand('openSyncSettings', {});
+        assert.deepEqual(JSON.parse(JSON.stringify(model.value.value.backend.options.map(({ option }) => option))), ['off', 'webdav', 'selfhosted']);
+        for (const name of ['saveSyncBackend', 'syncNow', 'testSyncConnection']) {
+            const value = { ...request, selfHosted: selfHostedFields };
+            assert.equal((await foregroundCommand(name, value)).value.ok, true);
+            assert.deepEqual(JSON.parse(JSON.stringify(foreground.foregroundInputs.at(-1))), [name, value]);
+        }
+        for (const [name, reason] of [['syncStored', 'startup'], ['syncResume', 'resume']]) {
+            assert.deepEqual((await foregroundCommand(name, {})).value.value, { success: true, skipped: false });
+            assert.deepEqual(JSON.parse(JSON.stringify(foreground.foregroundInputs.at(-1))), ['stored', reason]);
+        }
+    }
+    assert.equal(foreground.syncFactoryCalls, 1, 'All self-hosted foreground commands retain one owned factory');
+    assert.equal(foreground.secretReads, 0, 'Entry never reads credentials itself');
+    assert(!(foreground.logText ?? '').includes('synthetic398'), 'Owned command marker contains no endpoint or token');
+    for (const [name, value] of [['selectSyncBackend', { requestId: request.requestId, option: 'selfhosted' }],
+        ...['saveSyncBackend', 'syncNow', 'testSyncConnection'].map(name => [name, { ...request, selfHosted: selfHostedFields }]),
+        ['syncStored', {}], ['syncResume', {}]]) {
+        foreground.incompleteTransition = true;
+        const prior = foreground.foregroundInputs.length;
+        const priorDownloads = foreground.attachmentInputs.length;
+        const priorLog = foreground.logText;
+        const refusal = await foregroundCommand(name, value);
+        assert.deepEqual(refusal.value, { ok: false, error: { code: 'ACTION_FAILED', message: 'Sync encryption transition is incomplete' } });
+        assert.equal(foreground.foregroundInputs.length, prior, 'Incomplete transition refuses before shared settings dispatch');
+        assert.equal(foreground.attachmentInputs.length, priorDownloads, 'Incomplete transition refuses before availability bytes');
+        assert.equal(foreground.logText, priorLog, 'Refused admission emits no settled-command marker');
+    }
+    foreground.incompleteTransition = false;
+    assert.equal((await foregroundCommand('selectSyncBackend', { requestId: request.requestId, option: 'selfhosted' })).value.ok, true);
+    // Ordinary cloud Project requests refuse independently at entry, even when
+    // configuration is valid. They never reach options, factory or availability.
+    const ordinaryCloudProject = create(); assert.equal((await boot(ordinaryCloudProject)).ok, true);
+    ordinaryCloudProject.storedBackend = 'cloud';
+    const ordinaryLogs = ordinaryCloudProject.logText;
+    for (const provider of [undefined, '', 'selfhosted', ' selfhosted ']) {
+        ordinaryCloudProject.storedProvider = provider;
+        assert.deepEqual((await command(ordinaryCloudProject)).value, { ok: false, error: { code: 'ACTION_FAILED',
+            message: 'This sync provider is not available in native iOS yet; the stored configuration is unchanged' } });
+    }
+    assert.equal(ordinaryCloudProject.syncFactoryCalls, 0); assert.equal(ordinaryCloudProject.secretReads, 0);
+    assert.equal(ordinaryCloudProject.projectOptionsReads ?? 0, 0); assert.equal(ordinaryCloudProject.attachmentInputs.length, 0);
+    assert.equal(ordinaryCloudProject.logText, ordinaryLogs, 'Gated ordinary cloud Project emits no completion marker');
+    const downloadsBefore = foreground.attachmentInputs.length;
+    const localForegroundHost = foreground.contractBindings.attachments;
+    const mappedTarget = attachment.uri;
+    assert.equal((await foregroundCommand('projectAttachmentDownload', input, mappedTarget)).value.ok, true);
+    assert.equal(foreground.attachmentInputs.length, downloadsBefore + 1, 'Saved selfhosted relocated Project routes through selected availability');
+    assert.deepEqual(JSON.parse(JSON.stringify(foreground.attachmentInputs.at(-1))), ['downloadRelocatedProjectAttachment', {
+        ...input, managedDirectoryURI: mappedTarget.slice(0, mappedTarget.lastIndexOf('/') + 1),
+    }, mappedTarget]);
+    assert.notEqual(foreground.downloadHosts.at(-1), foreground.remoteAttachmentHost, 'Relocated selfhosted availability uses its read-only scoped host');
+    assert.equal(foreground.contractBindings.attachments, localForegroundHost, 'Relocated Project scope restores the local host');
+    foreground.incompleteTransition = true;
+    const blockedDownloads = foreground.attachmentInputs.length;
+    const blockedLogs = foreground.logText;
+    assert.deepEqual((await foregroundCommand('projectAttachmentDownload', input, mappedTarget)).value,
+        { ok: false, error: { code: 'ACTION_FAILED', message: 'Sync encryption transition is incomplete' } });
+    assert.equal(foreground.attachmentInputs.length, blockedDownloads, 'Incomplete transition refuses before relocated Project availability');
+    assert.equal(foreground.logText, blockedLogs, 'Refused relocated admission emits no completion marker');
+    foreground.incompleteTransition = false;
+    foreground.foregroundReply = { ok: false, error: { code: 'STALE_REVISION', message: 'Synthetic shared stale refusal' } };
+    assert.deepEqual((await foregroundCommand('saveSyncBackend', { ...request, selfHosted: selfHostedFields })).value,
+        foreground.foregroundReply, 'Shared revision/admission refusal survives routing');
+    console.log(`Self-hosted entry: ${malformedForms.length * 3} invalid/mixed forms before storage; 4 unsupported providers before factory; 4 legacy/provider forms routed; 7 incomplete-transition commands before dispatch; 4 ordinary cloud Project forms before factory; scoped read-only relocated Project routing and restoration (NodeVM)`);
+    const malformed = create();
+    assert.match((await command(malformed)).error, /^NOT_READY:/);
+    const bootMalformed = await boot(malformed);
+    assert.equal(bootMalformed.ok, true, JSON.stringify(bootMalformed));
+    for (const value of [null, [], {}, { ...input, projectId: '' }, { ...input, attachmentId: 1 }, { ...input, revision: null },
+        { ...input, projectId: 'x'.repeat(501) }, { ...input, attachmentId: 'x'.repeat(501) }, { ...input, revision: 'x'.repeat(201) },
+        { ...input, uri: 'file:///foreign' }, { ...input, remoteKey: 'synthetic' }, { ...input, password: 'synthetic' },
+        { ...input, extra: 'x'.repeat(128 * 1024) }]) assert.match((await command(malformed, value)).error, /^INVALID_INPUT:/);
+    assert.equal(malformed.storedReads, 0); assert.equal(malformed.syncFactoryCalls, 0); assert.equal(malformed.secretReads, 0);
+    for (const flag of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        malformed.persistenceStatus = { [flag]: true }; assert.match((await command(malformed)).error, /^NOT_READY:/);
+    }
+    malformed.persistenceStatus = null;
+    for (const field of ['sandbox', 'workspaceTransition']) {
+        malformed[field] = true; assert.match((await command(malformed)).error, /^NOT_READY:/); malformed[field] = false;
+    }
+    assert.equal(malformed.storedReads, 0);
+    for (const stored of [undefined, '', 'off', ' off ', 'dropbox', 'cloudkit']) {
+        malformed.storedBackend = stored;
+        const result = await command(malformed);
+        assert.equal(result.ok, true); assert.equal(result.value.ok, false); assert.equal(result.value.error.code, 'ACTION_FAILED');
+        assert.equal(malformed.storedBackend, stored);
+    }
+    assert.equal(malformed.syncFactoryCalls, 0); assert.equal(malformed.secretReads, 0); assert.equal(malformed.projectOptionsReads ?? 0, 0);
+    assert.equal(markerLines(malformed).length, 0);
+    const noIos = create('android'); assert.equal((await boot(noIos)).ok, true);
+    assert.match((await command(noIos)).error, /^NOT_READY:/); assert.equal(noIos.syncFactoryCalls, 0);
+
+    const stale = create(); assert.equal((await boot(stale)).ok, true);
+    const staleCases = [
+        () => ({ ...input, revision: 'older-revision' }),
+        () => { stale.ownerProjects = []; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, deletedAt: 'deleted', attachments: [attachment] }]; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, purgedAt: 'purged', attachments: [attachment] }]; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, attachments: [{ ...attachment, kind: 'link' }] }]; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, attachments: [{ ...attachment, deletedAt: 'deleted' }] }]; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, attachments: [{ ...attachment, id: 'replacement' }] }]; return input; },
+        () => { stale.ownerProjects = [{ id: input.projectId, attachments: [attachment, attachment] }]; return input; },
+    ];
+    for (const replace of staleCases) {
+        const result = await command(stale, replace());
+        assert.equal(result.ok, true); assert.equal(result.value.ok, false); assert.equal(result.value.error.code, 'STALE_REVISION');
+    }
+    assert.equal(stale.syncFactoryCalls, 0); assert.equal(stale.secretReads, 0); assert.equal(stale.attachmentInputs.length, 0);
+    assert.equal(markerLines(stale).length, 0);
+
+    const selected = create(); assert.equal((await boot(selected)).ok, true);
+    const localHost = selected.contractBindings.attachments;
+    assert.notEqual(localHost, selected.remoteAttachmentHost);
+    const rowsBefore = JSON.stringify(selected.ownerProjects);
+    assert.deepEqual(await command(selected), { ok: true, value: selected.attachmentReply });
+    assert.equal(selected.syncFactoryCalls, 1); assert.equal(selected.downloadHosts[0], selected.remoteAttachmentHost);
+    assert.equal(selected.contractBindings.attachments, localHost, 'Successful download restores the local-only host');
+    assert.equal(JSON.stringify(selected.ownerProjects), rowsBefore);
+    assert.equal(JSON.stringify(selected.attachmentInputs[0]), JSON.stringify(['downloadAttachment', { owner: { kind: 'project', projectId: input.projectId }, attachmentId: input.attachmentId }]));
+    assert.equal(markerLines(selected).length, 1, 'Forced availability marker is persisted with diagnostics disabled');
+    const marker = JSON.parse(markerLines(selected)[0]);
+    assert.deepEqual(marker.context, { releaseCheck: 'v1.3.5/ios-project-file-download', operation: 'projectAttachmentDownload', outcome: 'available' });
+    assert.equal(marker.message, 'Native iOS Project file availability settled');
+    for (const privateValue of [input.projectId, input.attachmentId, input.revision, attachment.title, attachment.uri]) assert(!markerLines(selected)[0].includes(privateValue));
+    selected.ownerProjects[0].status = 'archived';
+    assert.deepEqual(await command(selected), { ok: true, value: selected.attachmentReply });
+    assert.equal(selected.syncFactoryCalls, 1, 'The same retained factory handles archived availability');
+    assert.equal(selected.contractBindings.attachments, localHost);
+    selected.logFailure = 'synthetic log refusal';
+    assert.deepEqual(await command(selected), { ok: true, value: selected.attachmentReply });
+    assert.equal(markerLines(selected).length, 2, 'A failed log append cannot invalidate durable availability');
+    selected.logFailure = null;
+    for (const answer of [{ ok: true, value: { status: 'unavailable', message: 'synthetic refusal', update: null } },
+        { ok: false, error: { code: 'ACTION_FAILED', message: 'synthetic host refusal' } }]) {
+        selected.attachmentReply = answer; const count = markerLines(selected).length;
+        assert.deepEqual(await command(selected), { ok: true, value: answer });
+        assert.equal(markerLines(selected).length, count);
+        assert.equal(selected.contractBindings.attachments, localHost);
+    }
+    selected.downloadError = 'synthetic download failure';
+    assert.match((await command(selected)).error, /synthetic download failure/);
+    assert.equal(selected.contractBindings.attachments, localHost, 'Thrown download restores the local-only host');
+    selected.downloadError = null;
+    const general = await poll(selected, selected.MindwtrHost.attachmentRequest('downloadAttachment', JSON.stringify({ owner: { kind: 'project', projectId: input.projectId }, attachmentId: input.attachmentId })));
+    assert.equal(general.ok, false, 'General local attachment download remains closed');
+
+    const draining = create(); assert.equal((await boot(draining)).ok, true);
+    const drainingLocalHost = draining.contractBindings.attachments;
+    let releaseDownload, releaseFlush;
+    draining.downloadHold = new Promise((resolveHold) => { releaseDownload = resolveHold; });
+    draining.flushHold = new Promise((resolveHold) => { releaseFlush = resolveHold; });
+    const ticket = draining.MindwtrHost.iosForegroundSync('projectAttachmentDownload', JSON.stringify(input), () => '');
+    await new Promise((tick) => setImmediate(tick));
+    assert.equal(draining.MindwtrHost.poll(ticket), null);
+    assert.equal(draining.contractBindings.attachments, draining.remoteAttachmentHost);
+    assert.match((await command(draining)).error, /^NOT_READY:/, 'The current invocation excludes another command');
+    releaseDownload(); await new Promise((tick) => setImmediate(tick));
+    assert.equal(draining.contractBindings.attachments, drainingLocalHost);
+    assert.notEqual(draining.contractBindings.attachments, draining.remoteAttachmentHost, 'Scope is restored before durable flush');
+    assert.equal(draining.MindwtrHost.poll(ticket), null, 'No result before the durable barrier settles');
+    assert.equal(markerLines(draining).length, 0);
+    releaseFlush(); assert.deepEqual(await poll(draining, ticket), { ok: true, value: draining.attachmentReply });
+    for (const flag of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+        const failure = create(); assert.equal((await boot(failure)).ok, true);
+        const originalHost = failure.contractBindings.attachments;
+        failure.afterDownload = () => { failure.persistenceStatus = { [flag]: true }; };
+        assert.match((await command(failure)).error, /^NOT_READY:/);
+        assert.equal(failure.contractBindings.attachments, originalHost); assert.equal(markerLines(failure).length, 0);
+    }
+    const flushFailure = create(); assert.equal((await boot(flushFailure)).ok, true);
+    const originalHost = flushFailure.contractBindings.attachments;
+    flushFailure.flushError = 'synthetic durable failure';
+    assert.match((await command(flushFailure)).error, /synthetic durable failure/);
+    assert.equal(flushFailure.contractBindings.attachments, originalHost); assert.equal(markerLines(flushFailure).length, 0);
+    const fatal = create(); assert.equal((await boot(fatal)).ok, true);
+    fatal.downloadFatal = true;
+    assert.match((await command(fatal)).error, /cleanup could not be confirmed/i);
+    const counts = [fatal.storedReads, fatal.attachmentInputs.length, fatal.events.length];
+    assert.match((await command(fatal)).error, /cleanup could not be confirmed/i);
+    assert.deepEqual([fatal.storedReads, fatal.attachmentInputs.length, fatal.events.length], counts);
+    assert.equal(markerLines(fatal).length, 0);
+    console.log('Task346: strict selected Project Download admission, archived eligibility, scoped host restoration and durable availability acknowledgment (NodeVM)');
+}
 // Production host-entry selects independent local attachment policy only for
 // complete iOS file capabilities. No kvMultiGet, sync settings, AI or backend
 // constructor is supplied; readiness and diagnostic acknowledgments are real.
@@ -4188,8 +4798,67 @@ for (const [bridge, receipt, operation] of [
         state.__mindwtrFileCall = async () => null;
         state.__mindwtrInstallerCall = async () => null;
     };
+    // Stored Sync's empty/Off admission must not construct the throwing Sync
+    // stand-ins, read secrets, or open a form. Actual configured runs use JSC tests.
+    const stored = makeState(0, [], 'ios', (state) => {
+        configureLocal(state);
+        state.storedReads = 0; state.secretReads = 0;
+        state.__mindwtrNative.kvMultiGet = () => { throw new Error('Unexpected stored multi-read'); };
+        state.__mindwtrNative.kvGet = (key) => {
+            assert.equal(key, '@mindwtr_sync_backend');
+            state.storedReads++;
+            return JSON.stringify([state.storedBackend ?? null]);
+        };
+        state.__mindwtrSyncSecrets = { getSecret: () => {
+            state.secretReads++; throw new Error('Unexpected stored secret read');
+        } };
+    });
+    for (const name of ['syncStored', 'syncResume']) {
+        assert.match((await poll(stored, stored.MindwtrHost.iosForegroundSync(name, '{}', () => ''))).error, /^NOT_READY:/);
+    }
+    assert.equal(stored.storedReads, 0);
+    assert.equal((await poll(stored, stored.MindwtrHost.boot())).ok, true);
+    for (const name of ['syncStored', 'syncResume']) {
+        const command = (json = '{}') => poll(stored, stored.MindwtrHost.iosForegroundSync(name, json, () => ''));
+        stored.storedReads = 0;
+        stored.storedBackend = undefined;
+        for (const input of ['null', '[]', '{', '{"revision":"r"}', '{"config":{}}', '{"password":"synthetic"}', '{"x":"' + 'x'.repeat(128 * 1024) + '"}']) {
+            assert.match((await command(input)).error, /^INVALID_INPUT:/, `${name} accepts only a bounded empty object`);
+        }
+        assert.equal(stored.storedReads, 0, 'Invalid requests reach no storage port');
+        for (const flag of ['failed', 'queued', 'inFlight', 'immediate', 'retrying']) {
+            stored.persistenceStatus = { [flag]: true };
+            assert.match((await command()).error, /^NOT_READY:/, `${name} preserves strict persistence admission`);
+        }
+        stored.persistenceStatus = null;
+        for (const field of ['sandbox', 'workspaceTransition']) {
+            stored[field] = true;
+            assert.match((await command()).error, /^NOT_READY:/);
+            stored[field] = false;
+        }
+        assert.equal(stored.storedReads, 0, 'Unsettled requests reach no storage port');
+        const beforeRows = JSON.stringify(stored.fakeData);
+        const beforeLog = stored.logText;
+        for (const value of [undefined, '', 'off', ' off ']) {
+            stored.storedBackend = value;
+            assert.deepEqual(await command('  {}  '), { ok: true, value: { ok: true, value: { success: true, skipped: true } } });
+        }
+        stored.storedBackend = 'dropbox';
+        const unsupported = await command();
+        assert.equal(unsupported.ok, true);
+        assert.equal(unsupported.value.ok, false);
+        assert.equal(unsupported.value.error.code, 'ACTION_FAILED');
+        assert.equal(stored.storedBackend, 'dropbox', 'Unsupported stored provider is preserved');
+        assert.equal(stored.storedReads, 5, 'One exact provider read per admitted invocation');
+        assert.equal(stored.secretReads, 0, 'Off and unsupported runs read no secret');
+        assert.equal(JSON.stringify(stored.fakeData), beforeRows, 'Off admission writes no domain rows');
+        assert.equal(stored.logText, beforeLog, 'No configured-run settlement marker is emitted for skipped/refused admission');
+        assert.equal(stored.contractBindings.syncSettings, undefined, 'Off and unsupported runs never construct the Sync factory');
+    }
+    assert.ok(hostEntry.includes("name === 'syncResume' ? { message: 'Native iOS resume Sync command settled', releaseCheck: 'v1.3.5/ios-resume-sync' }"));
+    assert.match(hostEntry, /context: \{ releaseCheck: diagnostic\.releaseCheck, operation: name, outcome:/);
     const local = makeState(0, [], 'ios', configureLocal);
-    assert.deepEqual(Object.keys(local.contractBindings), ['attachments'], 'local capability enables neither Sync nor AI');
+    assert.deepEqual(Object.keys(local.contractBindings).filter((name) => local.contractBindings[name] !== undefined), ['reminderPlatform', 'attachments'], 'local capability enables neither Sync nor AI');
     assert.equal(local.localShaInstallCount, 1, 'successful local construction installs native SHA once');
     assert.equal((await poll(local, local.MindwtrHost.boot())).ok, true);
     const owner = { kind: 'task', taskId: 'task215', attachments: [] };
@@ -4235,7 +4904,7 @@ for (const [bridge, receipt, operation] of [
             if (variant === 'partial') delete state.__mindwtrNative.ioBody;
             if (variant === 'refused') state.__mindwtrNative.fileDirectories = () => '!MindwtrNativeError:fixed unavailable';
         });
-        assert.deepEqual(Object.keys(unavailable.contractBindings), [], `${variant} capability offers no local fallback`);
+        assert.deepEqual(Object.keys(unavailable.contractBindings).filter((name) => unavailable.contractBindings[name] !== undefined), ['reminderPlatform'], `${variant} capability offers no local fallback`);
         assert.equal(unavailable.localShaInstallCount, 0, 'failed optional discovery leaves SHA binding unchanged');
         assert.equal((await poll(unavailable, unavailable.MindwtrHost.boot())).ok, true, 'optional local failure does not fail boot');
     }
@@ -4340,6 +5009,43 @@ for (const [bridge, receipt, operation] of [
         const wrong = structuredClone(full); wrong.priorOperations[0].operation.sourceSha256 = 'b'.repeat(64);
         assert.equal((await call(local, 'attachmentDraftValidateLineageV4', wrong)).ok, false);
     });
+    // Selected availability metadata retains a baseline ID while acquiring a different URI.
+    await check(async () => {
+        const missing = { ...baseline, uri: '', cloudKey: 'attachments/baseline.pdf',
+            fileHash: 'a'.repeat(64), localStatus: 'missing' };
+        const before = { ...JSON.parse(opening), attachmentsBase: [missing], attachments: [missing] };
+        const beforePayloadJSON = JSON.stringify(before);
+        const resolved = { ...missing, uri: ROOT + 'baseline.pdf', localStatus: 'available' };
+        const afterPayloadJSON = JSON.stringify({ ...before, attachments: [resolved] });
+        const operation = { version: 1, kind: 'prepared-file-availability', taskID: 'task257',
+            requestId: '35600000-0000-4000-8000-000000000001', attachmentId: missing.id,
+            identity: JSON.stringify([missing.id, missing.cloudKey, missing.fileHash, 0]),
+            beforePayloadJSON, afterPayloadJSON, status: 'available', resolvedAttachmentJSON: JSON.stringify(resolved) };
+        const selected = { ...lineage, version: 5, initialPayloadJSON: beforePayloadJSON,
+            beforePayloadJSON: afterPayloadJSON, priorOperations: [{ kind: 'availability', operation }] };
+        const beforeFiles = structuredClone(local.fileCalls), beforeSaves = local.saveCount;
+        assert.deepEqual(await call(local, 'attachmentDraftBeginV5', { ...begin, payloadJSON: beforePayloadJSON }),
+            { ok: true, value: { version: 5, taskID: 'task257', payloadJSON: beforePayloadJSON } });
+        assert.deepEqual(await call(local, 'attachmentDraftValidateLineageV5', selected),
+            { ok: true, value: { version: 5, taskID: 'task257', payloadJSON: afterPayloadJSON } });
+        for (const method of ['attachmentDraftValidateLineageV3', 'attachmentDraftValidateLineageV4']) {
+            assert.equal((await call(local, method, selected)).ok, false);
+        }
+        const discarded = { version: 4, historyVersion: 5, taskID: 'task257', managedDirectoryURI: ROOT,
+            initialPayloadJSON: beforePayloadJSON, checkpointPayloadJSON: afterPayloadJSON,
+            operations: [{ kind: 'availability', phase: 'checkpointed', preparedJSON: JSON.stringify(operation) }] };
+        const planned = await call(local, 'attachmentDraftDiscardCandidatesV5', discarded);
+        assert.equal(planned.ok, true);
+        assert.equal(planned.value.kind, 'owned-availability-discard-candidates');
+        assert.deepEqual(planned.value.candidates, [{ requestId: operation.requestId,
+            attachmentId: missing.id, targetURI: resolved.uri, reason: 'uncommitted-draft' }]);
+        assert.equal((await call(local, 'attachmentDraftDiscardCandidatesV4', discarded)).ok, false);
+        assert.deepEqual(local.fileCalls, beforeFiles, 'metadata continuity never installs or retires bytes');
+        assert.equal(local.saveCount, beforeSaves, 'metadata continuity never saves the Task');
+        const forged = structuredClone(selected);
+        forged.priorOperations[0].operation.afterPayloadJSON = afterPayloadJSON.replace('Retain opaque checkpoint', 'forged');
+        assert.equal((await call(local, 'attachmentDraftValidateLineageV5', forged)).ok, false);
+    });
     // Historical retry has no optional capability, current editable task or fresh clock.
     const historical = makeState(0, [], 'ios'); historical.localTaskReadOnly = true;
     historical.sandbox = true; historical.workspaceTransition = true;
@@ -4350,7 +5056,7 @@ for (const [bridge, receipt, operation] of [
     await check(async () => assert.deepEqual(await call(historical, 'attachmentDraftValidateRemove', removed), { ok: true, value: removed }));
     await check(async () => assert.deepEqual(await call(historical, 'attachmentDraftValidateLineageV3', mixed),
         { ok: true, value: { version: 3, taskID: 'task257', payloadJSON: removed.afterPayloadJSON } }));
-    for (const method of ['attachmentDraftValidateRemove', 'attachmentDraftValidateLineageV3', 'attachmentFileEditSaveValidate']) {
+    for (const method of ['attachmentDraftValidateRemove', 'attachmentDraftValidateLineageV3', 'attachmentDraftValidateLineageV5', 'attachmentDraftDiscardCandidatesV5', 'attachmentFileEditSaveValidate']) {
         await check(async () => assert.match((await call(makeState(0), method, {})).error, /^NOT_READY:/));
     }
     for (const variant of ['nonIOS', 'noCapability', 'sandbox', 'workspace', 'readOnly', 'taskMissing', 'persistence']) {
@@ -4360,7 +5066,7 @@ for (const [bridge, receipt, operation] of [
         if (variant === 'readOnly') state.localTaskReadOnly = true;
         if (variant === 'taskMissing') state.localTaskViewFailure = { ok: false, error: { code: 'TASK_NOT_FOUND', message: 'Not found' } };
         if (variant === 'persistence') state.persistenceFailure = { message: 'failed' };
-        for (const [method, input] of [['attachmentDraftBeginV3', begin], ['attachmentDraftBeginV4', begin], ['attachmentDraftPrepareV3', addInput], ['attachmentDraftRemovePrepareV3', removeInput]]) {
+        for (const [method, input] of [['attachmentDraftBeginV3', begin], ['attachmentDraftBeginV4', begin], ['attachmentDraftBeginV5', begin], ['attachmentDraftPrepareV3', addInput], ['attachmentDraftRemovePrepareV3', removeInput]]) {
             await check(async () => assert.equal((await call(state, method, input)).ok, false, `${variant}/${method}`));
         }
         if (variant !== 'readOnly' && variant !== 'taskMissing') {
@@ -4806,10 +5512,11 @@ for (const [bridge, receipt, operation] of [
     const databases = []; let cases = 0;
     const check = async (work) => { await work(); cases++; };
     const call = (state, method, input) => poll(state, state.MindwtrHost[method](JSON.stringify(input)));
-    const fixture = async ({ empty = false, noop = false, recurring = false, cancel = false, large = false, withAdd = false,
+    const fixture = async ({ empty = false, noop = false, recurring = false, cancel = false, large = false, withAdd = false, availability = false, availabilityTombstone = false, availabilitySameURI = false,
         managedDirectoryURI = ROOT } = {}) => {
         const baseline = Array.from({ length: 2 }, (_, n) => ({ id: `file${n}`, kind: 'file', title: 'File', uri: managedDirectoryURI + `${n}.pdf`,
             size: 3, localStatus: 'available', createdAt: AT, updatedAt: AT }));
+        if (availability) Object.assign(baseline[0], { uri: availabilitySameURI ? managedDirectoryURI + '0.pdf' : '', cloudKey: 'attachments/file0.pdf', fileHash: 'a'.repeat(64), localStatus: 'missing' });
         baseline.push({ ...baseline[0], id: 'old-tombstone', uri: managedDirectoryURI + 'old.pdf', deletedAt: AT });
         const source = { id: 'task268', title: 'Task', status: 'next', taskMode: 'list', tags: [], contexts: [], checklist: [],
             description: large ? 'x'.repeat(270_000) : 'Notes', attachments: baseline, createdAt: AT, updatedAt: AT, rev: 8, revBy: 'before',
@@ -4832,9 +5539,9 @@ for (const [bridge, receipt, operation] of [
                 relativeAmount: '', relativeUnit: '', relativeOwned: false, relativeCommitRequested: false,
                 recurrenceInputs: {}, recurrenceOwned: [], recurrenceCommitRequested: [] }, scheduleEdits: [], scheduleFailedID: null,
             attachmentsOwned: true, attachmentsBase: baseline, attachments: baseline, linkSheet: {} });
-        const ownedDraft = { version: 3, taskID: source.id, initialPayloadJSON, beforePayloadJSON: initialPayloadJSON,
+        const ownedDraft = { version: availability ? 5 : 3, taskID: source.id, initialPayloadJSON, beforePayloadJSON: initialPayloadJSON,
             priorOperations: [], managedDirectoryURI };
-        if (!empty) for (let index = 0; index < (recurring || cancel ? 1 : 2); index++) {
+        if (!empty && !availability) for (let index = 0; index < (recurring || cancel ? 1 : 2); index++) {
             const removed = await call(state, 'attachmentDraftRemovePrepareV3', { ...ownedDraft,
                 requestId: `26800000-0000-4000-8000-${String(index + 3).padStart(12, '0')}`, attachmentId: `file${index}` });
             assert.equal(removed.ok, true); ownedDraft.beforePayloadJSON = removed.value.afterPayloadJSON;
@@ -4848,9 +5555,20 @@ for (const [bridge, receipt, operation] of [
             ownedDraft.beforePayloadJSON = added.value.afterPayloadJSON;
             ownedDraft.priorOperations.push({ kind: 'add', operation: added.value });
         }
+        if (availability) {
+            const resolved = { ...baseline[0], uri: managedDirectoryURI + '0.pdf', localStatus: 'available' };
+            const afterPayloadJSON = JSON.stringify({ ...JSON.parse(initialPayloadJSON), attachments: [resolved, ...baseline.slice(1)] });
+            ownedDraft.priorOperations.push({ kind: 'availability', operation: { version: 1, kind: 'prepared-file-availability',
+                taskID: source.id, requestId: '35600000-0000-4000-8000-000000000002', attachmentId: baseline[0].id,
+                identity: JSON.stringify([baseline[0].id, baseline[0].cloudKey, baseline[0].fileHash, 0]),
+                beforePayloadJSON: initialPayloadJSON, afterPayloadJSON, status: 'available', resolvedAttachmentJSON: JSON.stringify(resolved) } });
+            ownedDraft.beforePayloadJSON = afterPayloadJSON;
+        }
         const draft = JSON.parse(ownedDraft.beforePayloadJSON).attachments;
         if (noop && !empty) source.attachments = draft;
-        const request = { version: 2, kind: 'owned-editor-file-edit-save',
+        if (availabilityTombstone) source.attachments = baseline.map((row, index) => index === 0
+            ? { ...row, deletedAt: '2026-10-06T00:00:00.000Z' } : row);
+        const request = { version: availability ? 4 : 2, kind: 'owned-editor-file-edit-save',
             checkpoint: { version: 1, sessionID: SESSION, taskID: source.id, generation: ownedDraft.priorOperations.length + 1, payloadJSON: ownedDraft.beforePayloadJSON },
             ownedDraft, saveRequest: { id: source.id, requestId: REQUEST, base: touchedBase, patch: edited,
                 scheduleBase: { startTime: null, dueDate: recurring ? '2026-10-05' : null, relativeStartOffset: null, reviewAt: null },
@@ -4885,6 +5603,61 @@ for (const [bridge, receipt, operation] of [
             assert.equal(f.state.fileEditSaveInputs.at(-1)[0], 'completeCommit'); syncLive(f);
             if (!options.empty) assert.deepEqual(invoke(f), { result: { outcome: 'removed' }, seen: ['removed'] });
             if (options.empty && options.noop) assert.equal(f.db.prepare('SELECT rev FROM tasks WHERE id = ?').get('task268').rev, 8);
+        });
+        await check(async () => {
+            const f = await fixture({ availability: true });
+            assert.equal(f.envelope.prepared.version, 4);
+            assert.equal(JSON.parse(f.db.prepare('SELECT attachments FROM tasks WHERE id = ?').get('task268').attachments)[0].uri, '',
+                'selected download proof and Save preparation leave stored Task unchanged');
+            const resumed = await call(f.state, 'attachmentDraftResumeCheckV3', { version: 3, kind: 'owned-editor-resume',
+                checkpoint: f.request.checkpoint, ownedDraft: f.request.ownedDraft });
+            assert.equal(resumed.ok, true, JSON.stringify(resumed));
+            assert.equal((await call(f.state, 'attachmentFileEditSaveCommit', f.envelope)).ok, true);
+            syncLive(f);
+            const row = f.db.prepare('SELECT title, attachments FROM tasks WHERE id = ?').get('task268');
+            assert.equal(row.title, 'Edited'); assert.equal(JSON.parse(row.attachments)[0].uri, ROOT + '0.pdf');
+            assert.equal(f.state.fileEditSaveInputs.at(-1)[0], 'completeCommit');
+            assert(f.plan.length > 0);
+            assert.deepEqual(invoke(f), { result: { outcome: 'removed' }, seen: ['removed'] },
+                'outer4 uses complete result classification at the existing retirement fence');
+        });
+        await check(async () => {
+            const f = await fixture({ availability: true, cancel: true });
+            assert.equal((await call(f.state, 'attachmentFileEditSaveCommit', f.envelope)).ok, true);
+            const request = { requestId: '35600000-0000-4000-8000-000000000099', cancelRequestId: REQUEST };
+            const prepared = await call(f.state, 'taskCancellationUndoPrepare', { request, cancel: f.envelope });
+            assert.equal(prepared.ok, true, JSON.stringify(prepared));
+            assert.equal(f.state.fileEditSaveInputs.at(-1)[0], 'completeUndoPrepare');
+            assert.equal((await call(f.state, 'taskCancellationUndoCommit', { request, prepared: prepared.value.prepared })).ok, true);
+            const row = f.db.prepare('SELECT status, attachments FROM tasks WHERE id = ?').get('task268');
+            assert.equal(row.status, 'next'); assert.equal(JSON.parse(row.attachments)[0].uri, ROOT + '0.pdf');
+        });
+        await check(async () => {
+            const f = await fixture({ availability: true, availabilityTombstone: true });
+            assert.equal((await call(f.state, 'attachmentFileEditSaveCommit', f.envelope)).ok, true); syncLive(f);
+            const index = f.plan.findIndex((row) => row.reason === 'uncommitted-draft' && row.attachment.uri === ROOT + '0.pdf');
+            assert(index >= 0, 'new available URI survives as an uncommitted candidate when a concurrent tombstone wins');
+            const input = JSON.stringify({ version: 1, envelopeJSON: JSON.stringify(f.envelope), candidateIndex: index });
+            let borrowed = 0;
+            const keep = () => '{"outcome":"referenced"}', changed = () => { throw Error('wrong branch'); };
+            const retire = () => { borrowed++; return '{"outcome":"notOwned"}'; };
+            assert.equal(f.state.MindwtrHost.attachmentFileEditSaveRetire(input, keep, changed, retire), '{"outcome":"notOwned"}');
+            assert.equal(borrowed, 1);
+            assert.equal(f.state.MindwtrHost.attachmentFileEditSaveRetire(input, changed, changed, keep), '{"outcome":"referenced"}', 'selected native durable-reference backstop can retain bytes');
+            f.state.ownerProjects = [{ attachments: [{ kind: 'file', uri: ROOT + '0.pdf' }] }];
+            assert.equal(f.state.MindwtrHost.attachmentFileEditSaveRetire(input, keep, changed, retire), '{"outcome":"referenced"}');
+            assert.equal(borrowed, 1, 'fresh references keep the file even on a cached selected plan');
+            f.state.ownerProjects = [];
+            const same = await fixture({ availability: true, availabilityTombstone: true, availabilitySameURI: true });
+            assert.equal((await call(same.state, 'attachmentFileEditSaveCommit', same.envelope)).ok, true); syncLive(same);
+            const baseline = same.plan.findIndex((row) => row.reason === 'deleted-after-save' && row.attachment.uri === ROOT + '0.pdf');
+            assert(baseline >= 0, 'same-URI borrowed availability can become a baseline cleanup candidate');
+            assert.equal(same.state.MindwtrHost.attachmentFileEditSaveRetire(JSON.stringify({ version: 1,
+                envelopeJSON: JSON.stringify(same.envelope), candidateIndex: baseline }), keep, changed, retire), '{"outcome":"notOwned"}');
+            const historical = await fixture();
+            assert.equal((await call(historical.state, 'attachmentFileEditSaveCommit', historical.envelope)).ok, true); syncLive(historical);
+            assert.throws(() => historical.state.MindwtrHost.attachmentFileEditSaveRetire(JSON.stringify({ version: 1,
+                envelopeJSON: JSON.stringify(historical.envelope), candidateIndex: 0 }), keep, changed, retire), /INVALID_INPUT/);
         });
         const recurring = await fixture({ recurring: true });
         await check(async () => {
@@ -5245,6 +6018,30 @@ for (const [bridge, receipt, operation] of [
         const state = makeState(0);
         assert.match((await poll(state, state.MindwtrHost.attachmentDraftDiscardCandidates('{}'))).error, /^NOT_READY:/);
     });
+    await check('availability-only Discard accepts truthful borrowed retention with sealed historical grammar', async () => {
+        const local = await bootLocal(), raw = JSON.stringify({ version: 2, requestId: ID, targetURI: TARGET });
+        let entered = 0;
+        const keep = () => { entered++; return '{"outcome":"referenced"}'; };
+        const borrowed = () => { entered++; return '{"outcome":"notOwned"}'; };
+        assert.equal(local.MindwtrHost.attachmentDraftDiscardRetireV5(raw, keep, borrowed), '{"outcome":"notOwned"}');
+        assert.equal(entered, 1);
+        for (const invalidRaw of [input, JSON.stringify({ version: true, requestId: ID, targetURI: TARGET }),
+            JSON.stringify({ version: 2, requestId: ID, targetURI: TARGET, extra: true })]) {
+            assert.throws(() => local.MindwtrHost.attachmentDraftDiscardRetireV5(invalidRaw, keep, borrowed), /INVALID_INPUT/);
+        }
+        assert.throws(() => call(local, raw, keep, borrowed), /INVALID_INPUT/); assert.equal(entered, 1);
+        assert.throws(() => call(local, input, keep, borrowed), /INVALID_INPUT/); assert.equal(entered, 2);
+        assert.equal(local.MindwtrHost.attachmentDraftDiscardRetireV5(raw, borrowed, () => '{"outcome":"referenced"}'), '{"outcome":"referenced"}');
+        assert.throws(() => call(local, input, borrowed, () => '{"outcome":"referenced"}'), /INVALID_INPUT/);
+        local.ownerProjects = [{ attachments: [{ kind: 'file', uri: TARGET }] }];
+        assert.equal(local.MindwtrHost.attachmentDraftDiscardRetireV5(raw, keep, borrowed), '{"outcome":"referenced"}');
+        assert.equal(entered, 3);
+        assert.throws(() => local.MindwtrHost.attachmentDraftDiscardRetireV5(raw, borrowed, borrowed), /INVALID_INPUT/);
+        const calls = entered;
+        for (const other of [makeLocal(), makeState(0, [], 'android', configureLocal)])
+            assert.throws(() => other.MindwtrHost.attachmentDraftDiscardRetireV5(raw, keep, borrowed), /NOT_READY/);
+        assert.equal(entered, calls);
+    });
     await check('before validated boot', () => refused(makeLocal()));
     await check('normal bootRecovery ready state', async () => {
         const state = await bootLocal(true);
@@ -5465,7 +6262,7 @@ for (const [bridge, receipt, operation] of [
                 state.__mindwtrNative[name] = () => { calls++; throw new Error('Unexpected device service activation'); };
             }
         });
-        assert.deepEqual(Object.keys(local.contractBindings), ['attachments']);
+        assert.deepEqual(Object.keys(local.contractBindings).filter((name) => local.contractBindings[name] !== undefined), ['reminderPlatform', 'attachments']);
         assert.equal((await poll(local, local.MindwtrHost.boot())).ok, true);
         assert.equal(local.localShaInstallCount, 1);
         assert.equal(call(local), '{"outcome":"removed"}', 'existing synchronous local Discard remains admitted');
@@ -5600,6 +6397,28 @@ for (const [bridge, receipt, operation] of [
         const android = makeState(0);
         assert.equal((await poll(android, android.MindwtrHost.attachmentDraftAcknowledged('add-mixed', 'confirmed'))).ok, true);
         assert.equal(android.logText, null);
+    });
+    await check('selfhosted availability acknowledgments are fixed, private, iOS-only and best effort', async () => {
+        const local = makeState(0, [], 'ios');
+        for (const operation of ['selfhosted-task-availability', 'selfhosted-project-availability']) {
+            assert.equal((await poll(local, local.MindwtrHost.attachmentDraftAcknowledged(operation, 'confirmed'))).ok, true);
+            const marker = JSON.parse(local.logText.trim().split('\n').at(-1));
+            assert.deepEqual(marker.context, { releaseCheck: 'v1.3.5/ios-selfhosted-file-availability', operation, outcome: 'confirmed' });
+            const before = local.logText;
+            for (const outcome of ['retained', 'replayed', 'removed', 'settled', 'private://credential/task']) {
+                assert.equal((await poll(local, local.MindwtrHost.attachmentDraftAcknowledged(operation, outcome))).ok, true);
+            }
+            assert.equal(local.logText, before);
+            local.logFailure = 'private diagnostics failure';
+            assert.equal((await poll(local, local.MindwtrHost.attachmentDraftAcknowledged(operation, 'confirmed'))).ok, true);
+            assert.equal(local.logText, before); local.logFailure = null;
+            const android = makeState(0);
+            assert.equal((await poll(android, android.MindwtrHost.attachmentDraftAcknowledged(operation, 'confirmed'))).ok, true);
+            assert.equal(android.logText, null);
+        }
+        const before = local.logText;
+        assert.equal((await poll(local, local.MindwtrHost.attachmentDraftAcknowledged('selfhosted-task-availability/private', 'confirmed'))).ok, true);
+        assert.equal(local.logText, before);
     });
     await check('provider Add acknowledgment is iOS-only, fixed, and independent of optional diagnostics', async () => {
         const local = makeState(0, [], 'ios');
@@ -5772,6 +6591,31 @@ for (const [bridge, receipt, operation] of [
             }
         }
     });
+    await check('availability consumer markers persist only fixed iOS acknowledgment pairs', async () => {
+        const pairs = [['availability-resume', 'validated'], ['availability-checkpoint', 'confirmed'],
+            ['availability-save', 'domainSaved'], ['availability-save', 'settled'], ['availability-discard', 'settled']];
+        for (const [operation, outcome] of pairs) {
+            const local = makeState(0, [], 'ios');
+            local.settings = { diagnostics: { loggingEnabled: false } };
+            const ack = (state, op = operation, result = outcome) => poll(state, state.MindwtrHost.attachmentDraftAcknowledged(op, result));
+            assert.equal((await ack(local)).ok, true);
+            assert.deepEqual(JSON.parse(local.logText.trim()).context,
+                { releaseCheck: 'v1.3.5/ios-task-availability-consumers', operation, outcome });
+            const before = local.logText;
+            for (const result of ['validated', 'confirmed', 'domainSaved', 'settled', 'prepared', 'downloaded', '', null]) {
+                if (!pairs.some(([op, accepted]) => op === operation && accepted === result))
+                    assert.equal((await ack(local, operation, result)).ok, true);
+            }
+            assert.equal((await ack(local, operation + '-extra')).ok, true);
+            assert.equal(local.logText, before);
+            assert.deepEqual((await poll(local, local.MindwtrHost.logShare())).value, { path: 'files/logs/mindwtr.log' });
+            const exported = local.logText;
+            local.logFailure = 'private diagnostics failure'; assert.equal((await ack(local)).ok, true); assert.equal(local.logText, exported);
+            for (const platform of ['android', undefined]) {
+                const other = makeState(0, [], platform); assert.equal((await ack(other)).ok, true); assert.equal(other.logText, null);
+            }
+        }
+    });
     await check('owned resume acknowledgment is iOS-only and fixed without claiming Save or UI hydration', async () => {
         const local = makeState(0, [], 'ios');
         assert.equal((await poll(local, local.MindwtrHost.attachmentDraftAcknowledged('owned-resume', 'validated'))).ok, true);
@@ -5790,6 +6634,21 @@ for (const [bridge, receipt, operation] of [
             assert.equal(absent.logText, null);
         }
     });
+    await check('cached Project private bridges refuse boot and non-iOS authority', async () => {
+        const request = JSON.stringify({ projectId: 'cached-410', attachmentId: '41000000-1111-4111-8111-111111111111',
+            revision: 'fixture', managedDirectoryURI: 'file:///documents/attachments/' });
+        for (const platform of ['ios', 'android', undefined]) {
+            const state = makeState(0, [], platform);
+            for (const [name, args] of [
+                ['projectAttachmentCachedAvailabilityPreflight', [request, null]],
+                ['projectAttachmentCachedAvailability', [request, 'file:///documents/attachments/41000000-1111-4111-8111-111111111111.txt']],
+            ]) {
+                const answer = await poll(state, state.MindwtrHost[name](...args));
+                assert.equal(answer.ok, false); assert.match(answer.error, /^NOT_READY:/);
+            }
+            assert.equal(state.logText, null);
+        }
+    });
     for (const [operation, releaseCheck, accepted = 'confirmed'] of [
         ['preexisting-journal-replay', 'v1.3.5/ios-preexisting-attachment-journal-replay'],
         ['container-relocation', 'v1.3.5/ios-attachment-container-recovery'],
@@ -5800,6 +6659,8 @@ for (const [bridge, receipt, operation] of [
         ['project-file-remove', 'v1.3.5/ios-project-file-remove', 'saved'],
         ['project-file-add', 'v1.3.5/ios-project-file-add', 'saved'],
         ['project-file-add', 'v1.3.5/ios-project-file-add', 'abandoned'],
+        ['cached-project-availability', 'v1.3.5/ios-cached-project-availability'],
+        ...['saved', 'abandoned', 'refused', 'cleanup-pending'].map(outcome => ['selfhosted-project-download', 'v1.3.5/ios-selfhosted-project-download', outcome]),
         ['project-file-hash', 'v1.3.5/ios-project-file-hash', 'saved'],
         ['task-file-hash', 'v1.3.5/ios-task-file-hash', 'saved'],
     ]) await check(`${operation} acknowledgment is fixed, exportable and best effort`, async () => {
@@ -5942,6 +6803,9 @@ assert.equal((await poll(ready, ready.MindwtrHost.boot())).ok, true);
         { title: '合并备份', message: '2 added / 1 updated', undoLabel: 'settings.undoImport', doneLabel: 'common.done' });
     assert.equal((await poll(backup, backup.MindwtrHost.backupSnapshotRestoreModel(snapshotName))).value.message,
         `Restore ${snapshotName}; later edits are rolled back`);
+    assert.deepEqual(await poll(backup, backup.MindwtrHost.backupExportPrepared('json')), { ok: true, value: {} },
+        'completed export callback settles through submit\'s Promise slot');
+    assert.match(backup.logText, /v1\.3\.5\/ios-backup-export/, 'completed export records its fixed marker');
     assert.equal(JSON.stringify({ events: backup.events, saves: backup.saveCount, data: backup.fakeData }), domainBefore,
         'inspection and localized result/confirmation reads neither flush nor mutate domain state');
     let release;
@@ -6073,7 +6937,7 @@ assert.deepEqual(ready.events, ['schema', 'activate', 'load', 'flush', 'baseline
 // journaled boot requires tokens and loads all receipts before the validated load, activation, and replay.
 assert.equal(ready.replayTokens, 'optional');
 assert.equal(ready.receiptsLoadedAt, 0);
-assert.deepEqual([...ready.receiptScope], ['appLock', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
+assert.deepEqual([...ready.receiptScope], ['appLock', 'notificationSetting', 'deviceCalendarSetting', 'calendarSubscriptionSetting', 'calendarSubscriptionAdd', 'reminderComplete', 'reminderSnooze', 'taskCompletion', 'taskCompletionUndo', 'archivedTaskRestore', 'archivedTasksRestore', 'doneTasksMove', 'doneTasksAddTag', 'doneTasksRemoveTag', 'archivedTasksDelete', 'archivedTasksDeleteUndo', 'doneTasksDelete', 'doneTasksDeleteUndo', 'referenceTasksDelete', 'referenceTasksDeleteUndo', 'referenceTasksMove', 'referenceTasksAddTag', 'referenceTasksRemoveTag', 'preparedProjectLifecycle', 'preparedTaskDelete', 'preparedProjectDelete', 'preparedTaskDeleteUndo', 'doneTaskStatus', 'referenceTaskNext', 'referenceTaskStatus', 'referenceTaskCompletion', 'referenceTaskCompletionUndo', 'referenceTaskBackdate', 'referenceTaskDestination', 'referenceProjectNextAction', 'doneTaskCompletedAt', 'archiveTaskCompletedAt', 'data', 'backupDocument'], 'the VM array, compared in this realm');
 {
     const journaled = makeState(0);
     assert.equal((await poll(journaled, journaled.MindwtrHost.boot('', '', 'journaled'))).ok, true);
@@ -6961,6 +7825,60 @@ console.log('Runner: CoreWork on the one host after the app\'s boot order, the q
     assert.equal(refused, 'AbortError', 'no new file call starts while the operation drains');
     files.__resumeHostCalls();
 }
+// Passive calendar reads share the value pump, but cancellation targets only the calendar provider.
+{
+    const polyfills = readFileSync(resolve(app, 'bundle/host-polyfills.js'), 'utf8');
+    const answers = [], aborted = [], submitted = [];
+    let sequence = 0, failure = null;
+    const bridge = {
+        log() { throw new Error('Calendar transport must not log provider exceptions'); }, nowMs: () => 0,
+        calendarCall(text) {
+            if (failure === 'throw') throw new Error('Calendar read unavailable');
+            if (failure === 'native') return '!MindwtrNativeError:Calendar read unavailable';
+            submitted.push(JSON.parse(text)); return `cal:1:${++sequence}`;
+        },
+        calendarAbort(id) { aborted.push(['calendar', id]); throw new Error('Calendar abort unavailable'); },
+        fileCall: () => 'file:1:1', installerCall: () => 'installer:1:1',
+        fileAbort(id) { aborted.push(['file', id]); },
+        ioNext: () => answers.shift() ?? '',
+        ioBody() { throw new Error('Calendar replies are bodyless'); },
+    };
+    const state = vm.createContext({ __mindwtrNative: bridge });
+    vm.runInContext(polyfills, state);
+    assert.deepEqual(submitted, [], 'installing the calendar capability never reads or prompts');
+    const held = state.__mindwtrCalendarCall({ op: 'events', calendarIds: ['é'], startMs: 0, endMs: 1 });
+    const outcome = held.then(() => 'resolved', (error) => `${error.name}: ${error.message}`);
+    const file = assert.rejects(state.__mindwtrFileCall({ op: 'getInfo' }), { name: 'AbortError' });
+    const installer = assert.rejects(state.__mindwtrInstallerCall({ op: 'install' }), { name: 'AbortError' });
+    state.__cancelHostCalls('Calendar operation cancelled');
+    assert.equal(await outcome, 'AbortError: Calendar operation cancelled', 'cancellation rejects without waiting for native completion');
+    await Promise.all([file, installer]);
+    assert.deepEqual(aborted, [['calendar', 'cal:1:1'], ['file', 'file:1:1'], ['file', 'installer:1:1']],
+        'calendar uses calendarAbort; existing file and installer keep fileAbort');
+    await assert.rejects(state.__mindwtrCalendarCall({ op: 'permissions' }), { name: 'AbortError' });
+    assert.equal(submitted.length, 1, 'cancelled operation cannot start another calendar read');
+    answers.push(...['cal:1:1', 'file:1:1', 'installer:1:1'].map((id) => JSON.stringify({ id, value: [] })));
+    assert.equal(state.__pumpTimers(), 0, 'cancelled late answers are drained without settling promises');
+    state.__resumeHostCalls();
+    const retry = state.__mindwtrCalendarCall({ op: 'permissions' });
+    answers.push(JSON.stringify({ id: 'cal:1:2', value: { status: 'granted' } }));
+    assert.equal(state.__pumpTimers(), 1, 'late cancellation leaves the next read live');
+    assert.equal((await retry).status, 'granted');
+    assert.deepEqual(submitted, [{ op: 'events', calendarIds: ['é'], startMs: 0, endMs: 1 }, { op: 'permissions' }]);
+    const refused = assert.rejects(state.__mindwtrCalendarCall({ op: 'calendars' }), /^Error: Calendar read unavailable$/);
+    answers.push(JSON.stringify({ id: 'cal:1:3', error: 'Calendar read unavailable' }));
+    assert.equal(state.__pumpTimers(), 1); await refused;
+    for (const mode of ['throw', 'native']) {
+        failure = mode;
+        await assert.rejects(state.__mindwtrCalendarCall({ op: 'permissions' }), /^\w*Error: Calendar read unavailable$/);
+        assert.equal(state.__pumpTimers(), 0, 'submission exception does not leave an open pump slot');
+    }
+    for (const native of [undefined, { log() {} }, { log() {}, fileCall() {} }]) {
+        const absent = vm.createContext({ __mindwtrNative: native });
+        vm.runInContext(polyfills, absent);
+        assert.equal(absent.__mindwtrCalendarCall, undefined, 'calendar capability absent stays unavailable');
+    }
+}
 // Review finding 1 (A2): a managed attachment's delete asks core's keep() in the same engine turn as the delete itself, after every
 // file call queued before it. Here a delete waits behind a held file call while the attachment is restored: the bytes stay.
 {
@@ -7038,5 +7956,57 @@ console.log('Runner: CoreWork on the one host after the app\'s boot order, the q
     assert.equal((await poll(historical, historical.MindwtrHost.attachmentRequest('attachmentDraftDiscardCandidatesV3', JSON.stringify(input)))).ok, false);
     assert.equal(historical.attachmentInputs.length, 0, 'private mixed candidates do not enter generic attachment commands');
     console.log('Task261: real pure mixed Discard candidates retain iOS-only historical routing, sealed grammar and no generic file-command admission (NodeVM)');
+}
+// Android's MindwtrHost table (android-host-table.mjs): exactly the methods Android calls. Every name Kotlin calls, and every
+// name the Node harness calls on the shipped bundle, is in it; every name in it is a host-entry.ts method; and the shipped
+// bundle exposes exactly those names, while host-entry.ts as iOS builds it keeps every method.
+{
+    const { ANDROID_HOST_METHODS, hostTable, kotlinHostCalls, journalReplayMethods } = await import('./android-host-table.mjs');
+    const kotlinFiles = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory()
+        ? (entry.name === 'build' ? [] : kotlinFiles(resolve(dir, entry.name))) : entry.name.endsWith('.kt') ? [resolve(dir, entry.name)] : []));
+    const named = (files, pattern) => [...new Set(files.flatMap((file) => [...readFileSync(file, 'utf8').matchAll(pattern)].map((match) => match[1])))].sort();
+    const sources = kotlinFiles(resolve(app, 'android')).map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+    // A method name that reaches the table through a variable is caught too: only CoreHost's own forwarding and the journal's
+    // replay may pass one (KOTLIN_FORWARDING_SITES), and the replay's names are the journal's SHAPES, checked below.
+    const coreHost = sources.find((source) => source.path.endsWith('/core/CoreHost.kt'));
+    const withCoreHost = (text) => sources.map((source) => (source === coreHost ? { ...source, text: source.text + text } : source));
+    const adversarial = kotlinHostCalls(withCoreHost('\nfun inboxView(): JSONObject { val method = "inboxView"; return callAsync(method) }\n'));
+    assert.deepEqual(adversarial.unverified.map((site) => site.site), ['CoreHost.kt: callAsync(method)'], 'a dispatch through a variable fails the guard');
+    assert.deepEqual(kotlinHostCalls(withCoreHost('\nfun forward(name: String) = callLong(name, 1)\n')).unverified.map((site) => site.site),
+        ['CoreHost.kt: callLong(name, 1)'], 'so does one through a parameter');
+    assert.deepEqual(kotlinHostCalls(withCoreHost('\nfun forward(name: String) = answer(name, arrayOf(), 1L)\n')).unverified.map((site) => site.site),
+        ['CoreHost.kt: answer(name, arrayOf(), 1L)'], 'and one more copy of a listed forwarding shape');
+    assert.deepEqual(kotlinHostCalls(withCoreHost('\nfun queue(name: String) = Call(name, arrayOf(), 1L, null, "", CompletableFuture())\n')).unverified.map((site) => site.site),
+        ['CoreHost.kt: Call(name, arrayOf(), 1L, null, "", CompletableFuture())'], 'and a queued write made around begin()');
+    assert.deepEqual(kotlinHostCalls([...sources, { path: 'Other.kt', text: 'val f = engine.globalObject.getJSObject("MindwtrHost").getJSFunction(name)' }])
+        .unverified.map((site) => site.site), ['Other.kt: reaches "MindwtrHost" outside CoreHost.kt', 'Other.kt: getJSFunction(name)'], 'and a table reached outside CoreHost.kt');
+    const { names: kotlin, unverified } = kotlinHostCalls(sources);
+    assert.deepEqual(unverified, [], 'every Kotlin host dispatch names its method literally or is a listed forwarding site');
+    const replayed = journalReplayMethods(sources.find((source) => source.path.endsWith('/core/WriteJournal.kt')).text);
+    assert(replayed.length >= 20 && replayed.includes('captureSubmit') && replayed.includes('menuCommand'), 'the journal\'s replayed methods were found');
+    assert.deepEqual(replayed.filter((name) => !ANDROID_HOST_METHODS.includes(name)), [], 'every method the journal replays is in Android\'s host table');
+    const scripts = readdirSync(resolve(app, 'scripts')).filter((name) => name === 'sync-harness.mjs' || /^check-[\w-]+-(device|dry-run)\.mjs$/.test(name));
+    const harness = named(scripts.map((name) => resolve(app, 'scripts', name)), /\bcall\(\s*'([A-Za-z0-9_]+)'/g);
+    assert(kotlin.length > 50 && kotlin.includes('boot') && harness.includes('window'), 'the call sites were found');
+    assert.deepEqual(kotlin.filter((name) => !ANDROID_HOST_METHODS.includes(name)), [], 'Kotlin calls only methods in Android\'s host table (android-host-table.mjs)');
+    assert.deepEqual(harness.filter((name) => !ANDROID_HOST_METHODS.includes(name)), [], 'the harness calls only methods in Android\'s host table');
+    assert.equal(new Set(ANDROID_HOST_METHODS).size, ANDROID_HOST_METHODS.length, 'each Android host method is named once');
+    const { names } = hostTable(readFileSync(resolve(app, 'bundle/host-entry.ts'), 'utf8'));
+    assert.deepEqual(ANDROID_HOST_METHODS.filter((name) => !names.includes(name)), [], 'every Android host method is a host-entry.ts method');
+    const { hostDevice } = await import('./sync-harness.mjs');
+    const filesRoot = mkdtempSync(resolve(tmpdir(), 'android-host-table-'));
+    try {
+        const shipped = await hostDevice({ bundle: resolve(app, 'android/app/src/main/assets/core-host.js'), name: 'table', filesRoot });
+        try {
+            assert.deepEqual([...shipped.methods].sort(), [...ANDROID_HOST_METHODS].sort(), 'the shipped bundle\'s MindwtrHost is Android\'s table');
+        } finally {
+            shipped.stop();
+        }
+    } finally {
+        rmSync(filesRoot, { recursive: true, force: true });
+    }
+    assert.deepEqual(Object.keys(makeState(0, [], 'ios').MindwtrHost), names, 'host-entry.ts as iOS builds it exposes every method of its table');
+    assert(names.length > ANDROID_HOST_METHODS.length * 4, 'host-entry.ts keeps every platform\'s methods');
+    console.log(`Android host table: ${ANDROID_HOST_METHODS.length} of host-entry.ts's ${names.length} methods, every Kotlin, journal-replay and harness call among them, no unlisted variable dispatch`);
 }
 console.log('Boot gates, second-read failure, failed-save refresh and editor read, and diagnostic acknowledgment passed');

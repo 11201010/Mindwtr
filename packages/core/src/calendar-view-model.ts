@@ -495,8 +495,8 @@ export const getCalendarScreenText = (t: Translate) => {
     };
 };
 
-/** The task composer's fixed labels; the quick-add help drops the priority token while Priorities are off. */
-export const getCalendarComposerText = (t: Translate, options: { priorities: boolean }) => {
+/** The task composer's fixed labels; the quick-add help drops the priority and estimate tokens while their features are off. */
+export const getCalendarComposerText = (t: Translate, options: { priorities: boolean; timeEstimates: boolean }) => {
     const tr = translateWith(t);
     return {
         title: tr('calendar.mobile.scheduleTask'),
@@ -504,7 +504,7 @@ export const getCalendarComposerText = (t: Translate, options: { priorities: boo
         newTask: tr('calendar.mobile.newTask'),
         existingTask: tr('calendar.mobile.existingTask'),
         titlePlaceholder: t('calendar.addTask'),
-        help: formatQuickAddHelp(t('quickAdd.help'), { priorities: options.priorities }),
+        help: formatQuickAddHelp(t('quickAdd.help'), options),
         queryPlaceholder: t('calendar.schedulePlaceholder'),
         noMatchingTasks: tr('calendar.mobile.noMatchingTasks'),
         start: tr('taskEdit.start'),

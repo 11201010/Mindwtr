@@ -119,7 +119,7 @@ describe('useRootLayoutExternalCapture', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(logError).mockReset();
-    vi.mocked(logInfo).mockReset();
+    vi.mocked(logInfo).mockReset().mockResolvedValue(null);
     vi.mocked(logWarn).mockReset();
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
     storeTasksById.clear();
@@ -1097,6 +1097,9 @@ describe('useRootLayoutExternalCapture', () => {
       );
     });
     expect(router.replace).toHaveBeenCalledWith('/inbox');
+    expect(showToast).toHaveBeenCalledWith({
+      message: 'This task is not in this library. It may have been deleted or not synced to this device.', tone: 'error',
+    });
     router.replace.mockClear();
 
     act(() => {

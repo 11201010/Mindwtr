@@ -187,7 +187,8 @@ export const toggleCalendarAreaId = (current: readonly string[], areaId: string)
 export type CalendarAreaChoice = {
     /** "Show in Areas: Work, Home" (all Areas while none is chosen). */
     label: string;
-    options: { areaId: string; label: string; checked: boolean }[];
+    /** `label` leads with a ☑/☐ glyph; `accessibilityLabel` is the Area name alone, since the checked state is announced. */
+    options: { areaId: string; label: string; accessibilityLabel: string; checked: boolean }[];
 };
 
 /** Null while there is no Area: the screen then shows no choice. */
@@ -200,6 +201,7 @@ export function buildCalendarAreaChoice(selectedIds: readonly string[], areas: r
         options: areaOptions.map((area) => ({
             areaId: area.id,
             label: `${selectedIds.includes(area.id) ? '☑' : '☐'} ${area.name}`,
+            accessibilityLabel: area.name,
             checked: selectedIds.includes(area.id),
         })),
     };

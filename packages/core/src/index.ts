@@ -24,6 +24,7 @@ export * from './resolve-feature-flags';
 export * from './bulk-organize';
 export * from './bulk-organize-create';
 export * from './announcements';
+export * from './app-store-update';
 export * from './user-prompts';
 export * from './share-card';
 export * from './process-inbox-workflow';
@@ -34,10 +35,12 @@ export * from './speech-to-task';
 export * from './data-transfer-transaction';
 export * from './feedback';
 export * from './feedback-diagnostics';
+export * from './about-settings-model';
 export * from './sandbox';
 export * from './sandbox-data';
 export * from './store';
 export * from './native-host-contract';
+export * from './native-host-contract-calendar';
 export * from './native-host-contract-saved-search-write';
 export * from './native-host-contract-attachments';
 export * from './native-host-contract-area-rename';
@@ -72,6 +75,7 @@ export * from './store-helpers';
 export * from './sync';
 export * from './tombstone-compaction';
 export * from './task-date-coherence';
+export * from './timeline-date-edit';
 export * from './sync-normalization';
 export * from './sync-document';
 export * from './sync-helpers';
@@ -177,6 +181,7 @@ export * from './general-settings-model';
 export * from './manage-settings-model';
 export * from './gtd-settings-model';
 export * from './data-settings-model';
+export * from './notifications-settings-model';
 export * from './native-backup-document';
 export * from './more-menu-model';
 export * from './reference';
@@ -229,6 +234,7 @@ export * from './attachment-presence-repair';
 export * from './attachment-paths';
 export * from './attachment-draft-settlement';
 export * from './attachment-cleanup';
+export * from './native-attachment-cleanup';
 export * from './ics';
 export * from './external-calendar-colors';
 export * from './task-relative-start';
@@ -329,6 +335,13 @@ export { isGettingStartedProject } from './getting-started-seed';
 export * from './native-host-contract-person-edit';
 export * from './native-host-contract-taxonomy';
 export * from './native-host-contract-general-preference';
+export * from './native-host-contract-device-calendar-settings';
+export * from './calendar-subscription-settings-witness';
+export * from './native-host-contract-calendar-subscription-settings';
+export { createCalendarSubscriptionAddMethods } from './native-host-contract-calendar-subscription-add';
+export type { CalendarSubscriptionAddRequest, PreparedCalendarSubscriptionAdd, CalendarSubscriptionAddEnvelope,
+    CalendarSubscriptionAddResult, CalendarSubscriptionAddPreparation } from './native-host-contract-calendar-subscription-add';
+export { buildCalendarSubscriptionSettingsModel } from './native-host-contract-settings-calendar';
 export * from './taxonomy-policy';
 
 export type { NativeReferenceTasksMoveRequest, NativeReferenceTasksMovePrepared, NativeReferenceTasksMoveEnvelope,
@@ -362,3 +375,13 @@ export type { NativeAttachmentDraftPreparedV2, NativeAttachmentDraftAddedV2, Nat
     NativeAttachmentDraftOperationV4, NativeAttachmentDraftLineageInputV4, NativeAttachmentDraftLineageV4 } from './native-attachment-draft';
 export { prepareNativeAttachmentDraftDiscardCandidatesV4 } from './native-attachment-draft-discard';
 export type { NativeAttachmentDraftDiscardInputV4, NativeAttachmentDraftDiscardCandidatesV4 } from './native-attachment-draft-discard';
+
+export { prepareNativeAttachmentDraftAvailability, readNativeAttachmentDraftAvailabilityFrozen,
+    validateNativeAttachmentDraftBeginV5, validateNativeAttachmentDraftLineageV5 } from './native-attachment-draft';
+export type { NativeAttachmentDraftAvailabilityInput, NativeAttachmentDraftAvailabilityPrepared, NativeAttachmentDraftOperationV5,
+    NativeAttachmentDraftLineageInputV5, NativeAttachmentDraftLineageV5 } from './native-attachment-draft';
+export { prepareNativeAttachmentDraftDiscardCandidatesV5 } from './native-attachment-draft-discard';
+export type { NativeAttachmentDraftDiscardInputV5, NativeAttachmentDraftDiscardCandidatesV5 } from './native-attachment-draft-discard';
+
+export { checklistProjectBlockReason, prepareChecklistProjectConversion } from './checklist-project-conversion';
+export type { ChecklistProjectConversion } from './checklist-project-conversion';

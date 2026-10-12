@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { isArchiveRetentionDays, useTaskStore } from '@mindwtr/core';
 import { logError } from '../lib/app-log';
+import { SyncService } from '../lib/sync-service';
 import { useUiStore } from '../store/ui-store';
 
 export function useArchiveRetentionRunner(hydrated: boolean, disabled: boolean) {
@@ -16,9 +17,16 @@ export function useArchiveRetentionRunner(hydrated: boolean, disabled: boolean) 
             if (running || document.visibilityState === 'hidden' || state.isLoading || state.error
                 || state.editLockCount > 0 || useUiStore.getState().editingTaskId !== null) return;
             running = true;
-            void state.runArchiveRetention().then((result) => {
-                if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app', step: 'archiveRetention' });
-            }).catch((error) => void logError(error, { scope: 'app', step: 'archiveRetention' }))
+            // Any selected backend counts, even with missing or disconnected credentials: a purge made
+            // before this device syncs again would beat another device's restore. An unreadable
+            // configuration also counts as configured: waiting is the safe side (R-2).
+            void SyncService.getPersistedSyncConfigurationSnapshot()
+                .then(({ backend }) => backend !== 'off', () => true)
+                .then((syncConfigured) => useTaskStore.getState().runArchiveRetention({ syncConfigured }))
+                .then((result) => {
+                    if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app', step: 'archiveRetention' });
+                })
+                .catch((error) => void logError(error, { scope: 'app', step: 'archiveRetention' }))
                 .finally(() => { running = false; });
         };
         run();

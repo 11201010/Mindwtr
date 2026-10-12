@@ -39,7 +39,7 @@ describe('ReviewTaskList', () => {
         }));
     });
 
-    it('scrolls highlighted task into view', async () => {
+    it('scrolls highlighted task into view again for a new navigation to the same task', async () => {
         const tasks = [
             makeTask('task-1', 'Task 1'),
             makeTask('task-2', 'Task 2'),
@@ -52,21 +52,26 @@ describe('ReviewTaskList', () => {
             _allTasks: tasks,
         }));
 
-        render(
+        const taskList = (highlightTaskAt: number) => (
             <ReviewTaskList
                 tasks={tasks}
                 showListDetails
                 selectionMode={false}
                 multiSelectedIds={new Set()}
                 highlightTaskId="task-3"
+                highlightTaskAt={highlightTaskAt}
                 onToggleSelect={vi.fn()}
                 t={(key) => key}
             />
         );
+        const { rerender } = render(taskList(100));
 
         await waitFor(() => {
             expect(scrollIntoViewMock).toHaveBeenCalled();
             expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'start' });
         });
+        scrollIntoViewMock.mockClear();
+        rerender(taskList(200));
+        expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'start' });
     });
 });

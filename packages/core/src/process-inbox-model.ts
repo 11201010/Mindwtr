@@ -463,6 +463,7 @@ export function prepareProcessInboxCommit(input: {
                 ...(dirty.has('dueDate') ? { dueDate: fields.dueDate } : {}),
                 ...(dirty.has('reviewAt') ? { reviewAt: fields.reviewAt } : {}),
             },
+            parsedFields: edits?.parsedFields,
             taskUpdates: edits?.taskUpdates,
         },
         decision,

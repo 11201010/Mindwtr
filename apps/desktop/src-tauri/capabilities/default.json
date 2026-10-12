@@ -18,6 +18,7 @@
     "core:window:allow-request-user-attention",
     "core:webview:allow-set-webview-zoom",
     "dialog:default",
+    "deep-link:allow-get-current",
     "fs:default",
     "fs:allow-read",
     "fs:allow-mkdir",

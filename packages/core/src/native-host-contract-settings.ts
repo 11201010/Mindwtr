@@ -44,6 +44,14 @@
  *   and show `capture.captureIntent.messages.loadFailed`). The switch sets the
  *   stored config itself, a target-state write: on keeps a token already there,
  *   off deletes it. Then read the view again.
+ * - Notifications › Quick capture in notification bar (Android): RN's AsyncStorage key
+ *   `mindwtr:persistentCaptureNotification` is 'true' while on and removed when off; the host's
+ *   persistentCapture port reads and writes it. setNotificationsSetting's reply says what the
+ *   notification shows (`persistentCapture`), and the host posts or removes it (RN's
+ *   PersistentCaptureNotifier.kt); getPersistentCaptureNotification says what to post again at
+ *   start and on every resume while it is on (RN's keepPersistentCaptureNotificationArmed).
+ * - Notifications' exact-alarm row: as GTD › Pomodoro's notice, shown only while Android 12+
+ *   denies exact alarms; its action opens the system's Alarms & reminders page.
  * - GTD screen state, reset on every visit: the text fields' drafts, the open
  *   task editor groups (see `taskEditor.expandedResetKey`), the field sheet, the
  *   default-area picker, and whether the auto-start notice showed.
@@ -70,6 +78,16 @@ import { getInMemoryAppDataSnapshot } from './sync-client-helpers';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { canUseJalaliCalendar, createDateFormatter, getSystemWeekStart, normalizeClockTimeInput, type DateFormattingConfig } from './date';
 import { buildDataSettingsModel, buildDataSettingsUpdate, isDataSettingStored, type DataSettingsEdit, type DataSettingsModel } from './data-settings-model';
+import {
+    buildNotificationsSettingsModel,
+    buildNotificationsSettingsUpdate,
+    isNotificationsSettingStored,
+    NOTIFICATIONS_BOOLEAN_SETTINGS,
+    NOTIFICATIONS_TIME_PATTERN,
+    NOTIFICATIONS_TIME_SETTINGS,
+    type NotificationsSettingsEdit,
+    type NotificationsSettingsModel,
+} from './notifications-settings-model';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
@@ -121,6 +139,8 @@ import {
     type ManageUntranslatedText,
 } from './manage-settings-model';
 import { NATIVE_HOST_CONTRACT_VERSION, type NativeHostResult } from './native-host-contract';
+import { nativeAboutHeartbeat, type NativeAboutHost } from './native-host-contract-about';
+import { resetHeartbeatOptOutMarker, sendMobileAnalyticsOptOut } from './analytics-heartbeat';
 import { fail, firstWindow, isObjectRecord, isPaging, isText, page, type NativeWindow } from './native-host-contract-menu-views';
 import { createNativeRequestReceipts, isRevision, refuseStale, revisionOf, revisionsToken, runStoreWrite, settleWrite } from './native-request-receipts';
 import { getPersonNameKey, getPersonTaskCounts } from './people';
@@ -165,10 +185,17 @@ export type SettingsDeps = {
     /** Tasks, projects, areas, people and settings generations. */
     dataRevision: () => string;
     requestIdPattern: RegExp;
+    /** Settings › About's host (native-host-contract-about.ts): the Data screen's analytics switch is there while it sends. */
+    about?: () => NativeAboutHost | null;
+    /** Android's persistent capture switch, as RN stores it (PERSISTENT_CAPTURE_STORAGE_KEY); null on a host without one. */
+    persistentCapture?: () => NativePersistentCaptureHost | null;
 };
 
+/** The host's store of the persistent capture switch: on disk when write returns; each throws on a failure. */
+export type NativePersistentCaptureHost = { read(): boolean; write(enabled: boolean): void };
+
 /** Settings screens the native host draws so far; draw the other rows disabled. */
-export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'sync', 'data', 'advanced', 'ai'];
+export const NATIVE_SETTINGS_SCREENS: readonly string[] = ['general', 'gtd', 'manage', 'notifications', 'sync', 'data', 'advanced', 'ai', 'about'];
 
 type NativeMenuRow<Id extends string = string> = SettingsMenuRow<Id> & { enabled: boolean };
 
@@ -189,6 +216,13 @@ export type NativeGeneralSettings = GeneralSettingsModel & { version: typeof NAT
 export type NativeGtdSettings = GtdSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
 
 export type NativeDataSettings = DataSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+export type NativeNotificationsSettings = NotificationsSettingsModel & { version: typeof NATIVE_HOST_CONTRACT_VERSION; revision: string };
+
+/** What the persistent capture notification shows while it is on; null while it is off. */
+export type NativePersistentCaptureNotification = { post: NotificationsSettingsModel['persistentCaptureNotification'] | null };
+
+export type NativeNotificationsWriteResult = NativeSettingsWriteResult & { persistentCapture?: NativePersistentCaptureNotification };
 
 /** A write's answer: whether the store changed, and what the host stores on the device. */
 export type NativeSettingsWriteResult = { changed: boolean; deviceWrites: SettingsDeviceWrite[] };
@@ -345,9 +379,33 @@ function readGtdEdit(value: unknown, liveAreaIds: Set<string>): GtdSettingsEdit 
 
 const isName = (value: unknown): value is string => isText(value, 500) && value.trim().length > 0;
 
-const readDataEdit = (value: unknown): DataSettingsEdit | null => (
-    isObjectRecord(value) && Object.keys(value).length === 2 && value.type === 'debugLogging' && typeof value.value === 'boolean'
-        ? { type: 'debugLogging', value: value.value }
+const NOTIFICATIONS_BOOLEANS = new Set<string>([...NOTIFICATIONS_BOOLEAN_SETTINGS, 'persistentCapture']);
+const NOTIFICATIONS_TIMES = new Set<string>(NOTIFICATIONS_TIME_SETTINGS);
+
+/** A Notifications edit as a host sends it back; null when it is not one the screen offers (a time is RN's 'HH:MM'). */
+const readNotificationsEdit = (value: unknown): NotificationsSettingsEdit | null => {
+    if (!isObjectRecord(value) || Object.keys(value).length !== 2 || typeof value.type !== 'string') return null;
+    const v = value.value;
+    const ok = NOTIFICATIONS_BOOLEANS.has(value.type) ? typeof v === 'boolean'
+        : NOTIFICATIONS_TIMES.has(value.type) ? typeof v === 'string' && NOTIFICATIONS_TIME_PATTERN.test(v)
+            : value.type === 'weeklyReviewDay' && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 6;
+    return ok ? { type: value.type, value: v } as NotificationsSettingsEdit : null;
+};
+
+/** RN's readPersistentCaptureEnabled: a store that cannot be read reads as off. */
+const persistentCaptureOn = (capture: NativePersistentCaptureHost): boolean => {
+    try {
+        return capture.read();
+    } catch {
+        return false;
+    }
+};
+
+/** A Data edit as a host sends it back; the analytics switch only in a build with the heartbeat. */
+const readDataEdit = (value: unknown, analyticsAvailable: boolean): DataSettingsEdit | null => (
+    isObjectRecord(value) && Object.keys(value).length === 2 && typeof value.value === 'boolean'
+        && (value.type === 'debugLogging' || (value.type === 'analyticsOptOut' && analyticsAvailable))
+        ? { type: value.type, value: value.value }
         : null
 );
 
@@ -361,10 +419,21 @@ export function createSettingsMethods(deps: SettingsDeps) {
         return deps.save();
     };
     const receipts = createNativeRequestReceipts({ save: durableSave });
+    /** The build's heartbeat, while it sends (isMobileAnalyticsHeartbeatConfigured); null without one. */
+    const heartbeat = () => {
+        const host = deps.about?.() ?? null;
+        const bound = host ? nativeAboutHeartbeat(host) : null;
+        return bound?.available ? bound : null;
+    };
 
     const manageRevision = () => `${deps.dataRevision()}:${deps.language()}`;
 
     const systemLocale = () => deps.systemLocale() ?? '';
+
+    const notificationsModel = (persistentCapture: { enabled: boolean } | null) => buildNotificationsSettingsModel({
+        settings: useTaskStore.getState().settings, t: deps.t(), language: deps.language(), systemLocale: systemLocale(),
+        ...(persistentCapture ? { persistentCapture } : {}),
+    });
 
     const generalModel = (input: { deviceTheme?: string | null; appSearch?: { supported: boolean; enabled: boolean } }) => {
         const state = useTaskStore.getState();
@@ -961,6 +1030,73 @@ export function createSettingsMethods(deps: SettingsDeps) {
         },
 
         /**
+         * Settings › Notifications (notifications-settings-model.ts). The host shows `exactAlarmNotice` only while Android
+         * denies exact alarms (read again on each resume). A switch whose `askPermission` is true asks for the notification
+         * permission first, and sends its `edit` to setNotificationsSetting only once it is granted; a time row opens the
+         * time picker and sends `{ type, value: 'HH:MM' }`.
+         */
+        getNotificationsSettings(): NativeHostResult<NativeNotificationsSettings> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const capture = deps.persistentCapture?.() ?? null;
+            const model = notificationsModel(capture ? { enabled: persistentCaptureOn(capture) } : null);
+            return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
+        },
+
+        /**
+         * One Notifications control's edit: a synced setting written only when it does not already hold the value, or the
+         * persistent capture switch stored on the device (a target state). Its reply's `persistentCapture` is what the
+         * notification shows now (null: remove it), for the host to post: a replay after a restart posts it again.
+         */
+        async setNotificationsSetting(input: { requestId: string; edit: NotificationsSettingsEdit }): Promise<NativeHostResult<NativeNotificationsWriteResult>> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const edit = isObjectRecord(input) ? readNotificationsEdit(input.edit) : null;
+            const capture = deps.persistentCapture?.() ?? null;
+            if (!edit || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)
+                || (edit.type === 'persistentCapture' && !capture)) {
+                return fail('INVALID_INPUT', 'A request UUID and an edit the Notifications screen offers are required');
+            }
+            return receipts.run<NativeNotificationsWriteResult>(input.requestId, JSON.stringify(['notifications', edit]), async () => {
+                if (edit.type === 'persistentCapture') {
+                    const enabled = edit.value as boolean;
+                    let changed = false;
+                    try {
+                        if (capture!.read() !== enabled) {
+                            capture!.write(enabled);
+                            changed = true;
+                        }
+                    } catch (error) {
+                        return fail('ACTION_FAILED', error instanceof Error ? error.message : String(error));
+                    }
+                    return { ok: true, value: { changed, deviceWrites: [], persistentCapture: { post: enabled ? notificationsModel(null).persistentCaptureNotification : null } } };
+                }
+                const settings = useTaskStore.getState().settings;
+                if (isNotificationsSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites: [] } };
+                const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(buildNotificationsSettingsUpdate(edit)!));
+                return settleWrite(written, { changed: true, deviceWrites: [] });
+            });
+        },
+
+        /**
+         * The persistent capture notification to post again (at start and on every resume, with the permission), or null to
+         * remove it. A switch that cannot be read is ACTION_FAILED, never null: the host keeps what it shows.
+         */
+        getPersistentCaptureNotification(): NativeHostResult<NativePersistentCaptureNotification> {
+            const ready = deps.readiness();
+            if (!ready.ok) return ready;
+            const capture = deps.persistentCapture?.() ?? null;
+            if (!capture) return { ok: true, value: { post: null } };
+            let on: boolean;
+            try {
+                on = capture.read();
+            } catch {
+                return fail('ACTION_FAILED', 'The persistent capture switch could not be read');
+            }
+            return { ok: true, value: { post: on ? notificationsModel(null).persistentCaptureNotification : null } };
+        },
+
+        /**
          * Settings › Data: RN's Diagnostics card (data-settings-model.ts). The host's own diagnostics log
          * (diagnostics-log.ts) makes the file for Share log and deletes it for Clear log; the model has
          * RN's toast words for both.
@@ -968,7 +1104,7 @@ export function createSettingsMethods(deps: SettingsDeps) {
         getDataSettings(): NativeHostResult<NativeDataSettings> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t());
+            const model = buildDataSettingsModel(useTaskStore.getState().settings, deps.t(), heartbeat() !== null);
             return { ok: true, value: { version: NATIVE_HOST_CONTRACT_VERSION, revision: manageRevision(), ...model } };
         },
 
@@ -1007,21 +1143,30 @@ export function createSettingsMethods(deps: SettingsDeps) {
         },
 
         /**
-         * The Debug logging switch's `edit`. Turning logging on then writes RN's forced
-         * "Debug logging enabled" line through core's logger, so the log starts with it.
+         * The Debug logging switch's or the analytics switch's `edit`. Turning logging on then writes RN's forced
+         * "Debug logging enabled" line through core's logger, so the log starts with it. Opting out of the heartbeat (after
+         * `analytics.confirm`) sends RN's one opt-out event; opting back in clears its marker.
          */
         async setDataSetting(input: { requestId: string; edit: DataSettingsEdit }): Promise<NativeHostResult<NativeSettingsWriteResult>> {
             const ready = deps.readiness();
             if (!ready.ok) return ready;
-            const edit = isObjectRecord(input) ? readDataEdit(input.edit) : null;
+            const edit = isObjectRecord(input) ? readDataEdit(input.edit, heartbeat() !== null) : null;
             if (!edit || typeof input.requestId !== 'string' || !deps.requestIdPattern.test(input.requestId)) {
-                return fail('INVALID_INPUT', 'A request UUID and the Debug logging switch\'s edit are required');
+                return fail('INVALID_INPUT', 'A request UUID and a Data switch\'s edit are required');
             }
             return receipts.run<NativeSettingsWriteResult>(input.requestId, JSON.stringify(['data', edit]), async () => {
                 const settings = useTaskStore.getState().settings;
                 if (isDataSettingStored(settings, edit)) return { ok: true, value: { changed: false, deviceWrites: [] } };
                 const written = await runStoreWrite(() => useTaskStore.getState().updateSettings(buildDataSettingsUpdate(settings, edit)));
-                if (written.ok && edit.value) logInfo('Debug logging enabled', { scope: 'diagnostics', force: true });
+                if (written.ok && edit.type === 'debugLogging' && edit.value) logInfo('Debug logging enabled', { scope: 'diagnostics', force: true });
+                // RN's analytics switch, after the setting saved: turning the heartbeat on clears the opt-out marker; opting out
+                // sends the one opt-out event. Neither waits for the network, and a replay (no change) sends nothing.
+                const bound = edit.type === 'analyticsOptOut' && written.ok ? heartbeat() : null;
+                if (bound) {
+                    const follow = edit.value ? sendMobileAnalyticsOptOut(bound.config, bound.device) : resetHeartbeatOptOutMarker(bound.device.storage);
+                    void follow.catch(() => undefined);
+                    logInfo('Native analytics opt-out changed', { scope: 'analytics', context: { releaseCheck: 'v1.3.5/native-analytics-opt-out', optedOut: String(edit.value) } });
+                }
                 return settleWrite(written, { changed: true, deviceWrites: [] });
             });
         },

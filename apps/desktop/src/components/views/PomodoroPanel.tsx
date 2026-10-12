@@ -90,11 +90,13 @@ export function PomodoroPanel({ tasks }: PomodoroPanelProps) {
     const presetOptions = useMemo(() => getPomodoroPresetOptions(customDurations), [customDurations]);
 
     const phaseLabel = timerState.phase === 'focus'
-        ? resolveText('pomodoro.phaseFocus', 'Focus session')
-        : resolveText('pomodoro.phaseBreak', 'Break');
+        ? resolveText('pomodoro.phaseFocusShort', 'Focus')
+        : resolveText('pomodoro.phaseBreakShort', 'Break');
     const cardTitle = resolveText('pomodoro.title', 'Pomodoro Focus');
     const sessionCountLabel = resolveText('pomodoro.sessionsDone', 'Focus sessions completed');
-    const switchPhaseLabel = resolveText('pomodoro.switchPhase', 'Switch phase');
+    const switchPhaseLabel = timerState.phase === 'focus'
+        ? resolveText('pomodoro.switchToBreak', 'Switch to Break')
+        : resolveText('pomodoro.switchToFocus', 'Switch to Focus');
     const markDoneLabel = resolveText('pomodoro.markTaskDone', 'Mark task done');
     const noTaskLabel = resolveText('pomodoro.noTask', 'No available focus task');
     const selectedTaskLabel = resolveText('pomodoro.selectedTask', 'Timer task');

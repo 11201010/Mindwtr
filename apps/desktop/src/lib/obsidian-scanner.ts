@@ -1,6 +1,8 @@
+import { logInfo } from './app-log';
 import {
     normalizeObsidianRelativePath,
     parseObsidianTasksFromMarkdown,
+    normalizeObsidianRequiredInlineTag,
     parseTaskNotesFile,
     type ObsidianTask,
 } from '@mindwtr/core';
@@ -13,6 +15,7 @@ export type ObsidianConfig = {
     vaultName: string;
     scanFolders: string[];
     inboxFile: string;
+    requiredInlineTag: string;
     taskNotesIncludeArchived: boolean;
     dataviewMetadataEnabled: boolean;
     newTaskFormat: ObsidianNewTaskFormat;
@@ -187,6 +190,7 @@ export const normalizeObsidianConfig = (config: Partial<ObsidianConfig> | null |
         vaultName: deriveVaultName(vaultPath),
         scanFolders,
         inboxFile: sanitizeObsidianInboxFile(config?.inboxFile),
+        requiredInlineTag: normalizeObsidianRequiredInlineTag(config?.requiredInlineTag),
         taskNotesIncludeArchived: config?.taskNotesIncludeArchived === true,
         dataviewMetadataEnabled: config?.dataviewMetadataEnabled === true,
         newTaskFormat: sanitizeObsidianNewTaskFormat(config?.newTaskFormat),
@@ -364,6 +368,7 @@ const readAndParseObsidianMarkdownFile = async (
         relativeFilePath: normalizedRelativePath,
         fileModifiedAt,
         dataviewMetadataEnabled: config.dataviewMetadataEnabled,
+        requiredInlineTag: config.requiredInlineTag,
     });
     return {
         tasks: parsed.tasks,
@@ -372,6 +377,13 @@ const readAndParseObsidianMarkdownFile = async (
         relativeFilePath: normalizedRelativePath,
         detectedTaskNotes: false,
     };
+};
+
+const logInlineTagFilter = (config: ObsidianConfig, count: number): void => {
+    if (!config.requiredInlineTag) return;
+    void logInfo('Obsidian inline tag filter applied', {
+        scope: 'obsidian', extra: { releaseCheck: 'v1.3.5/obsidian-inline-tag', count },
+    });
 };
 
 export async function scanObsidianFile(
@@ -391,7 +403,9 @@ export async function scanObsidianFile(
         };
     }
     const absolutePath = resolveObsidianAbsolutePath(vaultPath, relativeFilePath);
-    return readAndParseObsidianMarkdownFile(config, absolutePath, relativeFilePath, deps);
+    const result = await readAndParseObsidianMarkdownFile(config, absolutePath, relativeFilePath, deps);
+    if (result.isTracked && !result.detectedTaskNotes) logInlineTagFilter(config, result.tasks.length);
+    return result;
 }
 
 export async function scanObsidianVault(
@@ -505,6 +519,8 @@ export async function scanObsidianVault(
         await walkDirectory(absolutePath, normalizedScanFolder, 0);
     }
 
+    // One line per scan: the feedback upload keeps only the tail of the log.
+    logInlineTagFilter(config, inlineTasks.length);
     return {
         tasks: sortObsidianTasks(detectedTaskNotes ? taskNotesTasks : inlineTasks),
         scannedFileCount,

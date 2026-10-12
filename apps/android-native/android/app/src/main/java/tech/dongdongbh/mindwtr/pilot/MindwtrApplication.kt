@@ -16,6 +16,9 @@ class MindwtrApplication : Application() {
         CaptureSyncHeadlessService.install(this) { context -> CoreWork.enqueue(context, CoreJob.INGEST).result.get(DURABLE_WAIT_SECONDS, TimeUnit.SECONDS) }
         // RN's background sync worker goes on the first start after the upgrade (a no-op later): the native job replaces it.
         runCatching { CoreWork.cancelRnSync(this) }
+        // RN's NotificationOpenIntentsPackage: any process start (a receiver, a widget, the app) posts the persistent capture
+        // notification again from RN's own mirror of it, off the main thread (#819); a failure reaches the next boot's log.
+        Thread({ PersistentCapture.restoreAtProcessStart(this) }, "mindwtr-capture-repin").start()
     }
 
     private companion object {

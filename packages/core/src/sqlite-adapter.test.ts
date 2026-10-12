@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,8 @@ import { restoreSectionFromProjectArchive, restoreTaskFromProjectArchive } from 
 import { ENTITY_FOREIGN_KEY_CHILDREN, purgeExpiredTombstones } from './sync-tombstones';
 import { buildTaskViewSectionUpdates, buildTaskViewSectionUndoUpdates } from './view-sections';
 import { parseAttachmentLinkBatch } from './attachment-link-utils';
+import { computeGlobalSearchResults } from './global-search-filter';
+import { DEFAULT_GLOBAL_SEARCH_FILTERS, fetchGlobalSearchAdapterResults } from './global-search-model';
 
 const require = createRequire(import.meta.url);
 type BunStatement = {
@@ -462,6 +464,10 @@ describeSqlite('SqliteAdapter', () => {
         const archivedAt = '2026-09-01T12:00:00.000Z';
         const previousCompletion = '2026-08-31T12:00:00.000Z';
         const restoredAt = '2026-09-05T13:00:00.000Z';
+        // The sync merge reads the real clock, and the 90-day tombstone purge would drop these fixed-date sections.
+        vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+        vi.setSystemTime(new Date(restoredAt));
+        onTestFinished(() => { vi.useRealTimers(); });
         const attachment = {
             id: 'attachment-1',
             kind: 'link' as const,
@@ -1750,6 +1756,27 @@ describeSqlite('SqliteAdapter', () => {
 
         expect(results.tasks.map((task) => task.id)).toEqual(['task-location']);
         expect(results.tasks[0]?.location).toBe('Main Office');
+    });
+
+    it('keeps a negated word excluding results after the global search merges full-text hits', async () => {
+        const now = new Date().toISOString();
+        const task = (id: string, title: string): Task => ({
+            id, title, status: 'next', contexts: [], tags: [], createdAt: now, updatedAt: now,
+        });
+        const tasks = [task('a', 'Quarterly report'), task('b', 'Report draft'), task('c', 'Draft memo')];
+        await adapter.saveData({ tasks, projects: [], areas: [], sections: [], settings: {} });
+
+        const search = async (query: string) => {
+            const ftsResults = await fetchGlobalSearchAdapterResults(query, adapter.searchAll.bind(adapter));
+            return computeGlobalSearchResults({
+                query, tasks, projects: [], areas: [], ...DEFAULT_GLOBAL_SEARCH_FILTERS, ftsResults, ftsQuery: query,
+            }).results.map((entry) => entry.item.id).sort();
+        };
+
+        expect(await search('report -draft')).toEqual(['a']);
+        expect(await search('-draft')).toEqual(['a']);
+        // Full-text search ANDs every word, so its hits for an OR query are already a subset of the local result.
+        expect(await search('report OR memo')).toEqual(['a', 'b', 'c']);
     });
 
     it('indexes assigned people in full text search', async () => {

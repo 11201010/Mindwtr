@@ -1599,6 +1599,7 @@ fn resolve_sync_snapshot_secret_unlocked(
     config: &AppConfigToml,
     service: CredentialService,
     keyring: Result<Option<String>, String>,
+    required: bool,
 ) -> Result<SyncSnapshotSecret, String> {
     match resolve_bound_credential_unlocked(config_path, secrets_path, config, service, keyring) {
         Ok(secret) => Ok(SyncSnapshotSecret::Known(secret.unwrap_or_default())),
@@ -1612,8 +1613,40 @@ fn resolve_sync_snapshot_secret_unlocked(
         {
             Ok(SyncSnapshotSecret::Opaque)
         }
+        Err(error)
+            if !required
+                && error
+                    == format!(
+                        "{} endpoint does not match its committed credential binding",
+                        service.state_key()
+                    ) =>
+        {
+            log::info!(
+                "Inactive sync credential remains opaque extra.releaseCheck=v1.3.5/inactive-sync-credential service={} outcome=opaque",
+                service.state_key()
+            );
+            Ok(SyncSnapshotSecret::Opaque)
+        }
         Err(error) => Err(error),
     }
+}
+
+fn sync_snapshot_credential_required(
+    config: &AppConfigToml,
+    cloud_provider: &str,
+    service: CredentialService,
+    explicitly_required: bool,
+) -> bool {
+    let backend = config
+        .sync_backend
+        .as_deref()
+        .and_then(|value| normalize_backend(value.trim()));
+    explicitly_required
+        || match service {
+            CredentialService::Webdav => backend == Some("webdav"),
+            CredentialService::Cloud => backend == Some("cloud") && cloud_provider == "selfhosted",
+            CredentialService::Email => false,
+        }
 }
 
 fn read_bound_credential_paths_with<ReadSecret>(
@@ -2362,6 +2395,8 @@ where
 
 fn read_sync_configuration_pair(
     app: &tauri::AppHandle,
+    require_webdav_password: bool,
+    require_cloud_token: bool,
 ) -> Result<
     (
         AppConfigToml,
@@ -2393,6 +2428,12 @@ fn read_sync_configuration_pair(
         &config,
         CredentialService::Webdav,
         get_keyring_secret(app, KEYRING_WEB_DAV_PASSWORD),
+        sync_snapshot_credential_required(
+            &config,
+            &provider_state.cloud_provider,
+            CredentialService::Webdav,
+            require_webdav_password,
+        ),
     )?;
     let cloud_token = resolve_sync_snapshot_secret_unlocked(
         &config_path,
@@ -2400,6 +2441,12 @@ fn read_sync_configuration_pair(
         &config,
         CredentialService::Cloud,
         get_keyring_secret(app, KEYRING_CLOUD_TOKEN),
+        sync_snapshot_credential_required(
+            &config,
+            &provider_state.cloud_provider,
+            CredentialService::Cloud,
+            require_cloud_token,
+        ),
     )?;
     Ok((config, webdav_password, cloud_token, provider_state))
 }
@@ -2622,6 +2669,7 @@ fn normalize_obsidian_config_payload(payload: ObsidianConfigPayload) -> Obsidian
         scan_folders: normalize_obsidian_scan_folders(payload.scan_folders),
         inbox_file: normalize_obsidian_inbox_file(&payload.inbox_file),
         task_notes_include_archived: payload.task_notes_include_archived,
+        required_inline_tag: payload.required_inline_tag.trim().to_string(),
         dataview_metadata_enabled: payload.dataview_metadata_enabled,
         new_task_format: normalize_obsidian_new_task_format(payload.new_task_format),
         last_scanned_at,
@@ -2706,8 +2754,11 @@ pub(crate) fn get_sync_configuration_snapshot(
     require_cloud_token: Option<bool>,
 ) -> Result<Value, String> {
     let _config_guard = lock_config_read_modify_write()?;
-    let (config, webdav_password, cloud_token, provider_state) =
-        read_sync_configuration_pair(&app)?;
+    let (config, webdav_password, cloud_token, provider_state) = read_sync_configuration_pair(
+        &app,
+        require_webdav_password.unwrap_or(false),
+        require_cloud_token.unwrap_or(false),
+    )?;
     if require_webdav_password.unwrap_or(false)
         && matches!(webdav_password, SyncSnapshotSecret::Opaque)
     {
@@ -2931,6 +2982,42 @@ fn validate_webdav_config_url(url: &str, allow_insecure_http: bool) -> Result<()
     crate::sync::assert_webdav_url_allowed(url, allow_insecure_http)
 }
 
+fn clear_webdav_config_fields(config: &mut AppConfigToml) {
+    config.webdav_url = None;
+    config.webdav_username = None;
+    config.webdav_allow_insecure_http = None;
+    config.webdav_allow_weak_fingerprint = None;
+}
+
+fn disable_webdav_before_clear_paths_with<AfterRawReadback>(
+    config_path: &Path,
+    secrets_path: &Path,
+    state_path: &Path,
+    after_raw_readback: AfterRawReadback,
+) -> Result<(), String>
+where
+    AfterRawReadback: FnOnce() -> Result<(), String>,
+{
+    let _credential_guard = lock_dropbox_credential_state()?;
+    let (backend, _) = read_sync_backend_publication_state_paths_unlocked_with(
+        config_path,
+        secrets_path,
+        state_path,
+        || {},
+    )?;
+    if backend.trim() == "webdav" {
+        // Disable before deleting credentials so interruption leaves sync safely off.
+        publish_sync_backend_paths_unlocked_with(
+            config_path,
+            secrets_path,
+            state_path,
+            "off",
+            after_raw_readback,
+        )?;
+    }
+    Ok(())
+}
+
 // I1: update_bound_credential only holds lock_dropbox_credential_state for
 // its own transaction — that serializes it against other CRED-only callers,
 // but not against an RMW-lock holder's read..write gap on config.toml. Outer
@@ -2963,14 +3050,19 @@ pub(crate) fn set_webdav_config(
     } else {
         CredentialSecretUpdate::Keep
     };
+    if url.is_empty() {
+        disable_webdav_before_clear_paths_with(
+            &get_config_path(&app),
+            &get_secrets_path(&app),
+            &get_sync_backend_state_path(&app),
+            || Ok(()),
+        )?;
+    }
     let username = username.trim().to_string();
     let persisted =
         update_bound_credential(&app, CredentialService::Webdav, secret_update, |config| {
             if url.is_empty() {
-                config.webdav_url = None;
-                config.webdav_username = None;
-                config.webdav_allow_insecure_http = None;
-                config.webdav_allow_weak_fingerprint = None;
+                clear_webdav_config_fields(config);
                 return;
             }
             config.webdav_url = Some(url);
@@ -3157,6 +3249,17 @@ pub(crate) fn read_external_calendar_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn obsidian_required_inline_tag_survives_native_round_trip() {
+        let old: ObsidianConfigPayload = serde_json::from_str(r#"{"vaultPath":"/Vault","vaultName":"Vault","lastScannedAt":null,"enabled":true}"#).unwrap();
+        assert_eq!(old.required_inline_tag, "");
+        let payload = normalize_obsidian_config_payload(ObsidianConfigPayload {
+            required_inline_tag: " #task/work ".into(), ..old
+        });
+        let restored: ObsidianConfigPayload = serde_json::from_str(&serde_json::to_string(&payload).unwrap()).unwrap();
+        assert_eq!(restored.required_inline_tag, "#task/work");
+    }
 
     #[test]
     fn accepts_network_calendar_urls() {
@@ -3494,6 +3597,7 @@ mod tests {
                 &initial,
                 CredentialService::Cloud,
                 Err("keyring unavailable".to_string()),
+                true,
             )
             .expect("an unrelated unavailable authority stays opaque"),
             SyncSnapshotSecret::Opaque,
@@ -3521,6 +3625,7 @@ mod tests {
                 &committed,
                 CredentialService::Cloud,
                 Err("keyring unavailable".to_string()),
+                true,
             )
             .expect("a matching but unavailable bound authority stays opaque"),
             SyncSnapshotSecret::Opaque,
@@ -3536,9 +3641,159 @@ mod tests {
             &changed_endpoint,
             CredentialService::Cloud,
             Err("keyring unavailable".to_string()),
+            true,
         )
         .expect_err("an endpoint mismatch must remain fail-closed");
         assert!(error.contains("endpoint does not match"));
+    }
+
+    #[test]
+    fn sync_snapshot_requires_only_selected_or_explicitly_requested_transport() {
+        for backend in ["off", "file", "webdav", "cloud"] {
+            for provider in ["selfhosted", "dropbox"] {
+                let config = AppConfigToml {
+                    sync_backend: Some(backend.to_string()),
+                    ..Default::default()
+                };
+                for service in [CredentialService::Webdav, CredentialService::Cloud] {
+                    let expected = match service {
+                        CredentialService::Webdav => backend == "webdav",
+                        CredentialService::Cloud => backend == "cloud" && provider == "selfhosted",
+                        CredentialService::Email => unreachable!(),
+                    };
+                    assert_eq!(
+                        sync_snapshot_credential_required(&config, provider, service, false),
+                        expected
+                    );
+                    assert!(sync_snapshot_credential_required(
+                        &config, provider, service, true
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inactive_endpoint_mismatch_stays_opaque_without_rebinding_or_weakening_transport() {
+        for service in [CredentialService::Webdav, CredentialService::Cloud] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let config_path = dir.path().join("config.toml");
+            let secrets_path = dir.path().join("secrets.toml");
+            let active_backend = match service {
+                CredentialService::Webdav => "cloud",
+                CredentialService::Cloud => "webdav",
+                CredentialService::Email => unreachable!(),
+            };
+            write_config_files(
+                &config_path,
+                &secrets_path,
+                &AppConfigToml {
+                    sync_backend: Some(active_backend.to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("seed config");
+            let mut config = update_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                service,
+                CredentialSecretUpdate::Replace(Some("dormant-secret".to_string())),
+                |config| match service {
+                    CredentialService::Webdav => {
+                        config.webdav_url = Some("https://trusted.example/dav".to_string());
+                        config.webdav_username = Some("account".to_string());
+                    }
+                    CredentialService::Cloud => {
+                        config.cloud_url = Some("https://trusted.example/cloud".to_string());
+                    }
+                    CredentialService::Email => unreachable!(),
+                },
+                || Err("keyring unavailable".to_string()),
+                |_| Err("keyring unavailable".to_string()),
+                |_| Ok(()),
+            )
+            .expect("commit dormant credential");
+            match service {
+                CredentialService::Webdav => {
+                    config.webdav_url = None;
+                    config.webdav_username = None;
+                }
+                CredentialService::Cloud => config.cloud_url = None,
+                CredentialService::Email => unreachable!(),
+            }
+            write_config_files(&config_path, &secrets_path, &config).expect("manual endpoint edit");
+            let state_path = config_credential_state_path_from_secrets_path(&secrets_path);
+            let bindings = read_config_credential_state_file(&state_path)
+                .unwrap()
+                .unwrap()
+                .bindings;
+            let required = sync_snapshot_credential_required(&config, "selfhosted", service, false);
+            assert!(!required);
+            assert_eq!(
+                resolve_sync_snapshot_secret_unlocked(
+                    &config_path,
+                    &secrets_path,
+                    &config,
+                    service,
+                    Err("keyring unavailable".to_string()),
+                    required,
+                )
+                .expect("inactive mismatch must not block snapshot"),
+                SyncSnapshotSecret::Opaque
+            );
+            assert_eq!(
+                read_config_credential_state_file(&state_path)
+                    .unwrap()
+                    .unwrap()
+                    .bindings,
+                bindings,
+                "snapshot must not authorize the old secret for the edited endpoint"
+            );
+            assert!(read_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                service,
+                || Err("keyring unavailable".to_string()),
+            )
+            .unwrap_err()
+            .contains("endpoint does not match"));
+            for explicitly_required in [false, true] {
+                let mut demanded_config = config.clone();
+                if !explicitly_required {
+                    demanded_config.sync_backend = Some(service.state_key().to_string());
+                }
+                let required = sync_snapshot_credential_required(
+                    &demanded_config,
+                    "selfhosted",
+                    service,
+                    explicitly_required,
+                );
+                assert!(required);
+                assert!(resolve_sync_snapshot_secret_unlocked(
+                    &config_path,
+                    &secrets_path,
+                    &demanded_config,
+                    service,
+                    Err("keyring unavailable".to_string()),
+                    required,
+                )
+                .unwrap_err()
+                .contains("endpoint does not match"));
+            }
+            fs::write(&state_path, "{").expect("corrupt credential state");
+            assert_eq!(
+                resolve_sync_snapshot_secret_unlocked(
+                    &config_path,
+                    &secrets_path,
+                    &config,
+                    service,
+                    Err("keyring unavailable".to_string()),
+                    false,
+                )
+                .unwrap_err(),
+                "Config credential state is invalid"
+            );
+        }
     }
 
     #[test]
@@ -4196,6 +4451,138 @@ mod tests {
         .expect("cleared binding reads");
         assert!(cleared_config.webdav_url.is_none());
         assert!(cleared_password.is_none());
+    }
+
+    #[test]
+    fn clearing_webdav_disables_its_backend_before_credentials_and_preserves_other_backends() {
+        for backend in ["webdav", "cloud", "file", "off"] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let config_path = dir.path().join("config.toml");
+            let secrets_path = dir.path().join("secrets.toml");
+            let state_path = sync_backend_state_path_from_secrets_path(&secrets_path);
+            write_config_files(
+                &config_path,
+                &secrets_path,
+                &AppConfigToml {
+                    sync_backend: Some(backend.to_string()),
+                    cloud_url: Some("https://cloud.example".to_string()),
+                    cloud_token: Some("cloud-token".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("seed config");
+            update_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                CredentialService::Webdav,
+                CredentialSecretUpdate::Replace(Some("dav-password".to_string())),
+                |config| config.webdav_url = Some("https://dav.example".to_string()),
+                || Err("keyring unavailable".to_string()),
+                |_| Err("keyring unavailable".to_string()),
+                |_| Ok(()),
+            )
+            .expect("seed WebDAV credential");
+            if backend == "webdav" {
+                assert!(disable_webdav_before_clear_paths_with(
+                    &config_path,
+                    &secrets_path,
+                    &state_path,
+                    || Err("injected backend publication failure".to_string()),
+                )
+                .is_err());
+                assert_eq!(
+                    read_sync_backend_publication_state_paths_with(
+                        &config_path,
+                        &secrets_path,
+                        &state_path,
+                        || {},
+                    )
+                    .unwrap()
+                    .0,
+                    "webdav"
+                );
+                assert_eq!(
+                    read_bound_credential_paths_with(
+                        &config_path,
+                        &secrets_path,
+                        CredentialService::Webdav,
+                        || Err("keyring unavailable".to_string()),
+                    )
+                    .unwrap()
+                    .1
+                    .as_deref(),
+                    Some("dav-password")
+                );
+            }
+            disable_webdav_before_clear_paths_with(
+                &config_path,
+                &secrets_path,
+                &state_path,
+                || Ok(()),
+            )
+            .expect("disable active WebDAV before clear");
+            let expected_backend = if backend == "webdav" { "off" } else { backend };
+            assert!(update_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                CredentialService::Webdav,
+                CredentialSecretUpdate::Replace(None),
+                clear_webdav_config_fields,
+                || Err("keyring unavailable".to_string()),
+                |_| Err("keyring unavailable".to_string()),
+                |stage| if stage == CredentialPublicationStage::ConfigPair {
+                    Err("injected credential publication failure".to_string())
+                } else {
+                    Ok(())
+                },
+            )
+            .is_err());
+            let (config, password) = read_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                CredentialService::Webdav,
+                || Err("keyring unavailable".to_string()),
+            )
+            .expect("failed clear preserves credential");
+            assert_eq!(config.sync_backend.as_deref(), Some(expected_backend));
+            assert_eq!(password.as_deref(), Some("dav-password"));
+            let cleared = update_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                CredentialService::Webdav,
+                CredentialSecretUpdate::Replace(None),
+                clear_webdav_config_fields,
+                || Err("keyring unavailable".to_string()),
+                |_| Err("keyring unavailable".to_string()),
+                |_| Ok(()),
+            )
+            .expect("retry commits clear");
+            assert!(cleared.webdav_url.is_none());
+            assert!(cleared.webdav_username.is_none());
+            assert!(cleared.webdav_password.is_none());
+            assert_eq!(cleared.cloud_url.as_deref(), Some("https://cloud.example"));
+            assert_eq!(cleared.cloud_token.as_deref(), Some("cloud-token"));
+            assert_eq!(
+                read_sync_backend_publication_state_paths_with(
+                    &config_path,
+                    &secrets_path,
+                    &state_path,
+                    || {},
+                )
+                .unwrap()
+                .0,
+                expected_backend
+            );
+            assert!(read_bound_credential_paths_with(
+                &config_path,
+                &secrets_path,
+                CredentialService::Webdav,
+                || Ok(Some("stale-keyring-password".to_string())),
+            )
+            .unwrap()
+            .1
+            .is_none());
+        }
     }
 
     // I1: reproduces the lost-update race at the mechanism level (no
@@ -5358,6 +5745,7 @@ mod tests {
                     &config,
                     service,
                     keyring_read(),
+                    true,
                 )
                 .expect("an unconfigured service must not fail the snapshot"),
                 SyncSnapshotSecret::Opaque,
@@ -5398,6 +5786,7 @@ mod tests {
                 &committed,
                 CredentialService::Webdav,
                 keyring_read(),
+                true,
             )
             .expect("verification snapshot"),
             SyncSnapshotSecret::Known("dav-password".to_string()),
@@ -5467,6 +5856,7 @@ mod tests {
                 &config,
                 CredentialService::Cloud,
                 dead_keyring(),
+                true,
             )
             .expect("an unreadable authority stays opaque"),
             SyncSnapshotSecret::Opaque,

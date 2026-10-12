@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppData, Project, Section, Task } from './types';
 import type { StorageAdapter } from './storage';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
-import { getProjectToSectionEligibility, prepareProjectToSection, previewProjectToSection } from './project-to-section';
+import {
+    createProjectToSectionPreviewer,
+    getProjectToSectionEligibility,
+    prepareProjectToSection,
+    previewProjectToSection,
+} from './project-to-section';
 import { mergeAppData } from './sync';
 
 const NOW = '2026-10-01T12:00:00.000Z';
@@ -87,6 +92,47 @@ describe('project to section', () => {
         rows();
         expect(prepareProjectToSection(useTaskStore.getState(), 'source', 'destination', ' ')).toEqual({ ok: false, reason: 'invalid-title' });
         expect(saveData).not.toHaveBeenCalled();
+    });
+
+    it('previews every destination exactly as previewProjectToSection does, for every source', () => {
+        const projects = [
+            project('source', { areaId: 'area-a', supportNotes: 'notes' }),
+            project('plain'), project('in-area', { areaId: 'area-b' }), project('with-sections'),
+            project('waiting', { status: 'waiting' }), project('someday', { status: 'someday' }),
+            project('archived', { status: 'archived' }), project('archived-at', { archivedAt: NOW }),
+            project('cancelled', { cancelledAt: NOW }), project('deleted', { deletedAt: NOW }),
+            project('purged', { deletedAt: NOW, purgedAt: NOW }), project('sequential', { isSequential: true }),
+            project('dup'), project('dup', { title: 'dup twin' }),
+            project('tagged', { tagIds: ['tag'] }), project('dated', { reviewAt: NOW }),
+            project('archive-linked'), project('dead-section-only'),
+        ];
+        const sections = [section('live', { projectId: 'with-sections' }),
+            section('gone', { projectId: 'dead-section-only', deletedAt: NOW })];
+        const statuses: Task['status'][] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done', 'archived'];
+        const tasks = [
+            ...statuses.map((status, index) => task(`source-${status}`, { status, order: index })),
+            task('source-deleted', { status: 'done', deletedAt: NOW }),
+            task('source-purged', { status: 'archived', deletedAt: NOW, purgedAt: NOW }),
+            task('plain-done', { projectId: 'plain', status: 'done' }),
+            task('linked', { projectId: 'archive-linked', statusBeforeProjectArchive: 'next' }),
+            task('linked-trashed', { projectId: 'dead-section-only', projectArchivedAt: NOW, deletedAt: NOW }),
+            task('loose', { projectId: undefined, status: 'done' }),
+        ];
+        const state = { _allProjects: projects, _allSections: sections, _allTasks: tasks };
+        const ids = [...new Set(projects.map((row) => row.id)), 'missing'];
+        let okCount = 0;
+        for (const sourceId of ids) {
+            const previewDestination = createProjectToSectionPreviewer(state, sourceId);
+            for (const destinationId of ids) {
+                const expected = previewProjectToSection(state, sourceId, destinationId);
+                if (expected.ok) okCount += 1;
+                expect(previewDestination(destinationId), `${sourceId} -> ${destinationId}`).toEqual(expected);
+            }
+        }
+        // The fixture must reach the success branch with real counts, not only blocked paths.
+        expect(okCount).toBeGreaterThan(4);
+        expect(createProjectToSectionPreviewer(state, 'source')('in-area')).toMatchObject({
+            ok: true, taskCount: 7, completedCount: 1, archivedCount: 1 });
     });
 
     it('moves every live status in source order, preserves content, leaves Trash and deleted sections, and saves one snapshot', async () => {

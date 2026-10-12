@@ -98,6 +98,8 @@ export function getDesktopProfileDirs(): string[] {
     const flatpakHome = join(getHomeDir(), '.var', 'app', APP_ID);
     dirs.push(join(flatpakHome, 'data', APP_DIR));
     dirs.push(join(flatpakHome, 'config', APP_DIR));
+    // Snapd points HOME and XDG_DATA_HOME at ~/snap/<name>/<revision>/; `current` links the active revision.
+    dirs.push(join(getHomeDir(), 'snap', 'mindwtr', 'current', '.local', 'share', APP_DIR));
   }
 
   if (process.platform === 'darwin') {

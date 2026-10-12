@@ -9,6 +9,7 @@ import { getActiveLanguage, getMonthNamesForLanguage, isActiveDateFormatDayFirst
 import type { Language } from './i18n/i18n-types';
 import { getRetainedTaskContexts, getUsedTaskTokens } from './task-token-usage';
 import { getPersonOptionNames } from './people';
+import { minutesToTimeEstimate, parseTimeEstimateInput } from './calendar-scheduling';
 
 // The live capture preview rides this module's barrel line
 // (`export * from './quick-add'`) rather than its own: Metro collapses subpath
@@ -57,6 +58,9 @@ export interface QuickAddParseOptions {
     // title exactly like an unknown level does, and no priority is applied.
     // Follows the Priorities feature toggle. Default true. See #1107.
     parsePriority?: boolean;
+    // When false, `/estimate:` and `/duration:` are not parsed: the token stays
+    // in the title. Follows the Time estimates feature toggle. Default true (#1358).
+    parseTimeEstimate?: boolean;
 }
 
 // Single source of truth for the default-on semantics: only an explicit
@@ -103,6 +107,7 @@ export function buildQuickAddParseOptions(
         preserveText: settings?.quickAddAutoClean !== true,
         naturalLanguageDates: isNaturalLanguageDatesEnabled(settings),
         parsePriority: resolveFeatureFlags(settings).priorities,
+        parseTimeEstimate: resolveFeatureFlags(settings).timeEstimates,
     };
 }
 
@@ -247,8 +252,8 @@ const QUICK_ADD_FOCUS_COMMAND_PATTERN = String.raw`\*(?:\s+focus\b)?`;
 // would corrupt real text — `https://example.com/next-steps` is a link, not
 // a status.
 const QUICK_ADD_COMMAND_START = String.raw`(?:^|\s)`;
-const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b)|$)`;
-const QUICK_ADD_INLINE_CONTROL_BOUNDARY = String.raw`(?=\s(?:[@#+!%]|\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b))|$)`;
+const QUICK_ADD_COMMAND_BOUNDARY = String.raw`(?=\s\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b)|$)`;
+const QUICK_ADD_INLINE_CONTROL_BOUNDARY = String.raw`(?=\s(?:[@#+!%]|\/(?:${QUICK_ADD_FOCUS_COMMAND_PATTERN}|link:|note:|start:|due:|review:|project:|area:|energy:|priority:|estimate:|duration:|inbox\b|next\b|in-progress\b|waiting\b|someday\b|reference\b|done\b|archived\b))|$)`;
 const SIMPLE_TASK_TOKEN_RE = /[@#][\p{L}\p{N}_-]+/gu;
 const RICH_TASK_TOKEN_RE = new RegExp(
     String.raw`(?:^|\s)([@#](?![\s\p{L}\p{N}_-])[^@#+/!%]+?)${QUICK_ADD_INLINE_CONTROL_BOUNDARY}`,
@@ -974,6 +979,19 @@ export function parseQuickAdd(
         }
     }
 
+    let timeEstimate: Task['timeEstimate'];
+    let hasInvalidEstimateCommand = false;
+    // Feature off: no parse, no strip, as with `/priority:`.
+    if (options.parseTimeEstimate !== false) working = working.replace(/(?:^|\s)\/(?:estimate|duration):([^\s]*)/gi, (raw, value: string) => {
+        const minutes = parseTimeEstimateInput(restoreEscapes(value));
+        if (minutes === null) {
+            hasInvalidEstimateCommand = true;
+            return raw;
+        }
+        timeEstimate = minutesToTimeEstimate(minutes);
+        return '';
+    });
+
     let energyLevel: TaskEnergyLevel | undefined;
     const energyMatch = working.match(/(?:^|\s)\/energy:([^\s/]+)/i);
     if (energyMatch) {
@@ -1151,7 +1169,8 @@ export function parseQuickAdd(
     // which is why preserve mode still hands back a titleWithoutDate that keeps
     // the prose intact.
     const title = restoreEscapes(working.replace(/\s{2,}/g, ' ').trim());
-    const rawDetectedDate = dueDate || hadExplicitDueCommand || options.naturalLanguageDates === false
+    // Invalid estimate text stays literal, including words such as "tomorrow".
+    const rawDetectedDate = dueDate || hadExplicitDueCommand || hasInvalidEstimateCommand || options.naturalLanguageDates === false
         ? undefined
         : detectTrailingDate(title, now);
     const detectedDate = rawDetectedDate && preserveText
@@ -1171,6 +1190,7 @@ export function parseQuickAdd(
     if (areaId) props.areaId = areaId;
     if (energyLevel) props.energyLevel = energyLevel;
     if (priority) props.priority = priority;
+    if (timeEstimate) props.timeEstimate = timeEstimate;
     if (assignedTo) props.assignedTo = assignedTo;
     if (focusToday) props.isFocusedToday = true;
 
@@ -1190,12 +1210,14 @@ export function parseQuickAdd(
  * in all 18 locales (only the `<level>` placeholder and the separator are
  * translated), so one pattern covers every language, and a locale that ever
  * reworded the prefix simply keeps its full sentence rather than breaking.
- * The parser still accepts the token — only the advertisement goes away, in
- * line with the rest of the Priorities gating.
+ * `/estimate:45m` goes the same way while Time estimates is off (#1358).
  */
 const QUICK_ADD_PRIORITY_HELP_TOKEN = /\/priority:<[^>]*>(?:\s*[,،、]\s*|\s+)?/u;
+const QUICK_ADD_ESTIMATE_HELP_TOKEN = /\/estimate:45m(?:\s*[,،、]\s*|\s+)?/u;
 
-export function formatQuickAddHelp(help: string, flags: { priorities: boolean }): string {
-    if (flags.priorities) return help;
-    return help.replace(QUICK_ADD_PRIORITY_HELP_TOKEN, '');
+export function formatQuickAddHelp(help: string, flags: { priorities: boolean; timeEstimates: boolean }): string {
+    let text = help;
+    if (!flags.priorities) text = text.replace(QUICK_ADD_PRIORITY_HELP_TOKEN, '');
+    if (flags.timeEstimates === false) text = text.replace(QUICK_ADD_ESTIMATE_HELP_TOKEN, '');
+    return text;
 }

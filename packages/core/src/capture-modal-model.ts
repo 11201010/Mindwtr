@@ -625,7 +625,7 @@ export function buildCaptureModalView(draft: CaptureModalDraft, context: {
         hideKeyboard: tFallback(t, 'common.hideKeyboard', 'Hide keyboard'),
         help: {
             toggle: '?',
-            text: draft.showHelp ? formatQuickAddHelp(t('quickAdd.help'), { priorities: flags.priorities }) : null,
+            text: draft.showHelp ? formatQuickAddHelp(t('quickAdd.help'), flags) : null,
             edit: { type: 'toggleHelp' },
         },
         input: { value: draft.text, placeholder: t('quickAdd.example') },

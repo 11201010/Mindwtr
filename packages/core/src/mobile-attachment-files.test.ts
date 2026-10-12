@@ -159,6 +159,56 @@ describe('mobile attachment files: storage home and safe writes', () => {
     await expect(files.persistAttachmentLocallyDetailed(result.attachment)).resolves.toMatchObject({ status: 'already-local' });
   });
 
+  // R-8: the picked file's name is the user's text (#854). Copy-fallback lines name the
+  // source by shape only, and fs error text loses the paths it quotes.
+  it('keeps the picked file name out of every copy-fallback log line', async () => {
+    const source = 'file:///storage/emulated/0/Download/Secret%20Plan%20Q3.pdf';
+    const decoded = '/storage/emulated/0/Download/Secret Plan Q3.pdf';
+    const run = async (arrange: (memory: ReturnType<typeof createMemoryFileSystem>) => void) => {
+      const { files, memory, lines } = setup();
+      memory.put(source, bytes(7, 8));
+      arrange(memory);
+      const result = await files.persistAttachmentLocallyDetailed(attachment({ uri: source, localStatus: undefined }));
+      expect(result.status).toBe('copied');
+      expect(memory.read(`${MANAGED}att-1.txt`)).toEqual(bytes(7, 8));
+      return lines;
+    };
+
+    const tempCopyFailed = await run((memory) => {
+      memory.fail('copy', new Error(`Unable to copy '${source}': java.io.FileNotFoundException: ${decoded} (Permission denied)`));
+    });
+    const directCopyFailed = await run((memory) => {
+      memory.fail('move', new Error(`Unable to move ${CACHE}x to ${MANAGED}att-1.txt`));
+      memory.fail('copy', new Error(`open failed: EACCES ${decoded} (Permission denied)`), `${source} -> ${MANAGED}att-1.txt`);
+    });
+
+    for (const lines of [tempCopyFailed, directCopyFailed]) {
+      expect(lines.some((line) => line.message.includes('falling back to byte write'))).toBe(true);
+      const logged = JSON.stringify(lines);
+      expect(logged).not.toContain('Secret');
+      expect(logged).not.toContain('Download');
+      expect(logged).not.toContain('emulated');
+    }
+    expect(tempCopyFailed.find((line) => line.message === 'Attachment byte fallback copied file')?.extra)
+      .toEqual({ sourceUri: 'file:external.pdf', targetUri: 'file:managed.txt' });
+  });
+
+  // C1-c: a provider error can name a path this code never saw, and a file name may hold
+  // spaces. Nothing after an unknown path may reach the log.
+  it('drops the whole unknown path from a provider copy error', async () => {
+    const source = 'content://com.android.providers.downloads.documents/document/42';
+    const { files, memory, lines } = setup();
+    memory.put(source, bytes(7, 8));
+    memory.fail('copy', new Error("Unable to copy '/storage/emulated/0/Download/Secret Plan Q3.pdf': open failed: EACCES (Permission denied)"));
+    const result = await files.persistAttachmentLocallyDetailed(attachment({ uri: source, localStatus: undefined }));
+    expect(result.status).toBe('copied');
+    const logged = JSON.stringify(lines);
+    expect(logged).toContain('falling back to byte write');
+    expect(logged).not.toContain('Plan');
+    expect(logged).not.toContain('Q3');
+    expect(logged).toContain("Unable to copy [path] (EACCES)");
+  });
+
   it('refuses to persist or delete anything in sandbox mode', async () => {
     const { files, memory } = setup({ sandbox: true });
     memory.put(`${MANAGED}att-1.txt`, bytes(1));

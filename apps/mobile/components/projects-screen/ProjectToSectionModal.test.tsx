@@ -8,13 +8,17 @@ import { ProjectToSectionModal } from './ProjectToSectionModal';
 const mocks = vi.hoisted(() => {
     const preview = { ok: true, sourceTitle: 'Source', destinationTitle: 'Destination', defaultTitle: 'Source', taskCount: 2, completedCount: 1, archivedCount: 0, colorWillBeLost: true };
     const command = { sourceProjectId: 'source', destinationProjectId: 'dest', section: { title: 'Milestones' }, source: { before: { supportNotes: 'Notes' } }, destination: { id: 'dest', title: 'Destination' }, preview };
-    return { preview, command, convert: vi.fn(), prepare: vi.fn(() => ({ ok: true, preview, command })), previewCall: vi.fn(() => preview) };
+    const previewer = vi.fn(() => preview);
+    const rows = { _allProjects: [], _allSections: [], _allTasks: [] };
+    return { preview, command, rows, convert: vi.fn(), prepare: vi.fn(() => ({ ok: true, preview, command })), previewCall: vi.fn(() => preview),
+        createPreviewer: vi.fn(() => previewer) };
 });
 
 vi.mock('@mindwtr/core', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@mindwtr/core')>();
     return { ...actual, previewProjectToSection: mocks.previewCall, prepareProjectToSection: mocks.prepare,
-        useTaskStore: { getState: () => ({ areas: [], convertProjectToSection: mocks.convert }) } };
+        createProjectToSectionPreviewer: mocks.createPreviewer,
+        useTaskStore: { getState: () => ({ areas: [], convertProjectToSection: mocks.convert, ...mocks.rows }) } };
 });
 vi.mock('../../hooks/use-theme-colors', () => ({ useThemeColors: () => ({ cardBg: '#fff', border: '#ddd', text: '#111', secondaryText: '#555', tint: '#00f', inputBg: '#fff', danger: '#f00' }) }));
 vi.mock('../../contexts/language-context', () => ({ useLanguage: () => ({ t: (key: string) => key === 'common.cancel' ? 'Cancel' : key }) }));
@@ -25,6 +29,19 @@ const button = (tree: ReturnType<typeof create>, label: string) => tree.root.fin
 const text = (tree: ReturnType<typeof create>) => tree.root.findAllByType(Text).map((item) => item.props.children).filter((value) => typeof value === 'string').join(' ');
 
 describe('ProjectToSectionModal', () => {
+    it('does not rebuild the destination list while the section name is typed', () => {
+        let tree!: ReturnType<typeof create>;
+        act(() => { tree = create(<ProjectToSectionModal visible source={source} projects={[source, destination]} onClose={vi.fn()} onSuccess={vi.fn()} />); });
+        act(() => tree.root.findAllByType(TouchableOpacity).find((item) => item.props.accessibilityRole === 'radio' && item.props.children?.props?.children === 'Destination')?.props.onPress());
+        const builds = mocks.createPreviewer.mock.calls.length;
+        const previews = mocks.previewCall.mock.calls.length;
+        expect(builds).toBeGreaterThan(0);
+        for (const value of ['M', 'Mi', 'Mil', 'Mile']) act(() => tree.root.findByType(TextInput).props.onChangeText(value));
+        expect(mocks.createPreviewer.mock.calls.length).toBe(builds);
+        expect(mocks.previewCall.mock.calls.length).toBe(previews);
+        expect(button(tree, 'Next').props.disabled).toBe(false);
+    });
+
     it('keeps the confirmed command through an in-memory source removal and failed save', async () => {
         mocks.convert.mockReset();
         mocks.convert.mockResolvedValueOnce({ success: false, reason: 'save-failed' });

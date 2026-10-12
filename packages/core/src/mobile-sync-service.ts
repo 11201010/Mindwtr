@@ -13,13 +13,15 @@ import { SYNC_ENCRYPTION_LOG_EVENTS, buildSyncEncryptionActivationExtra, buildSy
 import { buildSyncLocationScope, isSyncEncryptionPartlyEncryptedError, markRemoteEncryptionDiscovered, SyncEncryptionPartlyEncryptedError, markRemotePlaintextDiscovered, restoreVerifiedRemoteEncryption, syncEncryptedArtifactName, SyncEncryptionRemoteConflictError, SyncEncryptionRemotePlaintextError, SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTerminalError, SyncEncryptionTransitionIncompleteError, type SyncEncryptionState } from './sync-encryption';
 import { SyncEncryptionNoKeyError, SyncEncryptionStateUnavailableError, type SyncEncryptionStateStore } from './sync-encryption-local-state';
 import type { SyncCryptoPrimitives, SyncKeyMaterial } from './sync-crypto';
+import type { SyncEncryptionService } from './sync-encryption-service';
 import { acquireSyncRemoteMutationFence, SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS } from './sync-remote-fence';
 import { createDropboxSyncRemoteMutationFencePort, createWebdavSyncRemoteMutationFencePort, webdavMutationFenceUrl } from './sync-remote-fence-providers';
 import { clearIdleSyncCycleSnapshot, runSharedSyncCycle } from './sync-run';
-import { SyncRemoteWriteConflict, type SyncEncryptionPosture, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage } from './sync-run-ports';
+import { SyncRemoteWriteConflict, type SyncEncryptionPosture, type SyncFollowUpReason, type SyncRunDiagnosticEvent, type SyncRunNotifier, type SyncRunPlatformHooks, type SyncRunResult, type SyncRunStorage } from './sync-run-ports';
 import { createSyncBackendIO, type FileSyncReadResult, type SyncBackendContext, type SyncTransport } from './sync-backend-io';
 import type { SyncBackendIO } from './sync-run-ports';
 import { createSyncOrchestrator } from './sync-orchestrator';
+import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
 import { runSerializedSyncDocumentOperation } from './data-transfer-transaction';
 import { isRetryableError, isRetryableWebdavReadError, isWebdavInvalidJsonError, withRetry } from './retry-utils';
 import { cloudGetJson, cloudHeadJson, cloudPutJson } from './cloud';
@@ -28,7 +30,7 @@ import { deleteDropboxFileVersioned, downloadDropboxAppData, DropboxFileNotFound
 import { hasPendingSyncSideEffects, injectExternalCalendars as injectExternalCalendarsForSync, normalizeCloudUrl, normalizeWebdavUrl, persistExternalCalendars as persistExternalCalendarsForSync } from './sync-helpers';
 import { buildFastSyncScope, parseFastSyncState, serializeFastSyncState, type FastSyncState } from './sync-fast-sync';
 import { CLOUD_PROVIDER_DROPBOX, CLOUD_PROVIDER_SELF_HOSTED, createAbortableFetch, getInMemoryAppDataSnapshot, normalizeCloudProvider as normalizeCoreCloudProvider, type CloudProvider } from './sync-client-helpers';
-import { buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
+import { buildSyncPayloadSurfaceTraceExtra, buildSyncPayloadTraceExtra, isSyncPayloadTraceEnabled, SYNC_TRACE_EVENT_MESSAGES } from './sync-payload-trace';
 import { isLikelyOfflineSyncError, isRemoteSyncBackend, SYNC_FILE_NAME, SyncFileLockUnavailableError, type SyncBackend } from './sync-service-utils';
 import { summarizeTaskLifecycleCounts } from './task-utils';
 import { decodeUriSafe } from './async-utils';
@@ -36,6 +38,7 @@ import { flushPendingSave, useTaskStore } from './store';
 import { isSandboxMode, isWorkspaceTransitionActive } from './sandbox';
 import { performSyncCycle } from './sync';
 import { isSecretConfigKey } from './sync-secret-storage';
+import { traceSectionAsync } from './perf-trace';
 import { redactSyncText } from './sync-settings-model';
 import { createWebdavSyncRateLimitController } from './sync-rate-limit';
 import type { WebdavCapabilityProofStore } from './webdav-capability-proof';
@@ -46,6 +49,7 @@ import {
   CLOUD_TOKEN_KEY,
   CLOUD_URL_KEY,
   DROPBOX_LAST_REV_KEY,
+  FAST_SYNC_STATE_KEY,
   SYNC_BACKEND_KEY,
   SYNC_PATH_BOOKMARK_KEY,
   SYNC_PATH_KEY,
@@ -83,7 +87,6 @@ const WEBDAV_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 30
 const WEBDAV_READ_RETRY_OPTIONS = { ...WEBDAV_RETRY_OPTIONS, shouldRetry: isRetryableWebdavReadError };
 const DROPBOX_RETRY_OPTIONS = { maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 8000 };
 const SYNC_CONFIG_CACHE_TTL_MS = 30_000;
-const FAST_SYNC_STATE_KEY = '@mindwtr_fast_sync_state_v1';
 const LOCAL_SYNC_STATUS_KEY = '@mindwtr_local_sync_status_v1';
 
 type LocalSyncStatus = Pick<AppData['settings'], 'lastSyncAt' | 'lastSyncStatus' | 'lastSyncError' | 'lastSyncStats' | 'lastSyncHistory'>;
@@ -372,8 +375,8 @@ export type MobileSyncEncryptionPort = Pick<
 > & {
   /** Whether the location holds ciphertext beside plaintext (core's encryption service probeSyncLocationCiphertext,
    *  sampled). Asked before a WebDAV or Dropbox attachment pass with no key; absent on a host without the service. */
-  /** [target] names the cycle's own WebDAV folder (an activation's candidate is not the stored one); none reads the stored. */
-  probeLocationCiphertext?: (target?: { webdav?: MobileWebDavSyncConfig }) => Promise<'plaintext' | 'encrypted' | 'mixed'>;
+  /** [target] names the cycle's own WebDAV or Dropbox location; none reads the stored one. */
+  probeLocationCiphertext?: (target?: Parameters<SyncEncryptionService['probeSyncLocationCiphertext']>[0]) => Promise<'plaintext' | 'encrypted' | 'mixed'>;
 };
 
 /** Core functions and the store, called through here so a host's tests can replace them the
@@ -439,6 +442,8 @@ const CLOUDKIT_UNAVAILABLE: MobileSyncCloudKitPort = {
 };
 
 export type MobileSyncServiceHost<Lease> = {
+  /** Defaults to true. False leaves any later cycle to a fresh caller-owned invocation. */
+  allowQueuedFollowUp?: boolean;
   /** The device key-value store (React Native: AsyncStorage). */
   storage: SyncKeyValueStoragePort;
   /** Reads a secret sync key (`isSecretConfigKey`) from the keystore. */
@@ -475,6 +480,9 @@ export type MobileSyncServiceHost<Lease> = {
 };
 
 export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease>) => {
+  const allowQueuedFollowUp = host.allowQueuedFollowUp !== false;
+  // Only a new host/service after native journal recovery may resume sync.
+  let fatalCleanupError: NativeAttachmentCleanupUnconfirmedError | null = null;
   const core: MobileSyncCoreFunctions = { ...CORE_FUNCTIONS, ...host.core };
   const cloudKit = host.cloudKit ?? CLOUDKIT_UNAVAILABLE;
   const syncConfigCache = new Map<string, { value: string | null; readAt: number }>();
@@ -542,6 +550,32 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
 
   const logSyncInfo = (message: string, extra?: Record<string, string>) => {
     void log.info(message, { scope: 'sync', extra });
+  };
+
+  const followUpReceipts = new Set<string>();
+  let previousCycleRequestedContribution = false;
+  let contributionComparisonCaptured = false;
+  let activeFollowUpContext: { backend: SyncBackend; step: string } | null = null;
+  const logFollowUpDecision = (
+    reason: SyncFollowUpReason | 'lifecycle' | 'busy-request',
+    backend: string,
+    step: string,
+    request: Pick<MobileSyncRequest, 'manual' | 'activationProbe'>,
+    suppressed = !allowQueuedFollowUp,
+    extra: Record<string, string> = {},
+  ): void => {
+    try {
+      if (core.isSandboxMode() && !isSyncPayloadTraceEnabled(core.useTaskStore.getState().settings)) return;
+      const requestClass = request.activationProbe ? 'probe' : request.manual ? 'manual' : 'auto';
+      const receipt = `${reason}:${requestClass}:${extra.comparison ?? ''}`;
+      if (followUpReceipts.has(receipt)) return;
+      followUpReceipts.add(receipt);
+      void Promise.resolve(log.info('Mobile sync follow-up decision', {
+        scope: 'sync', force: true,
+        extra: { releaseCheck: 'v1.3.5/mobile-sync-follow-up', reason, backend, step, requestClass,
+          outcome: suppressed ? 'suppressed' : 'requested', ...extra },
+      })).catch(() => {});
+    } catch { /* Diagnostics must not change queue decisions. */ }
   };
 
   const resolveCloudProvider = (value: string | null): CloudProvider => (
@@ -674,17 +708,19 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   };
 
   const waitForMobileSyncIdle = async (): Promise<void> => {
+    if (fatalCleanupError) throw fatalCleanupError;
     if (core.isSandboxMode()) return;
     const isDrained = () => {
       const state = mobileSyncOrchestrator.getState();
       return !state.inFlight && !state.queued;
     };
     if (isDrained()) return;
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const onDrained = () => {
         if (!isDrained()) return;
         mobileSyncDrainListeners.delete(onDrained);
-        resolve();
+        if (fatalCleanupError) reject(fatalCleanupError);
+        else resolve();
       };
       mobileSyncDrainListeners.add(onDrained);
       onDrained();
@@ -698,10 +734,12 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   };
 
   const readStoredConfigValue = async (key: string): Promise<string | null> => {
+    if (fatalCleanupError) throw fatalCleanupError;
     return isSecretConfigKey(key) ? host.getSecureConfigValue(key) : host.storage.getItem(key);
   };
 
   const readConfigValue = async (key: string, useCache = true): Promise<string | null> => {
+    if (fatalCleanupError) throw fatalCleanupError;
     if (!useCache) {
       return sanitizeConfigValue(await readStoredConfigValue(key));
     }
@@ -769,7 +807,20 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   const getSupportedBackend = (rawBackend: string | null): SyncBackend =>
     coerceSupportedBackend(resolveBackend(rawBackend), cloudKit.isAvailable());
 
+  /** The backend the user selected, before this host's capability check: a saved CloudKit choice stays
+   *  cloudkit when the bridge is missing. Archive retention waits for a sync while any backend is selected. */
+  async function getMobileSelectedSyncBackend(): Promise<SyncBackend> {
+    if (fatalCleanupError) throw fatalCleanupError;
+    if (core.isSandboxMode()) return 'off';
+    const raw = (await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null;
+    const backend = resolveBackend(raw);
+    // A stored value that is neither empty nor Off but resolves to Off is unreadable, not a choice of Off.
+    if (backend === 'off' && raw && raw !== 'off') throw new Error('Unknown sync backend selection');
+    return backend;
+  }
+
   async function getMobileSyncConfigurationStatus(): Promise<{ backend: SyncBackend; configured: boolean; cloudProvider?: CloudProvider }> {
+    if (fatalCleanupError) throw fatalCleanupError;
     if (core.isSandboxMode()) return { backend: 'off', configured: false };
     const rawBackend = (await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null;
     const backend: SyncBackend = getSupportedBackend(rawBackend);
@@ -958,6 +1009,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
 
     async run(): Promise<MobileSyncResult> {
       const backend = this.backend;
+      activeFollowUpContext = { backend, step: 'setup' };
       logSyncInfo('Sync start', { backend });
       logSyncInfo('Sync diagnostic start', { backend });
       let result: MobileSyncResult;
@@ -1004,8 +1056,16 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
         });
         result = this.activationProof ? { ...cycleResult, activationProof: this.activationProof } : cycleResult;
         await this.logActivationOutcome();
+      } catch (error) {
+        if (error instanceof NativeAttachmentCleanupUnconfirmedError) {
+          fatalCleanupError = error;
+          mobileSyncOrchestrator.clearFollowUp();
+        }
+        throw error;
       } finally {
+        previousCycleRequestedContribution = this.requestedServerContribution;
         fileSyncLockCleanupDeferred = await this.releaseResources();
+        activeFollowUpContext = null;
       }
       return result.success && fileSyncLockCleanupDeferred
         ? { ...result, fileSyncLockDeferred: 'cleanup' }
@@ -1031,6 +1091,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
     }
 
     private queueFollowUp(): void {
+      if (!allowQueuedFollowUp) return;
       this.requestFollowUp({
         syncPathOverride: this.syncPathOverride,
         manual: this.manual,
@@ -1045,6 +1106,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       delayMs: number,
       fileSyncLockBusyRetryAttempt = 0,
     ): void {
+      if (!allowQueuedFollowUp) return;
       this.requestFollowUpAfter(delayMs, {
         syncPathOverride: this.syncPathOverride,
         manual: this.manual,
@@ -1356,6 +1418,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       return {
         setStep: (step) => {
           this.lastStep = step;
+          if (activeFollowUpContext) activeFollowUpContext.step = step;
           const nowMs = Date.now();
           const sinceLastStepMs = lastStepStartedAtMs > 0 ? nowMs - lastStepStartedAtMs : 0;
           lastStepStartedAtMs = nowMs;
@@ -1398,8 +1461,28 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       };
     }
 
+    private requestedServerContribution = false;
+
     private handleDiagnosticEvent(event: SyncRunDiagnosticEvent): void {
       const backend = this.backend;
+      if (event.event === 'follow-up-requested' && event.followUpReason) {
+        const extra: Record<string, string> = {};
+        if (event.followUpReason === 'server-contribution') {
+          this.requestedServerContribution = true;
+          if (allowQueuedFollowUp && previousCycleRequestedContribution && !contributionComparisonCaptured && event.data) {
+            contributionComparisonCaptured = true;
+            // One comparison per service, only after a repeated contribution; no IDs, values or paths.
+            try {
+              Object.assign(extra, buildSyncPayloadSurfaceTraceExtra(event.data, 'outgoing'));
+              if (event.previousData) Object.assign(extra, buildSyncPayloadSurfaceTraceExtra(event.previousData, 'priorRemote'));
+              extra.comparison = event.previousData ? 'captured' : 'prior-remote-unavailable';
+            } catch { extra.comparison = 'unavailable'; }
+          }
+        }
+        logFollowUpDecision(event.followUpReason, backend, this.lastStep,
+          { manual: this.manual, activationProbe: this.activationProbe }, !allowQueuedFollowUp, extra);
+        return;
+      }
       if (event.event === 'flush') {
         this.logPhaseDiagnostic('flush');
         return;
@@ -1488,8 +1571,18 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       if (!probe || (this.backend !== 'webdav' && !(this.backend === 'cloud' && this.cloudProvider === 'dropbox'))) return;
       // The cycle's own folder: an activation probe's candidate is not the stored location yet.
       if (this.locationCiphertext === null) {
-        this.locationCiphertext = await probe(this.backend === 'webdav' && this.webdavConfig ? { webdav: this.webdavConfig } : undefined);
-        if (this.configOverride) {
+        this.locationCiphertext = await probe(this.backend === 'webdav' ? (this.webdavConfig ? { webdav: this.webdavConfig } : undefined) : {
+          dropbox: {
+            clientId: this.dropboxClientId,
+            runAuthorized: (operation) => this.runDropboxOperation(operation),
+            fetcher: this.fetchWithAbort,
+          },
+        });
+        if (this.configOverride && this.backend === 'cloud' && this.cloudProvider === CLOUD_PROVIDER_DROPBOX) {
+          void log.warn('Dropbox candidate location ciphertext checked', { scope: 'sync', extra: {
+            releaseCheck: 'v1.3.5/dropbox-candidate-encryption-probe', backend: this.backend, found: this.locationCiphertext,
+          } });
+        } else if (this.configOverride) {
           logSyncInfo('Sync candidate location ciphertext checked', {
             releaseCheck: 'v1.3.5/candidate-ciphertext-probe', backend: this.backend, found: this.locationCiphertext,
           });
@@ -1842,6 +1935,8 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
               aborted: 'lifecycle',
             });
             this.queueFollowUp();
+            logFollowUpDecision('lifecycle', this.backend, context.step,
+              { manual: this.manual, activationProbe: this.activationProbe });
             return { success: true };
           }
           return null;
@@ -1907,7 +2002,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
           // still reaches the store through persistSyncStatus.
           const refreshStartedAt = Date.now();
           if (!info.localWriteSkipped) {
-            await core.useTaskStore.getState().fetchData({ silent: true, preloadedData: mergedData });
+            await traceSectionAsync('sync:storeApply', () => core.useTaskStore.getState().fetchData({ silent: true, preloadedData: mergedData }));
             // The refresh alone never publishes this cycle's status: the store keeps its
             // previous settings object whenever the incoming one differs only in the
             // volatile lastSync* keys (reuseSettingsIfEquivalent, #766), so the Sync
@@ -2406,11 +2501,13 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       if (this.fileSyncLease) {
         const lease = this.fileSyncLease;
         this.fileSyncLease = null;
-        try {
-          await host.fileSync.releaseLease(lease);
-        } catch (error) {
-          fileSyncLockCleanupDeferred = true;
-          logSyncWarning('Failed to release File Sync lease', error);
+        if (!fatalCleanupError) {
+          try {
+            await host.fileSync.releaseLease(lease);
+          } catch (error) {
+            fileSyncLockCleanupDeferred = true;
+            logSyncWarning('Failed to release File Sync lease', error);
+          }
         }
       }
       if (activeMobileSyncAbortController === this.requestAbortController) {
@@ -2420,7 +2517,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       try {
         this.networkSubscription?.remove?.();
       } catch (error) {
-        logSyncWarning('Failed to unsubscribe network listener after sync', error);
+        if (!fatalCleanupError) logSyncWarning('Failed to unsubscribe network listener after sync', error);
       }
       return fileSyncLockCleanupDeferred;
     }
@@ -2440,6 +2537,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       return delayMs;
     },
     runCycle: async (request, { requestFollowUp, requestFollowUpAfter }) => {
+      if (fatalCleanupError) throw fatalCleanupError;
       const rawBackend = request?.configOverride?.backend
         ?? (await getCachedConfigValue(SYNC_BACKEND_KEY))?.trim()
         ?? null;
@@ -2461,10 +2559,11 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       }
     },
     onQueuedRunError: (error) => {
+      if (error instanceof NativeAttachmentCleanupUnconfirmedError) return;
       logSyncWarning('[Mobile] Queued sync crashed', error);
     },
     onDrained: () => {
-      setMobileSyncActivityState('idle');
+      if (!fatalCleanupError) setMobileSyncActivityState('idle');
       notifyMobileSyncDrainListeners();
     },
   });
@@ -2480,13 +2579,18 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       configOverride?: MobileSyncConfigOverride;
     }
   ): Promise<MobileSyncResult> {
+    if (fatalCleanupError) throw fatalCleanupError;
     if (core.isSandboxMode() || core.isWorkspaceTransitionActive()) {
       return { success: true, skipped: 'disabled' };
     }
     const wasInFlight = mobileSyncOrchestrator.getState().inFlight;
-    if (wasInFlight && options?.activationProbe) {
-      // The caller that owns this session-only config must observe its proof.
-      // Never leave transient credentials queued after returning a requeue result.
+    if (wasInFlight) {
+      logFollowUpDecision('busy-request', activeFollowUpContext?.backend ?? 'unknown',
+        activeFollowUpContext?.step ?? 'setup', options ?? {}, !allowQueuedFollowUp || options?.activationProbe === true);
+    }
+    if (wasInFlight && (!allowQueuedFollowUp || options?.activationProbe)) {
+      // A caller-owned invocation cannot queue work beyond its current owner.
+      // A session-only activation config must also observe its own proof.
       return { success: true, skipped: 'requeued' };
     }
     const result = mobileSyncOrchestrator.run({
@@ -2500,7 +2604,11 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       // A queued orchestrator call normally receives the active run's promise.
       // That result did not exercise these pending settings, so surface a requeue
       // instead of letting the settings UI treat it as proof and persist them.
-      void result.catch((error) => logSyncWarning('Active sync failed while a settings proof was queued', error));
+      void result.catch((error) => {
+        if (!(error instanceof NativeAttachmentCleanupUnconfirmedError)) {
+          logSyncWarning('Active sync failed while a settings proof was queued', error);
+        }
+      });
       return { success: true, skipped: 'requeued' };
     }
     return result;
@@ -2528,6 +2636,11 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
       webdavSyncRateLimitController.reset();
       activeMobileSyncAbortController = null;
       activeMobileSyncAbortReason = null;
+      fatalCleanupError = null;
+      followUpReceipts.clear();
+      previousCycleRequestedContribution = false;
+      contributionComparisonCaptured = false;
+      activeFollowUpContext = null;
     },
     getWebdavSyncBlockedUntil() {
       return webdavSyncRateLimitController.getBlockedUntil();
@@ -2544,6 +2657,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   return {
     performMobileSync,
     getMobileSyncConfigurationStatus,
+    getMobileSelectedSyncBackend,
     getMobileSyncActivityState,
     subscribeMobileSyncActivityState,
     waitForMobileSyncIdle,

@@ -174,6 +174,13 @@ describe('resolveProcessInboxWorkflowEvent', () => {
 });
 
 describe('mergeParsedProcessInboxFields token parsing', () => {
+    it('carries the parsed estimate while keeping the selected estimate in charge (#1358)', () => {
+        const parsed = parseProcessInboxTitleInput('Write report /estimate:45m');
+        expect(parsed.title).toBe('Write report');
+        expect(mergeParsedProcessInboxFields({}, parsed.props).timeEstimate).toBe('custom:45');
+        expect(mergeParsedProcessInboxFields({ timeEstimate: '2hr' }, parsed.props).timeEstimate).toBe('2hr');
+    });
+
     it('unions parsed contexts and tags with the chips the user already toggled', () => {
         const merged = mergeParsedProcessInboxFields(
             { contexts: ['@office'], tags: ['#home'] },

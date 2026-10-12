@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { getPomodoroLocalDayKey, useTaskStore, type Task } from '@mindwtr/core';
+import { getPomodoroLocalDayKey, loadTranslations, useTaskStore, type Task } from '@mindwtr/core';
 import { LanguageProvider } from '../../contexts/language-context';
+import * as languageContext from '../../contexts/language-context';
 import { useUiStore } from '../../store/ui-store';
 import { DESKTOP_POMODORO_SESSION_STORAGE_KEY, PomodoroPanel } from './PomodoroPanel';
 const nowIso = '2026-07-01T12:00:00.000Z';
@@ -37,6 +38,26 @@ describe('PomodoroPanel desktop persistence', () => {
             error: null,
             highlightTaskId: null,
         });
+    });
+
+    it('localizes both phases and switch directions with the shared Chinese labels (#1367)', async () => {
+        const translations = await loadTranslations('zh-Hant');
+        const language = vi.spyOn(languageContext, 'useLanguage').mockReturnValue({
+            language: 'zh-Hant', setLanguage: vi.fn(), t: (key) => translations[key] ?? key,
+        });
+        try {
+            renderPanel();
+            expect(screen.getByText('專注')).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('button', { name: '切換到休息' }));
+            expect(screen.getByText('休息')).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('button', { name: '收起計時器' }));
+            expect(screen.getByText('休息')).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('button', { name: '展開計時器' }));
+            fireEvent.click(screen.getByRole('button', { name: '切換到專注' }));
+            expect(screen.getByText('專注')).toBeInTheDocument();
+        } finally {
+            language.mockRestore();
+        }
     });
 
     it('restores device-local timer state and task history from local storage', () => {

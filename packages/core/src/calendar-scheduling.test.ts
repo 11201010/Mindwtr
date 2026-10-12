@@ -553,3 +553,13 @@ describe('buildCalendarPushEventFields (#743)', () => {
         expect(result.notes).toContain('Body');
     });
 });
+
+
+it('keeps the calendar selected duration over a parsed estimate (#1358)', () => {
+    const draft = buildCalendarQuickAddTaskDraft('Write report /estimate:45m', {
+        durationMinutes: 120,
+        start: new Date('2026-10-11T14:00:00.000Z'),
+    });
+    expect(draft.title).toBe('Write report');
+    expect(draft.props.timeEstimate).toBe('2hr');
+});

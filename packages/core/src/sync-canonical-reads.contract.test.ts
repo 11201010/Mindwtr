@@ -42,7 +42,13 @@ import { createNextRecurringTask } from './recurrence';
 import { toStableSyncJson } from './sync-helpers';
 import { flushPendingSave, resetForTests, setStorageAdapter, useTaskStore } from './store';
 import { createNativeHostContract } from './native-host-contract';
+import { createCalendarSubscriptionSettingsMethods } from './native-host-contract-calendar-subscription-settings';
+import { createCalendarSubscriptionAddMethods } from './native-host-contract-calendar-subscription-add';
+import { buildCalendarSubscriptionSettingsModel } from './native-host-contract-settings-calendar';
+import { prepareChecklistProjectConversion } from './checklist-project-conversion';
 import { readAreaDurableData } from './native-host-contract-area-durable';
+import { projectAvailabilityWritePlan, projectFileAvailabilityWritePlan } from './store-projects/project-actions';
+import { rawReadProjectSnapshot, rawReadRow } from './sqlite-raw-snapshot';
 import { loadNativeRequestReceipts, NativeReceiptSqliteAdapter, resetNativeRequestReceipts, taskRevisionOf } from './native-request-receipts';
 import { openScratchSqlite } from './screen-parity.replay';
 import { createTaskDraft } from './task-draft';
@@ -817,6 +823,12 @@ describe('canonical local reads contract', () => {
         // Requeues the raw saved snapshot owned by commitPreparedAppLock after
         // a failed save; the SQLite recovery test checks its exact contents.
         'retryPreparedAppLockSnapshot',
+        // Exact raw snapshot retry of the notification write covered below;
+        // actual failed-save and foreign-failure ownership are checked in SQLite tests.
+        'retryPreparedNotificationSettingSnapshot',
+        // Exact raw snapshot retry of the calendar subscription write covered below;
+        // failed-save and foreign-failure ownership are checked in real SQLite tests.
+        'retryPreparedCalendarSubscriptionSettingSnapshot',
     ]);
 
     it('leaves a canonical document after every store write action', async () => {
@@ -827,6 +839,10 @@ describe('canonical local reads contract', () => {
         report("| --- | --- | --- | --- | --- |");
 
         const settled = convergeThroughStorage(buildLargeDocument(150));
+        // Store actions run on the real clock: keep the deleted task inside the 90-day tombstone window there,
+        // or the load purge drops it once daysAgo(10) of NOW_ISO is 90 days behind the real date.
+        const recentlyDeleted = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+        settled.tasks = settled.tasks.map((entry) => entry.deletedAt ? { ...entry, deletedAt: recentlyDeleted } : entry);
 
         type MutationControl = {
             resetBaseline: () => void;
@@ -957,6 +973,20 @@ describe('canonical local reads contract', () => {
             if (!converted.success) throw new Error(`Conversion fixture failed: ${converted.reason}`);
             return converted.receipt;
         };
+        const checklistConversion = async () => {
+            const added = await useTaskStore.getState().addTask('Contract checklist source', {
+                status: 'inbox', checklist: [
+                    { id: 'contract-open', title: 'Open item', isCompleted: false },
+                    { id: 'contract-done', title: 'Checked item', isCompleted: true },
+                ],
+            });
+            const source = added.id ? useTaskStore.getState()._tasksById.get(added.id) : null;
+            if (!added.success || !source) throw new Error('Checklist conversion fixture missing');
+            const prepared = prepareChecklistProjectConversion(useTaskStore.getState(), source, 'Contract checklist project');
+            if (!prepared.success) throw new Error(`Checklist conversion fixture blocked: ${prepared.error}`);
+            await flushPendingSave();
+            return prepared.command;
+        };
 
         expect(
             [taskId, deletedTaskId, checklistTaskId, sectionId].every((value) => typeof value === 'string'),
@@ -983,6 +1013,16 @@ describe('canonical local reads contract', () => {
             }))),
             cancelProject: () => call('cancelProject', projectId),
             cancelTask: () => call('cancelTask', taskId),
+            convertChecklistToProject: async (control) => {
+                const command = await checklistConversion();
+                control.resetBaseline();
+                expect(await call('convertChecklistToProject', command)).toMatchObject({ success: true });
+                control.expectPersisted((written) => {
+                    expect(written.tasks.find((entry) => entry.id === command.source.id)).toEqual(command.retired);
+                    expect(written.projects.find((entry) => entry.id === command.project.id)).toEqual(command.project);
+                    for (const task of command.tasks) expect(written.tasks.find((entry) => entry.id === task.id)).toEqual(task);
+                });
+            },
             convertProjectToSection: () => convertedProjectReceipt(),
             commitPreparedAreaCreate: async (control) => {
                 const host = await nativeHost(control);
@@ -1160,6 +1200,94 @@ describe('canonical local reads contract', () => {
                 });
                 expect(nativeValue(await host.commitPreparedAppLock({ request, prepared: planned.prepared })))
                     .toEqual({ changed: true, value: request.value });
+            },
+            commitPreparedCalendarSubscriptionAdd: async (control) => {
+                await useTaskStore.getState().updateSettings({ externalCalendars: [] });
+                const host = await nativeHost(control);
+                const deps = {
+                    readiness: () => {
+                        const ready = host.getDataSettings();
+                        return ready.ok ? { ok: true as const, value: null } : ready;
+                    },
+                    save: async () => { await flushPendingSave(); return { ok: true as const, value: null }; },
+                    storage: () => null,
+                };
+                const metadata = createCalendarSubscriptionSettingsMethods({ ...deps,
+                    model: ({ settings, areas, feeds, revision }) => buildCalendarSubscriptionSettingsModel(feeds, revision,
+                        { areas, theme: settings.theme, t: (key) => key }) });
+                const methods = createCalendarSubscriptionAddMethods(deps);
+                const expected = nativeValue(await metadata.getCalendarSubscriptionOptions({})).expected;
+                const request = { requestId: '5136a7dc-a2ed-4b3a-a3cf-bd0dbd841472',
+                    name: '  ', url: ' https://calendar.example.invalid/new.ics ', defaultName: 'Calendar', expected };
+                const planned = nativeValue(await methods.prepareCalendarSubscriptionAdd(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written).toEqual({ ...before, settings: { ...before.settings,
+                        externalCalendars: [{ id: request.requestId, name: 'Calendar',
+                            url: request.url.trim(), enabled: true }],
+                        syncPreferencesUpdatedAt: { ...before.settings.syncPreferencesUpdatedAt,
+                            externalCalendars: planned.prepared.stamp } } });
+                });
+                expect(nativeValue(await methods.commitPreparedCalendarSubscriptionAdd({ request, prepared: planned.prepared })))
+                    .toEqual({ changed: true, toasts: [], open: null, clearDraft: true });
+            },
+            commitPreparedCalendarSubscriptionSetting: async (control) => {
+                const feed = { id: 'contract-calendar', name: 'Contract calendar',
+                    url: 'https://calendar.example.invalid/calendar.ics', enabled: true,
+                    color: '#2563EB', areaIds: [areaId] };
+                await useTaskStore.getState().updateSettings({ externalCalendars: [feed] });
+                const host = await nativeHost(control);
+                const methods = createCalendarSubscriptionSettingsMethods({
+                    readiness: () => {
+                        const ready = host.getDataSettings();
+                        return ready.ok ? { ok: true, value: null } : ready;
+                    },
+                    save: async () => {
+                        await flushPendingSave();
+                        return { ok: true, value: null };
+                    },
+                    storage: () => null,
+                    model: ({ settings, areas, feeds, revision }) => buildCalendarSubscriptionSettingsModel(feeds, revision,
+                        { areas, theme: settings.theme, t: (key) => key }),
+                });
+                const options = nativeValue(await methods.getCalendarSubscriptionOptions({}));
+                expect(options.expected.source).toBe('canonical');
+                const request = { requestId: '5136a7dc-a2ed-4b3a-a3cf-bd0dbd841470',
+                    edit: { type: 'feed' as const, feedId: feed.id, field: 'enabled' as const,
+                        value: false, revision: options.expected.revision }, expected: options.expected };
+                expect(options.model.items[0].toggle).toEqual(request.edit);
+                const planned = nativeValue(await methods.prepareCalendarSubscriptionSetting(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                const before = nativeValue(await readAreaDurableData(false, true)).authority.snapshot;
+                control.expectPersisted((written) => {
+                    expect(written).toEqual({ ...before, settings: { ...before.settings,
+                        externalCalendars: [{ ...feed, enabled: false }],
+                        syncPreferencesUpdatedAt: { ...before.settings.syncPreferencesUpdatedAt,
+                            externalCalendars: planned.prepared.stamp } } });
+                });
+                expect(nativeValue(await methods.commitPreparedCalendarSubscriptionSetting({ request, prepared: planned.prepared })))
+                    .toEqual({ changed: true, toasts: [], open: null, clearDraft: false });
+            },
+            commitPreparedNotificationSetting: async (control) => {
+                const host = await nativeHost(control);
+                const options = nativeValue(await host.getNotificationSettingsOptions({}));
+                const request = { requestId: '0f5deea3-9ef2-4386-bf43-27a176f98442',
+                    edit: { type: 'notificationsEnabled' as const, value: !options.model.task.master.value },
+                    expected: options.expected.notificationsEnabled };
+                const planned = nativeValue(await host.prepareNotificationSetting(request));
+                expect(planned.kind).toBe('prepared');
+                if (planned.kind !== 'prepared') return;
+                const before = useTaskStore.getState().settings;
+                control.expectPersisted((written) => {
+                    expect(written.settings).toEqual({ ...before, notificationsEnabled: request.edit.value });
+                    expect(written.tasks).toHaveLength(settled.tasks.length);
+                    expect(written.projects).toHaveLength(settled.projects.length);
+                });
+                expect(nativeValue(await host.commitPreparedNotificationSetting({ request, prepared: planned.prepared })))
+                    .toEqual({ type: request.edit.type, value: request.edit.value, changed: true });
             },
             commitPreparedArchivedTaskRestore: async (control) => {
                 const host = await nativeHost(control);
@@ -1656,6 +1784,58 @@ describe('canonical local reads contract', () => {
                 control.resetBaseline();
                 expect(nativeValue(await host.commitPreparedProjectFileAddWrite({ request, prepared: planned.prepared })))
                     .toEqual({ id, attachmentIds: [request.requestId] });
+            },
+            commitPreparedProjectFileAvailability: async (control) => {
+                const id = settled.projects[1].id;
+                const attachment = fileAttachment('5d0f7a1e-3c2b-4e8f-9a61-2b7c4d9e0f13', {
+                    uri: 'file:///old/attachments/5d0f7a1e-3c2b-4e8f-9a61-2b7c4d9e0f13.pdf', localStatus: 'missing',
+                });
+                expect(await call('updateProject', id, { attachments: [attachment] })).toMatchObject({ success: true });
+                await nativeHost(control);
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const row = before.projects.find((entry) => entry.id === id)!;
+                const source = rawReadProjectSnapshot(row)!;
+                const deviceId = before.settings.deviceId ?? null;
+                const planned = projectFileAvailabilityWritePlan(source, [...rawReadRow(row, projectToSqliteRow(row)).row],
+                    attachment.id, 'file:///current/attachments/5d0f7a1e-3c2b-4e8f-9a61-2b7c4d9e0f13.pdf',
+                    deviceId, null, NOW_ISO);
+                if (!planned) throw new Error('Prepared Project file availability must prepare a real write');
+                control.expectPersisted((written) => {
+                    expect(written.projects).toEqual(before.projects.map((entry) => entry.id === id ? planned.after : entry));
+                    expect(written.tasks).toEqual(before.tasks);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitPreparedProjectFileAvailability(planned, durable.authority))
+                    .toEqual({ success: true, id, outcome: 'applied' });
+            },
+            commitSelectedProjectAvailability: async (control) => {
+                const id = settled.projects[1].id;
+                const attachment = fileAttachment('86a0cbe9-4d30-498e-8d82-7721769a8299', {
+                    uri: 'file:///old/attachments/86a0cbe9-4d30-498e-8d82-7721769a8299.pdf', localStatus: 'missing',
+                });
+                expect(await call('updateProject', id, { attachments: [attachment] })).toMatchObject({ success: true });
+                await nativeHost(control);
+                const durable = nativeValue(await readAreaDurableData(false, true));
+                const before = durable.authority.snapshot;
+                const row = before.projects.find((entry) => entry.id === id)!;
+                const source = rawReadProjectSnapshot(row)!;
+                const deviceId = before.settings.deviceId ?? null;
+                const planned = projectAvailabilityWritePlan(source, [...rawReadRow(row, projectToSqliteRow(row)).row],
+                    attachment.id, 'file:///current/attachments/86a0cbe9-4d30-498e-8d82-7721769a8299.pdf',
+                    deviceId, null, NOW_ISO);
+                if (!planned) throw new Error('Selected Project availability must prepare a real write');
+                control.expectPersisted((written) => {
+                    expect(written.projects).toEqual(before.projects.map((entry) => entry.id === id ? planned.after : entry));
+                    expect(written.tasks).toEqual(before.tasks);
+                    expect(written.sections).toEqual(before.sections);
+                    expect(written.settings).toEqual(before.settings);
+                });
+                control.resetBaseline();
+                expect(await useTaskStore.getState().commitSelectedProjectAvailability(planned, durable.authority))
+                    .toEqual({ success: true, id, outcome: 'applied' });
             },
             commitPreparedProjectFileRemoveWrite: async (control) => {
                 const projectId = settled.projects[1].id;
@@ -2160,6 +2340,19 @@ describe('canonical local reads contract', () => {
             duplicateTask: () => call('duplicateTask', taskId),
             moveTask: () => call('moveTask', taskId, 'waiting'),
             promoteTaskToProject: () => call('promoteTaskToProject', taskId),
+            undoChecklistToProject: async (control) => {
+                const command = await checklistConversion();
+                expect(await call('convertChecklistToProject', command)).toMatchObject({ success: true });
+                control.resetBaseline();
+                expect(await call('undoChecklistToProject', command)).toMatchObject({ success: true });
+                control.expectPersisted((written) => {
+                    const source = written.tasks.find((entry) => entry.id === command.source.id);
+                    expect(source?.deletedAt).toBeUndefined();
+                    expect(source?.checklist).toEqual(command.source.checklist);
+                    expect(written.projects.find((entry) => entry.id === command.project.id)?.deletedAt).toBeTruthy();
+                    for (const task of command.tasks) expect(written.tasks.find((entry) => entry.id === task.id)?.deletedAt).toBeTruthy();
+                });
+            },
             undoProjectToSection: async () => call('undoProjectToSection', await convertedProjectReceipt()),
             purgeDeletedProjects: async () => {
                 await call('deleteProject', projectId);
@@ -2211,7 +2404,7 @@ describe('canonical local reads contract', () => {
                     await flushPendingSave();
                     control.resetBaseline();
                     vi.setSystemTime(new Date(first + 2 * 24 * 60 * 60 * 1000));
-                    expect(await call('runArchiveRetention')).toMatchObject({ success: true });
+                    expect(await call('runArchiveRetention', { syncConfigured: false })).toMatchObject({ success: true });
                     control.expectPersisted((written) => {
                         expect(written.tasks.some((entry) => entry.purgedAt)).toBe(true);
                     });
@@ -2251,7 +2444,9 @@ describe('canonical local reads contract', () => {
         const notCanonical: Array<{ action: string; storeFields: string[]; readFields: string[] }> = [];
         for (const action of Object.keys(WRITE_ACTIONS).sort()) {
             const outcome = await runMutation(action, WRITE_ACTIONS[action], settled,
-                action === 'commitPreparedReferenceTasksMove' || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
+                action === 'commitPreparedCalendarSubscriptionSetting' || action === 'commitPreparedCalendarSubscriptionAdd'
+                    || action === 'commitPreparedReferenceTasksMove'
+                    || action === 'commitPreparedReferenceTasksAddTag' || action === 'commitPreparedReferenceTasksRemoveTag');
             if (outcome.storeFields.length > 0 || outcome.readFields.length > 0) {
                 notCanonical.push({ action, ...outcome });
             }

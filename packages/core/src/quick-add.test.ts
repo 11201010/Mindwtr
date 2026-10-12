@@ -1746,3 +1746,79 @@ describe('parseProcessInboxTitleInput', () => {
         expect(parsed.title).toBe('Submit paper');
     });
 });
+
+
+describe('explicit quick-add estimates (#1358)', () => {
+    it.each([
+        ['/estimate:15m', '15min'],
+        ['/estimate:45m', 'custom:45'],
+        ['/estimate:1h30m', 'custom:90'],
+        ['/duration:1h30m', 'custom:90'],
+        ['/ESTIMATE:2h', '2hr'],
+    ])('parses %s without rounding custom estimates', (token, estimate) => {
+        for (const preserveText of [false, true]) {
+            const parsed = parseQuickAdd(`Write report ${token} /next`, undefined, undefined, undefined, { preserveText });
+            expect(parsed.title).toBe('Write report');
+            expect(parsed.props.timeEstimate).toBe(estimate);
+            expect(parsed.props.status).toBe('next');
+        }
+    });
+
+    it.each([
+        ['/estimate:45mx', '/estimate:45m', 'custom:45'],
+        ['/duration:1h30mx', '/duration:1h30m', 'custom:90'],
+    ])('removes only the valid occurrence after an invalid prefix: %s', (invalid, valid, estimate) => {
+        for (const preserveText of [false, true]) {
+            const parsed = parseQuickAdd(`Task ${invalid} ${valid}`, undefined, undefined, undefined, { preserveText });
+            expect(parsed.title).toBe(`Task ${invalid}`);
+            expect(parsed.props.timeEstimate).toBe(estimate);
+        }
+    });
+
+    it.each(['/estimate:', '/estimate:nope', '/duration:later', '/estimate:1h30mx', '/estimate:45m/unknown', String.raw`\/estimate:45m`, '45m', 'takes 1h30m', 'https://example.com/estimate:45m'])
+    ('leaves invalid, escaped and ordinary text visible: %s', (text) => {
+        const parsed = parseQuickAdd(`Write report ${text}`, undefined, undefined, undefined, { naturalLanguageDates: false });
+        expect(parsed.title).toBe(`Write report ${text.replace(/^\\/, '')}`);
+        expect(parsed.props.timeEstimate).toBeUndefined();
+    });
+
+    it.each(['/estimate:tomorrow', '/duration:next week', '/estimate:5m-invalid'])
+    ('keeps invalid duration text out of natural date detection: %s', (token) => {
+        const parsed = parseQuickAdd(`Write report ${token}`, undefined, new Date(2026, 9, 11, 9));
+        expect(parsed.title).toBe(`Write report ${token}`);
+        expect(parsed.props.timeEstimate).toBeUndefined();
+        expect(parsed.detectedDate).toBeUndefined();
+    });
+
+    it('keeps notes and dates separate from an estimate in either order', () => {
+        const now = new Date(2026, 9, 11, 9);
+        for (const input of [
+            'Write report /due:tomorrow /estimate:45m /note:Use draft',
+            'Write report /note:Use draft /duration:1h30m /due:tomorrow',
+        ]) {
+            const parsed = parseQuickAdd(input, undefined, now);
+            expect(parsed.title).toBe('Write report');
+            expect(parsed.props.description).toBe('Use draft');
+            expect(parsed.props.dueDate).toBeTruthy();
+            expect(parsed.props.timeEstimate).toBe(input.includes('45m') ? 'custom:45' : 'custom:90');
+        }
+    });
+
+    it('leaves the estimate syntax in the title while Time estimates is off', () => {
+        const options = buildQuickAddParseOptions({ features: { timeEstimates: false } });
+        expect(options.parseTimeEstimate).toBe(false);
+        for (const token of ['/estimate:45m', '/duration:1h30m']) {
+            const parsed = parseQuickAdd(`Write report ${token} /next`, undefined, undefined, undefined, options);
+            expect(parsed.title).toBe(`Write report ${token}`);
+            expect(parsed.props.timeEstimate).toBeUndefined();
+            expect(parsed.props.status).toBe('next');
+        }
+    });
+
+    it('still parses the estimate syntax while Time estimates is on or unset', () => {
+        expect(buildQuickAddParseOptions({ features: { timeEstimates: true } }).parseTimeEstimate).toBe(true);
+        expect(buildQuickAddParseOptions({}).parseTimeEstimate).toBe(true);
+        const parsed = parseQuickAdd('Write report /estimate:45m', undefined, undefined, undefined, buildQuickAddParseOptions({}));
+        expect(parsed.props.timeEstimate).toBe('custom:45');
+    });
+});

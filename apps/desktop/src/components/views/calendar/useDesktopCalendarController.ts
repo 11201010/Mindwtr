@@ -17,6 +17,7 @@ import {
     getWeekStartsOnIndex,
     findFreeSlotForDay as findCalendarFreeSlotForDay,
     isSlotFreeForDay as isCalendarSlotFreeForDay,
+    isTaskDateCoherent,
     isTaskVisibleInArea,
     isTaskInCalendarHistoryProject,
     isProjectedRecurringTask,
@@ -52,6 +53,7 @@ import { useLanguage } from '../../../contexts/language-context';
 import { useLocalDayKey } from '../../../hooks/useLocalDayKey';
 import { usePerformanceMonitor } from '../../../hooks/usePerformanceMonitor';
 import { reportError } from '../../../lib/report-error';
+import { useUiStore } from '../../../store/ui-store';
 import { getTaskAccentColor as resolveTaskAccentColor } from '../../../lib/task-accent-color';
 import { resolveCalendarLocale } from '../calendar-locale';
 import {
@@ -521,6 +523,17 @@ export function useDesktopCalendarController() {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [selectedDate, composer.taskComposer]);
 
+    // A drop must never leave the start after the due date; the timeline refuses the same edit.
+    const saveDroppedDates = useCallback(async (task: Task, updates: Pick<Task, 'startTime'> | Pick<Task, 'dueDate'>, revealAt: Date) => {
+        if (!isTaskDateCoherent({ startTime: task.startTime, dueDate: task.dueDate, ...updates })) {
+            useUiStore.getState().showToast(t('timeline.dateEditFailed'), 'error');
+            return;
+        }
+        await updateTask(task.id, updates);
+        nav.revealDate(revealAt);
+        feedback.showScheduleError(null);
+    }, [feedback.showScheduleError, nav.revealDate, t, updateTask]);
+
     const updateTaskDateFromDrop = useCallback(async (taskId: string, date: Date, itemKind?: 'scheduled' | 'deadline' | null) => {
         const task = tasks.find((candidate) => candidate.id === taskId);
         if (!task) return;
@@ -529,29 +542,24 @@ export function useDesktopCalendarController() {
             // An all-day start row can also carry a timed due date; the date-only
             // drop fallback must never erase that clock.
             if (hasTimeComponent(task.dueDate) && (itemKind === 'deadline' || !hasTimeComponent(task.startTime))) return;
-            if (itemKind === 'deadline') {
-                await updateTask(task.id, { dueDate: formatDateInputValue(date) });
-            } else if (hasTimeComponent(task.startTime)) {
+            if (itemKind !== 'deadline' && hasTimeComponent(task.startTime)) {
                 const existingStart = task.startTime ? safeParseDate(task.startTime) : null;
-                if (existingStart) {
-                    const nextStart = new Date(date);
-                    nextStart.setHours(
-                        existingStart.getHours(),
-                        existingStart.getMinutes(),
-                        existingStart.getSeconds(),
-                        existingStart.getMilliseconds(),
-                    );
-                    await updateTask(task.id, { startTime: nextStart.toISOString() });
-                }
+                if (!existingStart) return;
+                const nextStart = new Date(date);
+                nextStart.setHours(
+                    existingStart.getHours(),
+                    existingStart.getMinutes(),
+                    existingStart.getSeconds(),
+                    existingStart.getMilliseconds(),
+                );
+                await saveDroppedDates(task, { startTime: nextStart.toISOString() }, date);
             } else {
-                await updateTask(task.id, { dueDate: formatDateInputValue(date) });
+                await saveDroppedDates(task, { dueDate: formatDateInputValue(date) }, date);
             }
-            nav.revealDate(date);
-            feedback.showScheduleError(null);
         } catch (error) {
             reportError('Failed to reschedule task from calendar drop', error);
         }
-    }, [feedback.showScheduleError, nav.revealDate, tasks, updateTask]);
+    }, [saveDroppedDates, tasks]);
 
     const updateTaskStartTimeFromDrop = useCallback(async (taskId: string, start: Date, itemKind?: 'scheduled' | 'deadline' | null) => {
         const task = tasks.find((candidate) => candidate.id === taskId);
@@ -559,13 +567,11 @@ export function useDesktopCalendarController() {
             || (itemKind === 'scheduled' && !hasTimeComponent(task.startTime))))) return;
 
         try {
-            await updateTask(task.id, { startTime: start.toISOString() });
-            nav.revealDate(start);
-            feedback.showScheduleError(null);
+            await saveDroppedDates(task, { startTime: start.toISOString() }, start);
         } catch (error) {
             reportError('Failed to schedule task from calendar drop', error);
         }
-    }, [feedback.showScheduleError, nav.revealDate, tasks, updateTask]);
+    }, [saveDroppedDates, tasks]);
 
     const getCalendarItemsForDate = (date: Date): CalendarCellItem[] => buildCalendarDayItems({
         completed: getCompletedForDay(date),

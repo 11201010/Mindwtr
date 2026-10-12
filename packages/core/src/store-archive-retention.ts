@@ -13,6 +13,19 @@ type Context = {
     flushPendingSave: () => Promise<void>;
 };
 
+// R-2: a device that was offline must not purge before it has merged the remote, or a
+// restore made on another device loses to the fresh purge tombstone. Session-scoped on purpose.
+let syncCompletedThisSession = false;
+let deferralLogged = false;
+
+/** Called by the shared sync cycle once it has read and merged (or confirmed unchanged) the remote. */
+export const markArchiveRetentionSyncCompleted = (): void => { syncCompletedThisSession = true; };
+export const isArchiveRetentionSyncCompleted = (): boolean => syncCompletedThisSession;
+export const resetArchiveRetentionSyncForTests = (): void => {
+    syncCompletedThisSession = false;
+    deferralLogged = false;
+};
+
 const canWrite = (state: TaskStore): boolean =>
     !state.isLoading && !state.persistenceFailure && state.editLockCount === 0 && Boolean(state.settings.deviceId);
 
@@ -63,15 +76,20 @@ export const createArchiveRetentionActions = ({ set, debouncedSave, flushPending
         return result;
     },
 
-    runArchiveRetention: async () => {
+    runArchiveRetention: async ({ syncConfigured }) => {
         let result: StoreActionResult = { success: true };
         let purged = { tasks: 0, projects: 0, sections: 0 };
         let changed = false;
+        let deferred = false;
         set((state) => {
             // Automatic calls before hydration or during an editor/save failure are safe no-ops.
             if (!canWrite(state)) return state;
             const days = state.settings.gtd?.archiveRetentionDays;
             if (!isArchiveRetentionDays(days) || days === 0) return state;
+            if (syncConfigured && !syncCompletedThisSession) {
+                deferred = true;
+                return state;
+            }
             const nowMs = Date.now();
             const now = new Date(nowMs).toISOString();
             const preview = getArchiveRetentionPreview({ tasks: state._allTasks, projects: state._allProjects, sections: state._allSections }, days, nowMs);
@@ -100,6 +118,12 @@ export const createArchiveRetentionActions = ({ set, debouncedSave, flushPending
             return { _allTasks: tasks, _allProjects: projects, _allSections: sections, settings,
                 lastDataChangeAt: getNextDataChangeAt(state.lastDataChangeAt, nowMs) };
         });
+        if (deferred && !deferralLogged) {
+            deferralLogged = true;
+            logInfo('Archive retention deferred until the first sync', { scope: 'store', category: 'storage', context: {
+                releaseCheck: 'v1.3.5/archive-retention-after-sync',
+            } });
+        }
         if (!result.success || !changed) return result;
         try { await flushPendingSave(); } catch (error) { return saveFailure(error); }
         if (purged.tasks || purged.projects || purged.sections) {

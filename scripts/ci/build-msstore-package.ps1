@@ -29,6 +29,7 @@ $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
          xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
   <Identity Name="$IdentityName" ProcessorArchitecture="x64"
@@ -54,6 +55,9 @@ $manifest = @"
                           Square44x44Logo="Assets\Square44x44Logo.png">
       </uap:VisualElements>
       <Extensions>
+        <uap3:Extension Category="windows.protocol" Executable="mindwtr.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:Protocol Name="mindwtr" Parameters="&quot;%1&quot;" />
+        </uap3:Extension>
         <!-- TaskId must match STORE_STARTUP_TASK_ID in src-tauri/src/autostart.rs -->
         <uap5:Extension Category="windows.startupTask" Executable="mindwtr.exe" EntryPoint="Windows.FullTrustApplication">
           <uap5:StartupTask TaskId="MindwtrStartup" Enabled="false" DisplayName="Mindwtr" />

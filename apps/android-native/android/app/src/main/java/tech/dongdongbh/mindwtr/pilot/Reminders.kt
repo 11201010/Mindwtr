@@ -18,6 +18,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureNotifier
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RnKeyValue
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
@@ -327,7 +328,7 @@ internal class ReminderAlarms(
 
     override fun ledger(): String = synchronized(LOCK) {
         val shown = notifications.activeNotifications.filter { NotificationCompat.getChannelId(it.notification) == CoreNotifications.REMINDER_CHANNEL }
-            .map { it.id }
+            .map(CoreNotifications::reminderAlarmId)
         JSONObject().put("fired", JSONArray(ReminderLedger.of(context).fired())).put("shown", JSONArray(shown)).toString()
     }
 
@@ -351,7 +352,7 @@ internal class ReminderAlarms(
         checkpointed = true
     }
 
-    override fun removeDelivered(id: Int) = notifications.cancel(id)
+    override fun removeDelivered(id: Int) = CoreNotifications.cancelReminder(context, id)
 
     override fun record(cancelled: List<Int>, armed: List<Pair<Int, Long>>) = ReminderLedger.of(context).record(cancelled, armed)
 
@@ -463,7 +464,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getIntExtra(EXTRA_ID, 0)
-        val dismiss = { context.getSystemService(NotificationManager::class.java).cancel(id) }
+        val dismiss = { CoreNotifications.cancelReminder(context, id) }
         runCatching {
             when (intent.action) {
                 DISMISS -> dismiss()
@@ -500,6 +501,18 @@ class ReminderRescheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         if (action !in ACTIONS && !(action == DEBUG_RESCHEDULE && BuildConfig.DEBUG)) return
+        // Device check only (check-notifications-device.mjs): the persistent capture notification removed as an OEM's kill removes it,
+        // its mirror kept, so the check proves that a start or a resume posts it again.
+        if (action == DEBUG_RESCHEDULE && BuildConfig.DEBUG && intent.getBooleanExtra("cancelCaptureNotification", false)) {
+            context.getSystemService(NotificationManager::class.java).cancel(PersistentCaptureNotifier.NOTIFICATION_ID)
+            return
+        }
+        // Device check only: cancellation after another alarm replaced the old alarm's task slot.
+        if (action == DEBUG_RESCHEDULE && BuildConfig.DEBUG && intent.hasExtra("cancelReminderId")) {
+            intent.getStringExtra("replacementAlarm")?.let { CoreNotifications.postReminder(context, JSONObject(it)) }
+            CoreNotifications.cancelReminder(context, intent.getIntExtra("cancelReminderId", 0))
+            return
+        }
         Log.i(CoreHost.TAG, "Native Android reminders reschedule action=$action")
         // Held until WorkManager stored the job: a process that ends first would lose the remake until the next start.
         runCatching { CoreWork.enqueueDurably(this, context, CoreJob.REMINDERS, mapOf("mode" to "rebuild")) }

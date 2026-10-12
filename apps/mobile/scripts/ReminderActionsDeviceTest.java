@@ -1,6 +1,11 @@
 package com.emekalites.react.alarm.notification;
 
 import android.app.Application;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.service.notification.StatusBarNotification;
@@ -68,6 +73,36 @@ public class ReminderActionsDeviceTest extends InstrumentationTestCase {
             if (item.getTag() != null && item.getTag().contains(TASK)) manager.cancel(item.getTag(), item.getId());
         for (Map<String,String> item : NotificationOpenPayloadStore.peekCompletions(app))
             if (TASK.equals(item.get("taskId"))) NotificationOpenPayloadStore.acknowledgeCompletion(app, item.get("actionId"));
+    }
+    public void testBootRecovery() throws Exception {
+        cleanup();
+        ComponentName receiver = new ComponentName(app, AlarmBootReceiver.class);
+        PackageManager pm = app.getPackageManager();
+        int previous = pm.getComponentEnabledSetting(receiver);
+        try {
+            pm.setComponentEnabledSetting(receiver, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP);
+            AlarmModel alarm = alarm(TASK, 1360001, "task-reminder");
+            Calendar soon = Calendar.getInstance(); soon.add(Calendar.SECOND, 15);
+            util.setAlarmFromCalendar(alarm, soon); db.update(alarm);
+            util.setAlarm(alarm);
+            assertEquals(PackageManager.COMPONENT_ENABLED_STATE_ENABLED, pm.getComponentEnabledSetting(receiver));
+            PendingIntent pending = PendingIntent.getBroadcast(app, alarm.getAlarmId(), new Intent(app, AlarmReceiver.class), PendingIntent.FLAG_IMMUTABLE);
+            app.getSystemService(AlarmManager.class).cancel(pending); // Simulate kernel alarm loss while retaining SQLite.
+            assertTrue(util.rearmFutureAlarm(alarm.getId()));
+            assertEquals(alarm.getAlarmId(), db.getAlarm(alarm.getId()).getAlarmId());
+            boolean delivered = false;
+            for (int i = 0; i < 120; i++) {
+                for (StatusBarNotification item : manager.getActiveNotifications())
+                    if (("mindwtr-reminder:task:" + TASK).equals(item.getTag())) delivered = true;
+                if (delivered) break;
+                Thread.sleep(500);
+            }
+            assertTrue("Rearmed OS alarm must deliver a notification", delivered);
+            assertFalse("Delivered one-shot must not be replayed", util.rearmFutureAlarm(alarm.getId()));
+        } finally {
+            cleanup();
+            pm.setComponentEnabledSetting(receiver, previous, PackageManager.DONT_KILL_APP);
+        }
     }
     public void testNotificationActions() throws Exception {
         cleanup();

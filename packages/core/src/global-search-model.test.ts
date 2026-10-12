@@ -95,14 +95,15 @@ it.each([
     'report @computer', 'report #upload', 'report %Alice',
     '@"home office"', '#"client work"', '%"Alice Smith"',
     '"@home office"', '"#client work"', '"%Alice Smith"',
-])('keeps parsed field query %s out of full-text search', async (query) => {
+    '-draft', 'report -draft', '-@', '-#', '-%',
+])('keeps parsed field or negated query %s out of full-text search', async (query) => {
     const searchAll = vi.fn().mockResolvedValue({ tasks: [], projects: [] });
     expect(shouldRequestGlobalSearchFts(query)).toBe(false);
     expect(await fetchGlobalSearchAdapterResults(query, searchAll)).toBeNull();
     expect(searchAll).not.toHaveBeenCalled();
 });
 
-it.each(['computer', 'upload report', '"home office"', '@', '#', '%', '-@', '-#', '-%'])(
+it.each(['computer', 'upload report', '"home office"', '@', '#', '%', 'report OR memo'])(
     'keeps plain text and bare-prefix query %s eligible for full-text search', async (query) => {
         const adapterResults = { tasks: [], projects: [] };
         const searchAll = vi.fn().mockResolvedValue(adapterResults);

@@ -5,6 +5,7 @@ import { ReviewView } from './ReviewView';
 import { LanguageProvider } from '../../contexts/language-context';
 import { useUiStore } from '../../store/ui-store';
 import { fetchExternalCalendarEvents } from '../../lib/external-calendar-events';
+import { resolveTaskNavigationView } from '../../lib/task-navigation';
 
 const renderWithProviders = (ui: React.ReactElement) => {
     return render(
@@ -16,7 +17,7 @@ const renderWithProviders = (ui: React.ReactElement) => {
 
 // Keep review calendar stages genuinely empty unless a test seeds calendar work.
 vi.mock('../../lib/external-calendar-events', () => ({
-    fetchExternalCalendarEvents: vi.fn(async () => ({ events: [], warnings: [] })),
+    fetchExternalCalendarEvents: vi.fn(async () => ({ calendars: [], events: [], warnings: [] })),
     summarizeExternalCalendarWarnings: vi.fn((warnings: string[]) => warnings[0] ?? null),
 }));
 
@@ -217,6 +218,92 @@ describe('ReviewView', () => {
         fireEvent.click(getByRole('button', { name: 'Done tasks' }));
         expect(getByText('Completed task')).toBeInTheDocument();
         expect(queryByText('Due reminder')).not.toBeInTheDocument();
+    });
+
+    it.each([
+        { reviewOffset: undefined, groupBy: 'none' },
+        { reviewOffset: 1, groupBy: 'none' },
+        { reviewOffset: undefined, groupBy: 'status' },
+    ])('reveals and scrolls to a deferred search target outside Due ($reviewOffset, $groupBy)', async ({ reviewOffset, groupBy }) => {
+        const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+        window.localStorage.setItem('mindwtr:view:review:v1', JSON.stringify({ filterStatus: 'all', groupBy }));
+        const target = makeTask('deferred', {
+            title: 'Deferred search target',
+            startTime: dateStringFromToday(7),
+            reviewAt: reviewOffset === undefined ? undefined : dateStringFromToday(reviewOffset),
+        });
+        const due = makeTask('due', { title: 'Due reminder', reviewAt: dateStringFromToday(0) });
+        const tasks = [target, due];
+        useTaskStore.setState({ tasks, _allTasks: tasks });
+        expect(resolveTaskNavigationView(target)).toBe('review');
+        // App applies the search highlight when its destination is displayed.
+        useTaskStore.getState().setHighlightTask(target.id);
+        const { getByRole, getByText, queryByText } = renderWithProviders(<ReviewView />);
+
+        expect(getByText(target.title)).toBeInTheDocument();
+        expect(document.querySelector(`[data-task-id="${target.id}"]`)).toBeInTheDocument();
+        expect(getByRole('button', { name: 'All open tasks' })).toHaveAttribute('aria-pressed', 'true');
+        expect(scrollIntoView.mock.instances.some((element) => element instanceof Element && element.getAttribute('data-task-id') === target.id)).toBe(true);
+        expect(useTaskStore.getState().tasks).toEqual(tasks);
+
+        scrollIntoView.mockClear();
+        const reselectionClock = vi.spyOn(Date, 'now').mockReturnValue(useTaskStore.getState().highlightTaskAt! + 1);
+        act(() => useTaskStore.getState().setHighlightTask(target.id));
+        reselectionClock.mockRestore();
+        expect(scrollIntoView.mock.instances.some((element) => element instanceof Element && element.getAttribute('data-task-id') === target.id)).toBe(true);
+
+        fireEvent.click(getByRole('button', { name: 'Due for review' }));
+        expect(queryByText(target.title)).not.toBeInTheDocument();
+        expect(getByText(due.title)).toBeInTheDocument();
+        act(() => useTaskStore.setState({ tasks: [...tasks] }));
+        expect(getByRole('button', { name: 'Due for review' })).toHaveAttribute('aria-pressed', 'true');
+
+        // A second selection of the same result is a new navigation request.
+        const highlightAt = useTaskStore.getState().highlightTaskAt!;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(highlightAt + 1);
+        act(() => useTaskStore.getState().setHighlightTask(target.id));
+        clock.mockRestore();
+        await waitFor(() => expect(getByText(target.title)).toBeInTheDocument());
+        scrollIntoView.mockRestore();
+    });
+
+    it('keeps Due selected when the deferred search target is already due for review', () => {
+        const target = makeTask('deferred-due', {
+            title: 'Deferred due target',
+            startTime: dateStringFromToday(7),
+            reviewAt: dateStringFromToday(0),
+        });
+        useTaskStore.setState({ tasks: [target], _allTasks: [target] });
+        expect(resolveTaskNavigationView(target)).toBe('review');
+        useTaskStore.getState().setHighlightTask(target.id);
+        const { getByRole, getByText } = renderWithProviders(<ReviewView />);
+
+        expect(getByText(target.title)).toBeInTheDocument();
+        expect(getByRole('button', { name: 'Due for review' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    it('clears only filters that hide a new search target and allows later filter changes', () => {
+        const target = makeTask('deferred', { title: 'Deferred search target', startTime: dateStringFromToday(7) });
+        useTaskStore.setState({ tasks: [target], _allTasks: [target] });
+        const { getByRole, getByText, queryByText } = renderWithProviders(<ReviewView />);
+        fireEvent.click(getByRole('button', { name: 'All open tasks' }));
+        fireEvent.click(getByRole('button', { name: 'Done tasks' }));
+        fireEvent.change(getByRole('textbox', { name: 'Search...' }), { target: { value: 'unrelated' } });
+        act(() => useTaskStore.getState().setHighlightTask(target.id));
+
+        expect(getByText(target.title)).toBeInTheDocument();
+        expect(getByRole('textbox', { name: 'Search...' })).toHaveValue('');
+        fireEvent.click(getByRole('combobox', { name: 'Status' }));
+        fireEvent.click(getByRole('option', { name: 'Next (1)' }));
+        fireEvent.change(getByRole('textbox', { name: 'Search...' }), { target: { value: 'Deferred' } });
+        act(() => useTaskStore.getState().setHighlightTask(null));
+        act(() => useTaskStore.getState().setHighlightTask(target.id));
+        expect(getByRole('combobox', { name: 'Status' })).toHaveTextContent('Next (1)');
+        expect(getByRole('textbox', { name: 'Search...' })).toHaveValue('Deferred');
+
+        fireEvent.change(getByRole('textbox', { name: 'Search...' }), { target: { value: 'unrelated' } });
+        expect(queryByText(target.title)).not.toBeInTheDocument();
+        expect(getByRole('textbox', { name: 'Search...' })).toHaveValue('unrelated');
     });
 
     it('marks selected due reminders reviewed after the write succeeds', async () => {

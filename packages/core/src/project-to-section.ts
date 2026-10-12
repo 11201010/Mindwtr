@@ -90,6 +90,15 @@ export const getProjectToSectionEligibility = (state: ConversionState, sourcePro
     return { ok: true };
 };
 
+const destinationBlock = (destination: Project | undefined): Blocked | null => {
+    if (!destination) return { ok: false, reason: 'missing-destination' };
+    if (destination.deletedAt || destination.purgedAt || destination.status !== 'active'
+        || destination.archivedAt || destination.cancelledAt)
+        return { ok: false, reason: 'destination-inactive' };
+    if (destination.isSequential) return { ok: false, reason: 'destination-sequential' };
+    return null;
+};
+
 export const previewProjectToSection = (state: ConversionState, sourceProjectId: string,
     destinationProjectId: string): ProjectToSectionPreview | Blocked => {
     const eligible = getProjectToSectionEligibility(state, sourceProjectId);
@@ -97,17 +106,46 @@ export const previewProjectToSection = (state: ConversionState, sourceProjectId:
     if (sourceProjectId === destinationProjectId) return { ok: false, reason: 'same-project' };
     const source = oneProject(state._allProjects, sourceProjectId)!;
     const destination = oneProject(state._allProjects, destinationProjectId);
-    if (!destination) return { ok: false, reason: 'missing-destination' };
-    if (destination.deletedAt || destination.purgedAt || destination.status !== 'active'
-        || destination.archivedAt || destination.cancelledAt)
-        return { ok: false, reason: 'destination-inactive' };
-    if (destination.isSequential) return { ok: false, reason: 'destination-sequential' };
+    const blocked = destinationBlock(destination);
+    if (blocked) return blocked;
     const tasks = state._allTasks.filter((task) => task.projectId === source.id && !task.deletedAt && !task.purgedAt);
-    return { ok: true, sourceTitle: source.title, destinationTitle: destination.title,
+    return { ok: true, sourceTitle: source.title, destinationTitle: destination!.title,
         defaultTitle: source.title, taskCount: tasks.length,
         completedCount: tasks.filter((task) => task.status === 'done').length,
         archivedCount: tasks.filter((task) => task.status === 'archived').length,
         colorWillBeLost: true };
+};
+
+/**
+ * Destination-list form of previewProjectToSection: checks the source and counts its tasks once,
+ * so each destination costs one lookup instead of a scan of every project, section, and task.
+ * Each call returns what previewProjectToSection(state, sourceProjectId, destinationProjectId) returns.
+ */
+export const createProjectToSectionPreviewer = (state: ConversionState, sourceProjectId: string):
+    ((destinationProjectId: string) => ProjectToSectionPreview | Blocked) => {
+    const eligible = getProjectToSectionEligibility(state, sourceProjectId);
+    if (!eligible.ok) return () => ({ ...eligible });
+    // null marks a duplicated id, which oneProject treats as missing.
+    const projects = new Map<string, Project | null>();
+    for (const project of state._allProjects) projects.set(project.id, projects.has(project.id) ? null : project);
+    const source = projects.get(sourceProjectId)!;
+    let taskCount = 0;
+    let completedCount = 0;
+    let archivedCount = 0;
+    for (const task of state._allTasks) {
+        if (task.projectId !== source.id || task.deletedAt || task.purgedAt) continue;
+        taskCount += 1;
+        if (task.status === 'done') completedCount += 1;
+        else if (task.status === 'archived') archivedCount += 1;
+    }
+    return (destinationProjectId) => {
+        if (sourceProjectId === destinationProjectId) return { ok: false, reason: 'same-project' };
+        const destination = projects.get(destinationProjectId) ?? undefined;
+        const blocked = destinationBlock(destination);
+        if (blocked) return blocked;
+        return { ok: true, sourceTitle: source.title, destinationTitle: destination!.title,
+            defaultTitle: source.title, taskCount, completedCount, archivedCount, colorWillBeLost: true };
+    };
 };
 
 /** Deterministic planner; generated identity and clock are supplied by prepare. */

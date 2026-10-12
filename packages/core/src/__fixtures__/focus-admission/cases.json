@@ -1,0 +1,479 @@
+{
+    "description": "Focus admission on task update. Core runs every case against resolveTaskFocusUpdate (focus-admission-cases.test.ts); the desktop Local API runs it against its PATCH path (local_api.rs). 'after' is the normalized task the writer would save; 'utcOffsetMinutes' is the user's fixed local offset (whole hours); 'focusedCount' excludes the task itself. Outcomes: unchanged, focused, queued, refused-limit (message 'Focus limit of N reached'). knownRustDivergences lists cases the Local API PATCH path still gets wrong; its test fails when a listed case starts matching, so fix the code and shrink the list together.",
+    "taskDefaults": {
+        "id": "task",
+        "title": "Task",
+        "tags": [],
+        "contexts": [],
+        "rev": 1,
+        "createdAt": "2026-10-01T00:00:00Z",
+        "updatedAt": "2026-10-01T00:00:00Z"
+    },
+    "knownRustDivergences": [],
+    "cases": [
+        {
+            "name": "new star below the cap is admitted",
+            "covers": [
+                "B-2"
+            ],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 2,
+            "before": {
+                "status": "next"
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "focused"
+        },
+        {
+            "name": "new star at the cap is refused",
+            "covers": [
+                "B-2"
+            ],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next"
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "new star at a configured cap of 5 is refused",
+            "covers": [
+                "B-2"
+            ],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 5,
+            "focusedCount": 5,
+            "before": {
+                "status": "next"
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "starring an Inbox task promotes it and takes a slot",
+            "covers": [
+                "B-2"
+            ],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 1,
+            "focusedCount": 0,
+            "before": {
+                "status": "inbox"
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "focused"
+        },
+        {
+            "name": "editing an existing star at the cap leaves it alone",
+            "covers": [
+                "B-2"
+            ],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true,
+                "title": "Edited"
+            },
+            "outcome": "unchanged"
+        },
+        {
+            "name": "removing a star at the cap leaves it alone",
+            "covers": [],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": false
+            },
+            "outcome": "unchanged"
+        },
+        {
+            "name": "a star on a later local day is queued at the cap",
+            "covers": [
+                "#1277"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-13",
+                "isFocusedToday": true
+            },
+            "outcome": "queued"
+        },
+        {
+            "name": "moving a queued start to another later day stays out of the count",
+            "covers": [
+                "#1277"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-14",
+                "isFocusedToday": true
+            },
+            "outcome": "unchanged"
+        },
+        {
+            "name": "clearing a queued start takes a slot and is refused at the cap",
+            "covers": [
+                "R-5"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 1,
+            "focusedCount": 1,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "clearing a queued start below the cap is admitted",
+            "covers": [
+                "R-5"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 1,
+            "focusedCount": 0,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "isFocusedToday": true
+            },
+            "outcome": "focused"
+        },
+        {
+            "name": "moving a queued start to the local today is refused at the cap",
+            "covers": [
+                "R-5",
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 1,
+            "focusedCount": 1,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13",
+                "isFocusedToday": true
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "east of UTC a date-only start on the local today counts",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "west of UTC a date-only start on the local tomorrow is queued",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": -240,
+            "now": "2026-10-12T01:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "queued"
+        },
+        {
+            "name": "an offset start inside the local today counts",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12T07:00:00+09:00"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12T07:00:00+09:00",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "a no-offset start later on the local today counts",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12T20:00"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12T20:00",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "a no-offset start after the next local midnight is queued",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-13T00:30"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-13T00:30",
+                "isFocusedToday": true
+            },
+            "outcome": "queued"
+        },
+        {
+            "name": "west of UTC a no-offset start after the local midnight is queued",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": -240,
+            "now": "2026-10-12T01:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12T00:30"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12T00:30",
+                "isFocusedToday": true
+            },
+            "outcome": "queued"
+        },
+        {
+            "name": "one second before the local midnight a next-day start is queued",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T14:59:59Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "queued"
+        },
+        {
+            "name": "at the local midnight the same start counts",
+            "covers": [
+                "B-1"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T15:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "next",
+                "startTime": "2026-10-12"
+            },
+            "after": {
+                "status": "next",
+                "startTime": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "a waiting star with a past no-offset review is admitted below the cap",
+            "covers": [
+                "B-2a"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 0,
+            "before": {
+                "status": "waiting",
+                "reviewAt": "2026-10-01T09:00"
+            },
+            "after": {
+                "status": "waiting",
+                "reviewAt": "2026-10-01T09:00",
+                "isFocusedToday": true
+            },
+            "outcome": "focused"
+        },
+        {
+            "name": "a waiting star with a date-only review on the local today is admitted below the cap",
+            "covers": [
+                "B-2a"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 0,
+            "before": {
+                "status": "waiting",
+                "reviewAt": "2026-10-12"
+            },
+            "after": {
+                "status": "waiting",
+                "reviewAt": "2026-10-12",
+                "isFocusedToday": true
+            },
+            "outcome": "focused"
+        },
+        {
+            "name": "a waiting star with a past review is refused at the cap",
+            "covers": [
+                "B-2a"
+            ],
+            "utcOffsetMinutes": 540,
+            "now": "2026-10-11T23:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "waiting",
+                "reviewAt": "2026-10-01T09:00"
+            },
+            "after": {
+                "status": "waiting",
+                "reviewAt": "2026-10-01T09:00",
+                "isFocusedToday": true
+            },
+            "outcome": "refused-limit"
+        },
+        {
+            "name": "a reference star does not count",
+            "covers": [],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "reference"
+            },
+            "after": {
+                "status": "reference",
+                "isFocusedToday": true
+            },
+            "outcome": "unchanged"
+        },
+        {
+            "name": "a done star does not count",
+            "covers": [],
+            "utcOffsetMinutes": 0,
+            "now": "2026-10-11T12:00:00Z",
+            "focusTaskLimit": 3,
+            "focusedCount": 3,
+            "before": {
+                "status": "done"
+            },
+            "after": {
+                "status": "done",
+                "isFocusedToday": true
+            },
+            "outcome": "unchanged"
+        }
+    ]
+}

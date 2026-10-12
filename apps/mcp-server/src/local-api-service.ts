@@ -1,4 +1,4 @@
-import { filterTasksBySearch, PRIORITY_RANK, TASK_STATUS_VALUES, taskMatchesQuery, TIME_ESTIMATE_OPTIONS } from '@mindwtr/core';
+import { filterTasksBySearch, PRIORITY_RANK, safeParseDate, TASK_STATUS_VALUES, taskMatchesQuery, TIME_ESTIMATE_OPTIONS } from '@mindwtr/core';
 import * as z from 'zod';
 
 import { NotFoundError, ValidationError } from './errors.js';
@@ -180,10 +180,13 @@ const validateEntity = <T extends Task | Project | Area>(value: unknown, kind: '
   }
   return record as T;
 };
-const dateKey = (value: string | undefined | null): string => {
-  if (typeof value !== 'string' || value.length < 10) return '';
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : value.slice(0, 10);
+const localDateKey = (value: string | undefined | null): string => {
+  const parsed = safeParseDate(value);
+  if (!parsed) return '';
+  const year = String(parsed.getFullYear()).padStart(4, '0');
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 const sortTasks = (tasks: Task[], input: ListTasksInput): Task[] => {
   const sortBy = input.sortBy ?? 'updatedAt';
@@ -318,12 +321,18 @@ export const createLocalApiService = (options: LocalApiServiceOptions): MindwtrS
     listTasks: async (input) => {
       if (asRecord(input) && Object.hasOwn(input, 'view')) return unsupported('availability views because section and settings data are unavailable');
       parseInput(listTasksSchema, input, 'task list');
-      const tasks = await entities<Task>('/tasks?all=1&deleted=1', 'tasks', 'task');
-      const from = dateKey(input.dueDateFrom);
-      const to = dateKey(input.dueDateTo);
+      // The native filter (local_api.rs filter_tasks) only narrows what the Node filter below keeps; it never widens it.
+      // Projects and search stay here: the native API has no project filter, and its text query is not core search.
+      const query = new URLSearchParams({ all: '1' });
+      if (input.includeDeleted) query.set('deleted', '1');
+      if (input.status && input.status !== 'all') query.set('status', input.status);
+      if (input.isFocusedToday !== undefined) query.set('isFocusedToday', input.isFocusedToday ? '1' : '0');
+      const tasks = await entities<Task>(`/tasks?${query}`, 'tasks', 'task');
+      const from = localDateKey(input.dueDateFrom);
+      const to = localDateKey(input.dueDateTo);
       const filtered = tasks.filter((task) => {
         if (!taskMatchesQuery(task, { status: input.status, projectId: input.projectId, includeDeleted: input.includeDeleted, includeArchived: true, isFocusedToday: input.isFocusedToday })) return false;
-        const due = dateKey(task.dueDate);
+        const due = localDateKey(task.dueDate);
         return (!from || Boolean(due && due >= from)) && (!to || Boolean(due && due <= to));
       });
       const searched = input.search ? filterTasksBySearch(filtered, await entities<Project>('/projects', 'projects', 'project'), input.search) : filtered;

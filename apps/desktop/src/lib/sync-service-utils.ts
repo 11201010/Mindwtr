@@ -94,26 +94,79 @@ export const stripFileScheme = (uri: string): string => {
 
 const normalizeAttachmentFsPath = (path: string): string => normalizeAttachmentPathForUrl(path.trim());
 
-const isPathWithin = (dir: string, path: string): boolean => {
-    const root = normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+const isPathWithin = (dir: string, path: string, ignoreCase = false): boolean => {
+    let root = normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+    if (ignoreCase) {
+        root = root.toLowerCase();
+        path = path.toLowerCase();
+    }
     return Boolean(root) && (path === root || path.startsWith(`${root}/`));
 };
+
+// Windows (drive letter or UNC) and macOS (~/Library/Application Support) file systems
+// ignore case by default; Linux file systems do not.
+const isCaseInsensitiveDataDir = (osDataDir: string): boolean =>
+    /^([A-Za-z]:\/|\/\/)/.test(osDataDir) || osDataDir.includes('/Library/Application Support');
+
+// Every folder desktop has ever written attachment bytes into: imports, dropped
+// files and sync downloads (attachments), recordings (audio-captures) and pasted
+// images (quick-add-images).
+const ATTACHMENT_SOURCE_DIR_NAMES = [ATTACHMENTS_DIR_NAME, 'audio-captures', 'quick-add-images'];
+
+// Sync downloads in the old shared folder were named `<attachment id><ext>` (ids are UUIDs).
+const LEGACY_SHARED_DOWNLOAD_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[A-Za-z0-9]{1,16})?$/i;
 
 /**
  * SEC-07: which local paths this device may read bytes from for sync. An attachment `uri`
  * travels inside the synced document and an absolute path there survives the merge
  * sanitizer, so without this a hostile sync document makes the next cycle upload an
  * arbitrary local file to the remote. Every file attachment desktop creates is written
- * under the managed data dir (imports, dropped files, pasted images, audio captures);
- * files the user merely points at are `kind: 'link'` and never reach the transfer loop.
+ * into one of {@link ATTACHMENT_SOURCE_DIR_NAMES}; files the user merely points at are
+ * `kind: 'link'` and never reach the transfer loop.
+ *
+ * Only those folders are allowed, never the OS data dir or the profile root: on
+ * Windows/macOS `config/secrets.toml` lives in the profile next to them. The roots are
+ * the managed data dir (portable-aware, #855), the flat OS profile `<data>/mindwtr`
+ * (paths recorded before #1245 moved folders into `data/`; quick-add-images never moved)
+ * and the installed profile's `data/` (a portable copy sharing its paths), plus Mindwtr-named
+ * downloads in the old shared `<data>/attachments` folder that sync used before 02a9aafa2.
  */
 export const createManagedAttachmentSourcePredicate = async (): Promise<(localPath: string) => boolean> => {
     const { dataDir } = await import('@tauri-apps/api/path');
     const { getManagedDataDir } = await import('./managed-paths');
-    const roots = await Promise.all([dataDir(), getManagedDataDir()]);
+    const { logWarn } = await import('./app-log');
+    const [osDataDir, managedDataDir] = await Promise.all([dataDir(), getManagedDataDir()]);
+    const trimRoot = (dir: string) => normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+    const osProfile = trimRoot(osDataDir) ? `${trimRoot(osDataDir)}/mindwtr` : '';
+    const profileRoots = [trimRoot(managedDataDir), osProfile, osProfile && `${osProfile}/data`]
+        .filter(Boolean);
+    const allowedDirs = profileRoots.flatMap((root) => ATTACHMENT_SOURCE_DIR_NAMES.map((name) => `${root}/${name}`));
+    // The old shared folder has a generic name other apps may use too, so only a direct
+    // child named like a Mindwtr download (`<attachment uuid>.<ext>`) qualifies there.
+    const legacySharedDir = trimRoot(osDataDir) ? `${trimRoot(osDataDir)}/${ATTACHMENTS_DIR_NAME}` : '';
+    const ignoreCase = isCaseInsensitiveDataDir(trimRoot(osDataDir));
+    const isLegacySharedDownload = (path: string): boolean => {
+        if (!legacySharedDir || !isPathWithin(legacySharedDir, path, ignoreCase)) return false;
+        const rest = path.slice(legacySharedDir.length + 1);
+        return LEGACY_SHARED_DOWNLOAD_NAME.test(rest);
+    };
+    let refusalLogged = false;
     return (localPath: string): boolean => {
         const normalized = normalizeAttachmentFsPath(stripFileScheme(localPath));
-        return roots.some((root) => isPathWithin(root, normalized));
+        const reason = normalized.split('/').some((segment) => segment === '.' || segment === '..')
+            ? 'dot-segment'
+            : allowedDirs.some((dir) => isPathWithin(dir, normalized, ignoreCase)) || isLegacySharedDownload(normalized)
+                ? null
+                : 'outside-attachment-folders';
+        if (!reason) return true;
+        if (!refusalLogged) {
+            refusalLogged = true;
+            void logWarn('Attachment upload refused for a path outside the attachment folders', {
+                scope: 'sync',
+                extra: { releaseCheck: 'v1.3.5/attachment-source-guard', reason },
+            });
+        }
+        return false;
     };
 };
 

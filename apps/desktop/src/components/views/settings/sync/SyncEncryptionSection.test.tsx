@@ -2,6 +2,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import { describe, expect, it, vi } from 'vitest';
 import {
     SyncCryptoAuthError,
+    SyncEncryptionBackendIncompatibleError,
     SyncEncryptionRemoteVersionUnavailableError,
     SyncEncryptionTerminalError,
     type SyncBackend,
@@ -208,6 +209,11 @@ describe('SyncEncryptionSection', () => {
         expect(screen.getByText(t.syncEncryptionErrorTransitionIncomplete)).toBeTruthy();
     });
 
+    it('names an incompatible WebDAV server instead of a retry', () => {
+        render(<SyncEncryptionSection t={t} encryption={controller({ state: 'off', error: 'backend-incompatible' })} />);
+        expect(screen.getByText(t.syncEncryptionErrorBackendIncompatible)).toBeTruthy();
+    });
+
     it('shows committed cleanup deferral as a non-retry status warning', () => {
         render(
             <SyncEncryptionSection
@@ -327,6 +333,11 @@ describe('classifyFailure', () => {
             new SyncEncryptionRemoteVersionUnavailableError('data.json has no strong ETag'),
             'generic',
         )).toBe('transition-incomplete');
+        // A server refused before the fence is incompatible, not a change left half done.
+        expect(classifyFailure(
+            new SyncEncryptionBackendIncompatibleError(new SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json')),
+            'generic',
+        )).toBe('backend-incompatible');
         expect(
             classifyFailure(new SyncEncryptionTerminalError(new SyncCryptoAuthError()), 'generic'),
         ).toBe('generic');

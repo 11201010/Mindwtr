@@ -103,4 +103,21 @@ describe('mcp default database discovery', () => {
 
     expect(resolveMindwtrDbPath()).toBe(dbPath);
   });
+
+  test('discovers the Snap database through the current revision link', () => {
+    const home = mkdtempSync(join(tmpdir(), 'mindwtr-mcp-snap-'));
+    tempDirs.push(home);
+    // Snapd moves HOME and XDG_DATA_HOME under ~/snap/<name>/<revision>/; `current` links the active revision.
+    const dbPath = join(home, 'snap', 'mindwtr', 'current', '.local', 'share', 'mindwtr', 'mindwtr.db');
+    mkdirSync(join(dbPath, '..'), { recursive: true });
+    writeFileSync(dbPath, '');
+
+    process.env.HOME = home;
+    delete process.env.XDG_CONFIG_HOME;
+    delete process.env.XDG_DATA_HOME;
+    delete process.env.MINDWTR_DB_PATH;
+    delete process.env.MINDWTR_DB;
+
+    expect(resolveMindwtrDbPath()).toBe(dbPath);
+  });
 });

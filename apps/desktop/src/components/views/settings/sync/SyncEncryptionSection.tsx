@@ -113,11 +113,13 @@ export function SyncEncryptionSection({ encryption, t }: SyncEncryptionSectionPr
                 ? t.syncEncryptionErrorRotationFirst
                 : error === 'backend-required'
                     ? t.syncEncryptionErrorBackendRequired
-                    : error === 'transition-incomplete'
-                        ? t.syncEncryptionErrorTransitionIncomplete
-                        : error === 'generic'
-                            ? t.syncEncryptionErrorGeneric
-                            : null;
+                    : error === 'backend-incompatible'
+                        ? t.syncEncryptionErrorBackendIncompatible
+                        : error === 'transition-incomplete'
+                            ? t.syncEncryptionErrorTransitionIncomplete
+                            : error === 'generic'
+                                ? t.syncEncryptionErrorGeneric
+                                : null;
 
     const progressLabel = progress
         ? `${progress.phase === 'attachments' ? t.syncEncryptionProgressAttachments : t.syncEncryptionProgressDocuments} ${progress.completed} / ${progress.total}`

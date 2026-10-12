@@ -2,11 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createMobileSyncService, type MobileSyncServiceHost } from './mobile-sync-service';
 import { classifySyncFailure } from './mobile-sync-utils';
+import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
+import { LocalSyncAbort } from './sync-client-helpers';
+import { SyncRemoteMutationFenceBusyError } from './sync-remote-fence';
+import { SyncRemoteWriteConflict } from './sync-run-ports';
 import { performSyncCycle } from './sync';
 import { createSyncEncryptionStateStore, readSyncLocationScope } from './sync-encryption-local-state';
+import { defaultSyncCryptoPrimitives, encryptSyncArtifact } from './sync-crypto';
+import { createSyncEncryptionService } from './sync-encryption-service';
 import { createWebdavCapabilityProofStore } from './webdav-capability-proof';
-import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY } from './sync-storage-keys';
+import { SYNC_BACKEND_KEY, SYNC_ENCRYPTION_STATE_KEY, WEBDAV_PASSWORD_KEY, WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, CLOUD_PROVIDER_KEY, CLOUD_URL_KEY, CLOUD_TOKEN_KEY } from './sync-storage-keys';
 import type { AppData } from './types';
+import * as payloadTrace from './sync-payload-trace';
 
 const emptyData = (): AppData => ({
   tasks: [],
@@ -43,7 +50,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
     setItem: vi.fn(async (key: string, value: string) => { values.set(key, value); }),
     removeItem: vi.fn(async (key: string) => { values.delete(key); }),
   };
-  const logs: Array<{ level: string; message: string; extra?: Record<string, string> }> = [];
+  const logs: Array<{ level: string; message: string; extra?: Record<string, string>; force?: boolean }> = [];
   const syncErrors: string[] = [];
   const store = {
     lastDataChangeAt: 1,
@@ -85,7 +92,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
       saveData: async (data) => { saved.push(data); },
     },
     log: {
-      info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra }); },
+      info: (message, context) => { logs.push({ level: 'info', message, extra: context?.extra, force: context?.force }); },
       warn: (message, context) => { logs.push({ level: 'warn', message, extra: context?.extra }); },
       syncError: async (error, context) => {
         syncErrors.push(`${error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)} ${context.url ?? ''}`);
@@ -165,7 +172,7 @@ const createFakeHost = (options: FakeOptions = {}) => {
       createDropboxSyncRemoteMutationFencePort: vi.fn(() => ({}) as never),
     },
   };
-  return { host, values, logs, syncErrors, store, remote, fenceOwners, saved };
+  return { host, values, logs, syncErrors, store, remote, fenceOwners, saved, encryption };
 };
 
 const WEBDAV_VALUES = {
@@ -175,6 +182,61 @@ const WEBDAV_VALUES = {
 };
 
 describe('mobile sync service behind fake ports', () => {
+  it('bounds forced follow-up receipts and one large-store comparison without changing queue or writes', async () => {
+    const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloud', [CLOUD_PROVIDER_KEY]: 'selfhosted',
+      [CLOUD_URL_KEY]: 'https://private.example.com', }, secrets: { [CLOUD_TOKEN_KEY]: 'private-credential' } });
+    fake.store.settings = { diagnostics: { loggingEnabled: false } };
+    const outgoing = { ...emptyData(), tasks: Array.from({ length: 5000 }, (_, i) => ({
+      id: `private-id-${i}`, title: 'private task text', status: 'inbox', tags: [], contexts: [],
+      createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+    })), settings: { theme: 'dark', syncPreferences: { appearance: true },
+      appearance: { fontFamily: 'private font value' } } } as AppData;
+    const remote = { ...outgoing, settings: { ...outgoing.settings, theme: 'light' } } as AppData;
+    fake.host.localData.getData = async () => outgoing;
+    fake.host.core!.getInMemoryAppDataSnapshot = () => outgoing;
+    fake.host.core!.cloudGetJson = vi.fn(async () => remote) as never;
+    const put = vi.fn(async () => ({ fingerprint: 'opaque', serverMergedRemoteData: true }));
+    fake.host.core!.cloudPutJson = put as never;
+    fake.host.core!.performSyncCycle = vi.fn(async (io) => {
+      await io.readLocal();
+      await io.readRemote();
+      io.onStep?.('write-remote');
+      await io.writeRemote(outgoing);
+      return { status: 'success', stats: emptyStats, data: outgoing } as never;
+    });
+    const signatures = vi.spyOn(payloadTrace, 'buildSyncPayloadSurfaceTraceExtra');
+    const forced: typeof fake.logs = [];
+    const originalInfo = fake.host.log.info;
+    fake.host.log.info = (message, context) => {
+      if (context?.force) forced.push({ level: 'info', message, extra: context.extra, force: true });
+      return originalInfo(message, context);
+    };
+    const service = createMobileSyncService(fake.host);
+    try {
+      for (let i = 0; i < 4; i += 1) {
+        await expect(service.performMobileSync(undefined, { manual: true })).resolves.toMatchObject({ success: true });
+        service.__mobileSyncTestUtils.clearFollowUpForTests();
+      }
+      expect(put).toHaveBeenCalledTimes(4);
+      expect(fake.saved).toHaveLength(4); // One existing sync-status save per cycle.
+      expect(fake.logs.filter((line) => line.message === 'Sync follow-up scheduled')).toHaveLength(4);
+      expect(forced).toHaveLength(2);
+      expect(forced[0].extra).toMatchObject({ reason: 'server-contribution', backend: 'cloud', step: 'write-remote',
+        requestClass: 'manual', outcome: 'requested' });
+      expect(forced[1].extra).toMatchObject({ comparison: 'captured' });
+      expect(forced[1].extra?.outgoingSettingsSig).not.toBe(forced[1].extra?.priorRemoteSettingsSig);
+      expect(forced[1].extra?.outgoingTasksSig).toBe(forced[1].extra?.priorRemoteTasksSig);
+      expect(signatures).toHaveBeenCalledTimes(2);
+      const receiptText = JSON.stringify(forced);
+      for (const secret of ['private task text', 'private-id-', 'private font value', 'private.example.com', 'private-credential']) {
+        expect(receiptText).not.toContain(secret);
+      }
+    } finally {
+      service.__mobileSyncTestUtils.clearFollowUpForTests();
+      signatures.mockRestore();
+    }
+  });
+
   it('reports each backend configuration from the stored keys', async () => {
     const off = createMobileSyncService(createFakeHost().host);
     await expect(off.getMobileSyncConfigurationStatus()).resolves.toEqual({ backend: 'off', configured: false });
@@ -193,6 +255,12 @@ describe('mobile sync service behind fake ports', () => {
     // CloudKit is iOS only: a host without it reads the stored backend as off.
     const cloudkit = createMobileSyncService(createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloudkit' } }).host);
     await expect(cloudkit.getMobileSyncConfigurationStatus()).resolves.toEqual({ backend: 'off', configured: false });
+    // The selection itself survives that check: archive retention must still wait for a sync (R-2).
+    await expect(cloudkit.getMobileSelectedSyncBackend()).resolves.toBe('cloudkit');
+    await expect(off.getMobileSelectedSyncBackend()).resolves.toBe('off');
+    // An unreadable or unknown stored value is not a choice of Off: the caller keeps waiting.
+    const odd = createMobileSyncService(createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'unexpected-backend' } }).host);
+    await expect(odd.getMobileSelectedSyncBackend()).rejects.toThrow('Unknown sync backend selection');
   });
 
   it('runs a WebDAV cycle under the mindwtr-mobile fence and publishes the status', async () => {
@@ -345,6 +413,68 @@ describe('mobile sync service behind fake ports', () => {
     expect(String(result.error ?? '')).not.toContain('PARTLY_ENCRYPTED');
   });
 
+  it('refuses a mixed Dropbox candidate while the stored backend is off', async () => {
+    const fake = createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'off' }, dropboxAppKey: 'candidate-client' });
+    const tokens = { accessToken: 'candidate-access', refreshToken: 'candidate-refresh', expiresAt: Date.now() + 3600_000 };
+    const data = { ...emptyData(), tasks: [{ id: 't1', title: 'T', status: 'inbox', tags: [], contexts: [],
+      createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+      attachments: [{ id: 'a1', kind: 'file', title: 'a.bin', uri: 'file:///a.bin', localStatus: 'available',
+        createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' }] }] } as AppData;
+    const encryptedBlob = await encryptSyncArtifact(new TextEncoder().encode('remote blob'), {
+      key: new Uint8Array(32).fill(1), salt: new Uint8Array(16).fill(2), params: { mKib: 65536, t: 3, p: 1 },
+    });
+    const attachmentUploads = vi.fn(async () => false as const);
+    const blobReads: string[] = [];
+    fake.host.localData.getData = async () => data;
+    fake.host.core!.getInMemoryAppDataSnapshot = () => data;
+    fake.host.core!.performSyncCycle = performSyncCycle;
+    fake.host.core!.downloadDropboxAppData = vi.fn(async () => ({ data: emptyData(), rev: 'data-rev' })) as never;
+    fake.host.core!.getDropboxAppDataMetadata = vi.fn(async () => ({ rev: 'data-rev' }));
+    fake.host.core!.uploadDropboxAppData = vi.fn(async () => ({ rev: 'next-rev' }));
+    fake.host.attachments.hasPendingWork = async () => true;
+    fake.host.attachments.syncDropbox = attachmentUploads;
+    fake.host.dropboxAuth.getValidAccessTokenForTokens = vi.fn(async (_clientId, candidate) => ({ accessToken: candidate.accessToken, tokens: candidate }));
+    fake.host.fetch = vi.fn(async (input, init) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer candidate-access');
+      if (String(input).endsWith('/files/list_folder')) {
+        return new Response(JSON.stringify({ entries: [{ '.tag': 'file', name: 'remote.bin', path_lower: '/attachments/remote.bin' }], has_more: false }));
+      }
+      if (String(input).endsWith('/files/download')) {
+        const path = JSON.parse(new Headers(init?.headers).get('Dropbox-API-Arg')!).path;
+        expect(path).toBe('/attachments/remote.bin');
+        blobReads.push(path);
+        return new Response(encryptedBlob, { headers: { 'Dropbox-API-Result': JSON.stringify({ rev: 'blob-rev' }) } });
+      }
+      throw new Error(`Unexpected Dropbox request: ${input}`);
+    }) as typeof fetch;
+    const encryptionService = createSyncEncryptionService({
+      storage: fake.host.storage, state: fake.encryption, crypto: defaultSyncCryptoPrimitives, fetch: fake.host.fetch,
+      parseWebdavXml: () => { throw new Error('Dropbox does not use WebDAV'); },
+      loadWebDavConfig: async () => null, webDavRequestOptions: () => ({}),
+      getDropboxClientId: async () => { throw new Error('Stored Dropbox client must not be read'); },
+      runDropboxAuthorized: async () => { throw new Error('Stored Dropbox credentials must not be used'); },
+    });
+    fake.host.encryption = { ...fake.encryption, probeLocationCiphertext: encryptionService.probeSyncLocationCiphertext };
+    const service = createMobileSyncService(fake.host);
+
+    const result = await service.performMobileSync(undefined, {
+      manual: true, activationProbe: true,
+      configOverride: { backend: 'cloud', cloudProvider: 'dropbox', dropbox: { tokens } },
+    });
+
+    expect(String(result.error)).toContain('partly encrypted');
+    expect(result.success).toBe(false);
+    expect(attachmentUploads).not.toHaveBeenCalled();
+    expect(fake.host.core!.uploadDropboxAppData).not.toHaveBeenCalled();
+    expect(blobReads).toEqual(['/attachments/remote.bin']);
+    expect(fake.host.dropboxAuth.getValidAccessTokenForTokens).toHaveBeenCalledWith('candidate-client', tokens, expect.any(Function));
+    expect(fake.values.get(SYNC_BACKEND_KEY)).toBe('off');
+    expect(fake.logs).toContainEqual(expect.objectContaining({ level: 'warn', extra: expect.objectContaining({
+      releaseCheck: 'v1.3.5/dropbox-candidate-encryption-probe', found: 'mixed',
+    }) }));
+    expect(JSON.stringify(fake.logs)).not.toMatch(/candidate-access|candidate-refresh|remote\.bin/);
+  });
+
   it('refuses a Dropbox candidate in a FOSS build', async () => {
     const fake = createFakeHost({ isFossBuild: true, dropboxAppKey: 'key' });
     const service = createMobileSyncService(fake.host);
@@ -375,9 +505,17 @@ describe('mobile sync service behind fake ports', () => {
       configOverride: { backend: 'webdav', webdav: { url: 'https://other.example.com', username: '', password: '' } },
     });
 
-    expect(proof).toEqual({ success: true, skipped: 'requeued' });
-    release();
-    await active;
+    try {
+      expect(proof).toEqual({ success: true, skipped: 'requeued' });
+      expect(fake.logs).toContainEqual(expect.objectContaining({ force: true,
+        extra: expect.objectContaining({ releaseCheck: 'v1.3.5/mobile-sync-follow-up',
+          reason: 'busy-request', backend: 'webdav', step: 'read-check', requestClass: 'auto', outcome: 'requested' }),
+      }));
+    } finally {
+      release();
+      await active;
+      await service.waitForMobileSyncIdle();
+    }
   });
 
   it('treats a lifecycle abort as a success and queues a follow-up', async () => {
@@ -393,8 +531,30 @@ describe('mobile sync service behind fake ports', () => {
 
     expect(result).toEqual({ success: true });
     expect(fake.logs.some((line) => line.message === 'Sync aborted by app lifecycle transition')).toBe(true);
+    expect(fake.logs).toContainEqual(expect.objectContaining({ force: true,
+      extra: expect.objectContaining({ releaseCheck: 'v1.3.5/mobile-sync-follow-up',
+        reason: 'lifecycle', backend: 'webdav', requestClass: 'auto', outcome: 'requested' }),
+    }));
     await service.waitForMobileSyncIdle();
     expect(performSyncCycle).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps lifecycle follow-up work when the forced diagnostic cannot be written', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    const originalInfo = fake.host.log.info;
+    fake.host.log.info = (message, context) => {
+      if (message === 'Mobile sync follow-up decision') return Promise.reject(new Error('log unavailable'));
+      return originalInfo(message, context);
+    };
+    const service = createMobileSyncService(fake.host);
+    const cycle = vi.mocked(fake.host.core!.performSyncCycle!);
+    cycle.mockImplementationOnce(async () => {
+      service.abortMobileSync();
+      throw new Error('aborted');
+    });
+    await expect(service.performMobileSync()).resolves.toEqual({ success: true });
+    await service.waitForMobileSyncIdle();
+    expect(cycle).toHaveBeenCalledTimes(2);
   });
 
   it('ends a cycle the background run abandons at its deadline as a failure, with no follow-up', async () => {
@@ -503,6 +663,219 @@ describe('mobile sync service behind fake ports', () => {
     expect(attachmentPasses).toHaveBeenCalled();
   });
 
+  it.each([false, true])('quarantines queued syncs and idle waiters after cleanup refusal (unsubscribe throws: %s)', async (unsubscribeThrows) => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    fake.host.core!.performSyncCycle = vi.fn(performSyncCycle);
+    fake.remote.data = {
+      ...emptyData(),
+      tasks: [{ id: 'remote-task', title: 'Remote', status: 'inbox', tags: [], contexts: [],
+        createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z' }],
+    };
+    const fatal = new NativeAttachmentCleanupUnconfirmedError();
+    const remove = vi.fn(() => { if (unsubscribeThrows) throw new Error('unsubscribe unavailable'); });
+    fake.host.network.subscribe = vi.fn(() => ({ remove }));
+    const fence = { assertHeld: vi.fn(async () => undefined), renew: vi.fn(async () => undefined), release: vi.fn(async () => undefined) };
+    vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mockResolvedValue(fence as never);
+    // These are the ports this real shared cycle uses: after refusal only the
+    // local network subscription's removal is allowed, even if it throws.
+    const ports = [
+      fake.host.storage.getItem, fake.host.storage.setItem, fake.host.storage.removeItem,
+      vi.spyOn(fake.host, 'getSecureConfigValue'),
+      vi.spyOn(fake.host.platform, 'os'), vi.spyOn(fake.host.platform, 'dropboxAppKey'),
+      vi.spyOn(fake.host.network, 'getState'), fake.host.network.subscribe,
+      vi.spyOn(fake.host.localData, 'getData'), vi.spyOn(fake.host.localData, 'saveData'),
+      vi.spyOn(fake.host.log, 'info'), vi.spyOn(fake.host.log, 'warn'),
+      vi.spyOn(fake.host.log, 'syncError'), vi.spyOn(fake.host.log, 'sanitize'),
+      vi.spyOn(fake.host.externalCalendars, 'load'), vi.spyOn(fake.host.externalCalendars, 'save'),
+      vi.spyOn(fake.host.encryption, 'loadSyncEncryptionLocalState'),
+      vi.spyOn(fake.host.encryption, 'logSyncEncryptionEvent'),
+      vi.spyOn(fake.host.core!, 'isSandboxMode'), vi.spyOn(fake.host.core!, 'isWorkspaceTransitionActive'),
+      vi.spyOn(fake.host.core!.useTaskStore!, 'getState'), fake.host.core!.useTaskStore!.setState,
+      fake.store.setError, fake.store.fetchData, vi.spyOn(fake.host.core!, 'flushPendingSave'),
+      vi.spyOn(fake.host.core!, 'getInMemoryAppDataSnapshot'), fake.host.core!.performSyncCycle,
+      fake.host.core!.webdavGetSyncDocument, fake.host.core!.webdavPutSyncDocument, fake.host.core!.webdavHeadFile,
+      fake.host.core!.probeWebdavSyncCompatibility, fake.host.core!.acquireSyncRemoteMutationFence,
+      fake.host.fetch, fence.assertHeld, fence.renew, fence.release,
+      vi.spyOn(fake.host.attachments, 'syncWebdav'), vi.spyOn(fake.host.attachments, 'cleanupTempFiles'),
+      vi.spyOn(fake.host.attachments, 'hasPendingWork'), vi.spyOn(fake.host.attachments, 'hasCompletedPresenceReconciliation'),
+      vi.spyOn(fake.host.fileSync, 'releaseLease'),
+    ];
+    const calls = () => ports.map((port) => vi.mocked(port!).mock.calls.length);
+    const durableAndLogs = () => JSON.stringify({
+      values: [...fake.values], saved: fake.saved, remote: fake.remote, settings: fake.store.settings,
+      logs: fake.logs, syncErrors: fake.syncErrors,
+    });
+    let entered!: () => void;
+    const paused = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let boundaryCalls: number[] = [];
+    let boundaryState = '';
+    fake.host.attachments.runCleanup = vi.fn(async () => {
+      entered();
+      await gate;
+      boundaryCalls = calls();
+      boundaryState = durableAndLogs();
+      throw fatal;
+    });
+    const service = createMobileSyncService(fake.host);
+    const activity: string[] = [];
+    service.subscribeMobileSyncActivityState((state) => activity.push(state));
+    const active = service.performMobileSync(undefined, { manual: true });
+    await paused;
+    expect(fake.saved.some((data) => data.tasks.some((task) => task.id === 'remote-task'))).toBe(true);
+    const queued = service.performMobileSync(undefined, { manual: true });
+    const waiter = service.waitForMobileSyncIdle();
+    // This API reports requeue before refusal, but its late rejection callback
+    // must not write a diagnostic once cleanup owns the host.
+    await expect(service.performMobileSync(undefined, {
+      configOverride: { backend: 'webdav', webdav: { url: 'https://other.example.com', username: '', password: '' } },
+    })).resolves.toEqual({ success: true, skipped: 'requeued' });
+    const settled = Promise.allSettled([active, queued, waiter]);
+    vi.useFakeTimers();
+    try {
+      release();
+      const outcomes = await settled;
+      for (const outcome of outcomes) {
+        expect(outcome.status).toBe('rejected');
+        if (outcome.status === 'rejected') expect(outcome.reason).toBe(fatal);
+      }
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(fence.release).not.toHaveBeenCalled();
+      expect(activity).toEqual(['idle', 'syncing']);
+      expect(service.abortMobileSync()).toBe(false);
+      service.clearMobileSyncConfigCache();
+      await expect(service.performMobileSync()).rejects.toBe(fatal);
+      await expect(service.getMobileSyncConfigurationStatus()).rejects.toBe(fatal);
+      await expect(service.waitForMobileSyncIdle()).rejects.toBe(fatal);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(calls()).toEqual(boundaryCalls);
+      expect(durableAndLogs()).toBe(boundaryState);
+      expect(fake.host.core!.performSyncCycle).toHaveBeenCalledTimes(1);
+      expect(fake.host.attachments.runCleanup).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    fake.host.network.subscribe = () => ({ remove: () => undefined });
+    fake.host.attachments.runCleanup = async ({ appData }) => ({ appData, shouldInvalidateFastSyncState: false });
+    // Only host recreation supplies a fresh service. Clearing the cache above
+    // did not release the retained fatal owner in the original instance.
+    const fresh = createMobileSyncService(fake.host);
+    await expect(fresh.performMobileSync(undefined, { manual: true })).resolves.toMatchObject({ success: true });
+    expect(fence.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds an acquired File Sync lease after fatal cleanup and preserves earlier merge writes', async () => {
+    const fake = createFakeHost();
+    const fatal = new NativeAttachmentCleanupUnconfirmedError();
+    const acquire = vi.spyOn(fake.host.fileSync, 'acquireLease');
+    const release = vi.spyOn(fake.host.fileSync, 'releaseLease');
+    const fileWrite = vi.spyOn(fake.host.fileSync, 'write');
+    let savedAtRefusal = '';
+    fake.host.attachments.runCleanup = vi.fn(async () => {
+      savedAtRefusal = JSON.stringify({ saved: fake.saved, values: [...fake.values], logs: fake.logs });
+      throw fatal;
+    });
+    const service = createMobileSyncService(fake.host);
+    await expect(service.performMobileSync(undefined, {
+      manual: true, configOverride: { backend: 'file', syncPath: 'file:///sync/data.json' },
+    })).rejects.toBe(fatal);
+    await expect(service.waitForMobileSyncIdle()).rejects.toBe(fatal);
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(fileWrite).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    expect(fake.saved.length).toBeGreaterThan(0);
+    expect(JSON.stringify({ saved: fake.saved, values: [...fake.values], logs: fake.logs })).toBe(savedAtRefusal);
+    expect(service.abortMobileSync()).toBe(false);
+  });
+
+  it('does not log or announce idle when a scheduled queued cycle refuses cleanup', async () => {
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    const fatal = new NativeAttachmentCleanupUnconfirmedError();
+    const remove = vi.fn();
+    fake.host.network.subscribe = () => ({ remove });
+    const fenceRelease = vi.fn(async () => undefined);
+    vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mockResolvedValue({
+      assertHeld: async () => undefined, renew: async () => undefined, release: fenceRelease,
+    } as never);
+    let entered!: () => void;
+    const paused = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let boundaryState = '';
+    const state = () => JSON.stringify({ saved: fake.saved, values: [...fake.values], logs: fake.logs, syncErrors: fake.syncErrors });
+    fake.host.attachments.runCleanup = vi.fn()
+      .mockImplementationOnce(async ({ appData }) => {
+        entered();
+        await gate;
+        return { appData, shouldInvalidateFastSyncState: false };
+      })
+      .mockImplementationOnce(async () => {
+        boundaryState = state();
+        throw fatal;
+      });
+    const service = createMobileSyncService(fake.host);
+    const activity: string[] = [];
+    service.subscribeMobileSyncActivityState((value) => activity.push(value));
+    const active = service.performMobileSync(undefined, { manual: true });
+    await paused;
+    const queued = service.performMobileSync(undefined, { manual: true });
+    const idleResult = service.waitForMobileSyncIdle().then(() => 'idle', (error: unknown) => error);
+    vi.useFakeTimers();
+    try {
+      release();
+      await vi.advanceTimersByTimeAsync(20);
+      await expect(active).resolves.toMatchObject({ success: true });
+      await expect(queued).resolves.toMatchObject({ success: true });
+      // A real remote edit prevents the read-check optimization from ending
+      // the queued cycle before its cleanup hook is reached.
+      fake.remote.data = { ...fake.remote.data!, tasks: [{
+        id: 'queued-remote-task', title: 'Changed remotely', status: 'inbox', tags: [], contexts: [],
+        createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z',
+      }] };
+      fake.remote.etag += 1;
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(await idleResult).toBe(fatal);
+      expect(fake.host.attachments.runCleanup).toHaveBeenCalledTimes(2);
+      expect(fake.host.core!.performSyncCycle).toHaveBeenCalledTimes(2);
+      expect(remove).toHaveBeenCalledTimes(2);
+      expect(fenceRelease).toHaveBeenCalledTimes(1);
+      expect(activity).toEqual(['idle', 'syncing']);
+      expect(boundaryState).not.toBe('');
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(state()).toBe(boundaryState);
+      expect(fake.host.core!.performSyncCycle).toHaveBeenCalledTimes(2);
+      await expect(service.performMobileSync()).rejects.toBe(fatal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['ordinary-same-name', 'local-abort'])('keeps %s cleanup failures recoverable and releases the File Sync lease', async (kind) => {
+    const fake = createFakeHost();
+    const error = kind === 'local-abort'
+      ? new LocalSyncAbort()
+      : Object.assign(new Error('ordinary cleanup error'), { name: 'NativeAttachmentCleanupUnconfirmedError' });
+    const release = vi.spyOn(fake.host.fileSync, 'releaseLease');
+    fake.host.attachments.runCleanup = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockImplementation(async ({ appData }) => ({ appData, shouldInvalidateFastSyncState: false }));
+    const service = createMobileSyncService(fake.host);
+    const activity: string[] = [];
+    service.subscribeMobileSyncActivityState((value) => activity.push(value));
+    const options = { manual: true, configOverride: { backend: 'file' as const, syncPath: 'file:///sync/data.json' } };
+
+    const result = await service.performMobileSync(undefined, options);
+
+    expect(result).toMatchObject(kind === 'local-abort' ? { success: true, skipped: 'requeued' } : { success: false });
+    await expect(service.waitForMobileSyncIdle()).resolves.toBeUndefined();
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(activity).toEqual(['idle', 'syncing', 'idle']);
+    expect(fake.logs.some((line) => line.message === (kind === 'local-abort' ? 'Sync cycle requeued' : 'Sync failed'))).toBe(true);
+    await expect(service.performMobileSync(undefined, options)).resolves.toMatchObject({ success: true });
+    expect(release).toHaveBeenCalledTimes(2);
+  });
+
   it('does nothing in sandbox mode', async () => {
     const fake = createFakeHost({ values: WEBDAV_VALUES });
     fake.host.core!.isSandboxMode = () => true;
@@ -511,5 +884,135 @@ describe('mobile sync service behind fake ports', () => {
     await expect(service.performMobileSync()).resolves.toEqual({ success: true, skipped: 'disabled' });
     await expect(service.getMobileSyncConfigurationStatus()).resolves.toEqual({ backend: 'off', configured: false });
     expect(fake.host.storage.getItem).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('caller-owned sync follow-up', () => {
+  for (const reason of ['remote-fence-busy', 'remote-cas-conflict', 'fence-release'] as const) {
+    it.each([false, true])(`settles ${reason} without a delayed cycle (manual: %s)`, async (manual) => {
+      vi.useFakeTimers();
+      const fake = createFakeHost({ values: WEBDAV_VALUES });
+      if (reason === 'remote-fence-busy') {
+        vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mockRejectedValueOnce(new SyncRemoteMutationFenceBusyError(5_000));
+      } else if (reason === 'remote-cas-conflict') {
+        vi.mocked(fake.host.core!.webdavPutSyncDocument!).mockRejectedValueOnce(new SyncRemoteWriteConflict());
+      } else {
+        vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mockResolvedValueOnce({
+          assertHeld: async () => undefined, renew: async () => undefined, retryAfterMs: () => 5_000,
+          release: async () => { throw new Error('Synthetic conditional release failed'); },
+        } as never);
+      }
+      const service = createMobileSyncService({ ...fake.host, allowQueuedFollowUp: false });
+      try {
+        const result = await service.performMobileSync(undefined, { manual });
+        expect(result).toMatchObject(reason === 'remote-fence-busy'
+          ? { success: true, skipped: 'remoteFenceBusy', retryAfterMs: 5_000 }
+          : reason === 'remote-cas-conflict'
+            ? { success: true, skipped: 'requeued' }
+            : { success: true, remoteFenceDeferred: 'cleanup', retryAfterMs: 5_000 });
+        const at = JSON.stringify({
+          reads: fake.host.storage.getItem.mock.calls,
+          cycles: vi.mocked(fake.host.core!.performSyncCycle!).mock.calls.length,
+          fences: vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mock.calls.length,
+          saves: fake.saved, logs: fake.logs,
+        });
+        await vi.advanceTimersByTimeAsync(300_001);
+        expect(JSON.stringify({
+          reads: fake.host.storage.getItem.mock.calls,
+          cycles: vi.mocked(fake.host.core!.performSyncCycle!).mock.calls.length,
+          fences: vi.mocked(fake.host.core!.acquireSyncRemoteMutationFence!).mock.calls.length,
+          saves: fake.saved, logs: fake.logs,
+        })).toBe(at);
+        let idle = false;
+        void service.waitForMobileSyncIdle().then(() => { idle = true; });
+        await Promise.resolve();
+        expect(idle).toBe(true);
+        expect(fake.logs.some((line) => line.message === 'Sync follow-up scheduled')).toBe(false);
+      } finally {
+        service.__mobileSyncTestUtils.reset();
+        vi.useRealTimers();
+      }
+    });
+  }
+
+  it.each(['stored', 'session-config'] as const)('refuses to queue a concurrent %s request or return the active cycle as its proof', async (kind) => {
+    vi.useFakeTimers();
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const cycle = vi.mocked(fake.host.core!.performSyncCycle!);
+    const original = cycle.getMockImplementation()!;
+    cycle.mockImplementationOnce(async (io) => { entered(); await gate; return original(io); });
+    const service = createMobileSyncService({ ...fake.host, allowQueuedFollowUp: false });
+    const active = service.performMobileSync(undefined, { manual: false });
+    await reached;
+    const options = kind === 'session-config'
+      ? { manual: true, configOverride: { backend: 'webdav' as const, webdav: { url: 'https://other.example.invalid', username: '', password: '' } } }
+      : { manual: true };
+    const concurrent = service.performMobileSync(undefined, options);
+    let returned: unknown;
+    void concurrent.then((result) => { returned = result; });
+    try {
+      await Promise.resolve(); await Promise.resolve();
+      expect(returned).toEqual({ success: true, skipped: 'requeued' });
+      release();
+      await expect(active).resolves.toMatchObject({ success: true });
+      await expect(concurrent).resolves.toEqual({ success: true, skipped: 'requeued' });
+      let idle = false;
+      void service.waitForMobileSyncIdle().then(() => { idle = true; });
+      await Promise.resolve();
+      expect(idle).toBe(true);
+      await vi.advanceTimersByTimeAsync(300_001);
+      expect(cycle).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(fake.host.core!.probeWebdavSyncCompatibility!).mock.calls.map(([url]) => url)).not.toContain('https://other.example.invalid');
+    } finally {
+      release();
+      await Promise.allSettled([active, concurrent]);
+      service.__mobileSyncTestUtils.reset();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule the usual lifecycle follow-up under caller-owned policy', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    const service = createMobileSyncService({ ...fake.host, allowQueuedFollowUp: false });
+    const cycle = vi.mocked(fake.host.core!.performSyncCycle!);
+    cycle.mockImplementationOnce(async () => {
+      expect(service.abortMobileSync()).toBe(true);
+      throw new Error('Synthetic lifecycle abort');
+    });
+    try {
+      await expect(service.performMobileSync()).resolves.toEqual({ success: true });
+      await vi.advanceTimersByTimeAsync(300_001);
+      expect(cycle).toHaveBeenCalledTimes(1);
+      let idle = false;
+      void service.waitForMobileSyncIdle().then(() => { idle = true; });
+      await Promise.resolve();
+      expect(idle).toBe(true);
+    } finally {
+      service.__mobileSyncTestUtils.reset(); vi.useRealTimers();
+    }
+  });
+
+  it('retains fatal cleanup quarantine with caller-owned follow-up disabled', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeHost({ values: WEBDAV_VALUES });
+    const fatal = new NativeAttachmentCleanupUnconfirmedError();
+    fake.host.attachments.runCleanup = vi.fn(async () => { throw fatal; });
+    const service = createMobileSyncService({ ...fake.host, allowQueuedFollowUp: false });
+    try {
+      await expect(service.performMobileSync(undefined, { manual: true })).rejects.toBe(fatal);
+      const at = JSON.stringify({ saved: fake.saved, logs: fake.logs, reads: fake.host.storage.getItem.mock.calls });
+      await expect(service.waitForMobileSyncIdle()).rejects.toBe(fatal);
+      await expect(service.performMobileSync()).rejects.toBe(fatal);
+      await vi.advanceTimersByTimeAsync(300_001);
+      expect(JSON.stringify({ saved: fake.saved, logs: fake.logs, reads: fake.host.storage.getItem.mock.calls })).toBe(at);
+      expect(fake.host.attachments.runCleanup).toHaveBeenCalledTimes(1);
+    } finally {
+      service.__mobileSyncTestUtils.reset(); vi.useRealTimers();
+    }
   });
 });

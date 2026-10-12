@@ -1,4 +1,4 @@
-import { addDays, addMonths, addWeeks, differenceInCalendarDays, format } from 'date-fns';
+import { addDays, addMonths, addWeeks, differenceInCalendarDays, format, startOfDay } from 'date-fns';
 
 import { safeFormatDate, safeParseDate } from './date';
 import { generateUUID as uuidv4 } from './uuid';
@@ -1129,6 +1129,22 @@ const hasMonthlyRuleDateAnchor = (byDay?: RecurrenceByDay[], byMonthDay?: number
     || Boolean(byDay?.length)
 );
 
+/**
+ * Strict occurrences at or before this instant are already past (#1366). A
+ * date-only start is still current today; explicit times must be future.
+ * Completion and the preview/calendar projection share it so the preview shows
+ * the date completion creates.
+ */
+const getStrictCatchUpBoundary = (
+    anchorField: RecurrenceScheduleField | null,
+    anchorIso: string | undefined,
+    at: Date,
+): Date => (
+    anchorField === 'startTime' && /^\d{4}-\d{2}-\d{2}$/.test(anchorIso ?? '')
+        ? new Date(startOfDay(at).getTime() - 1)
+        : at
+);
+
 function projectStrictIsoFrom(
     baseIso: string | undefined,
     rule: RecurrenceRule,
@@ -1385,7 +1401,8 @@ function projectNextRecurringOccurrenceFields(
                 bySetPos,
             );
         }
-        return projectStrictIsoFrom(baseIso, rule, projectionBase, byDay, interval, byMonthDay, weekStart, anchors[field], bySetPos);
+        return projectStrictIsoFrom(baseIso, rule, getStrictCatchUpBoundary(field, baseIso, projectionBase),
+            byDay, interval, byMonthDay, weekStart, anchors[field], bySetPos);
     };
 
     const hasScheduleFields = Boolean(baseTask.startTime || baseTask.dueDate || baseTask.reviewAt);
@@ -1946,25 +1963,42 @@ export function projectNextRecurringTask(
     let rebuiltFields = anchorField && nextAnchorIso
         ? rebuildScheduleFieldsFromAnchor(task, anchorField, nextAnchorIso)
         : {};
+    const catchUpBoundary = getStrictCatchUpBoundary(anchorField, sourceAnchorIso, completedAtDate);
     if (
         strategy === 'strict'
         && !advanceOne
-        && anchorField === 'dueDate'
+        && (anchorField === 'dueDate' || anchorField === 'startTime')
         && task.startTime
         && rebuiltFields.startTime
         && !task.relativeStartOffset
     ) {
         const parsedNextStart = safeParseDate(rebuiltFields.startTime);
-        if (parsedNextStart && parsedNextStart <= completedAtDate) {
+        if (parsedNextStart && parsedNextStart <= catchUpBoundary) {
+            let catchUpSource = sourceAnchorIso;
+            const sourceDate = safeParseDate(sourceAnchorIso);
+            if (sourceDate && ((rule === 'weekly' && byDay?.length)
+                || (rule === 'monthly' && (byDay?.length || byMonthDay?.length)))) {
+                // Move whole calendar periods near completion, then use the rule's
+                // canonical selector search. Preview occurrence counts stay untouched.
+                const periods = rule === 'weekly'
+                    ? Math.floor(differenceInCalendarDays(catchUpBoundary, sourceDate) / 7)
+                    : (catchUpBoundary.getFullYear() - sourceDate.getFullYear()) * 12
+                        + catchUpBoundary.getMonth() - sourceDate.getMonth();
+                const skippedPeriods = Math.max(0, Math.floor(periods / interval) - 1);
+                if (skippedPeriods > 0) {
+                    catchUpSource = nextIsoFrom(sourceAnchorIso, rule, catchUpBoundary, undefined,
+                        skippedPeriods * interval, undefined, weekStart, undefined, recurrenceAnchorDays[anchorField]);
+                }
+            }
             const caughtUpAnchor = projectStrictIsoFrom(
-                sourceAnchorIso!,
+                catchUpSource,
                 rule,
-                completedAtDate,
+                catchUpBoundary,
                 byDay,
                 interval,
                 byMonthDay,
                 weekStart,
-                recurrenceAnchorDays.dueDate,
+                recurrenceAnchorDays[anchorField],
                 bySetPos,
             ).iso;
             if (caughtUpAnchor) {

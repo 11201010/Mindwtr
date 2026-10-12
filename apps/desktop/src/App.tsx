@@ -1,5 +1,9 @@
+import { useTaskDeepLink } from './hooks/use-task-deep-link';
+import { CalendarOpenTaskModal } from './components/views/calendar/CalendarModals';
 import { useEffect, useState, useRef, useTransition, useCallback, useMemo, Suspense, lazy } from 'react';
 import { StartupReadyProbe } from './components/StartupReadyProbe';
+import { RendererNavigationProbe } from './components/RendererNavigationProbe';
+import { beginRendererNavigation, type RendererNavigationTrace } from './lib/renderer-navigation-diagnostics';
 import { markDesktopStartup } from './lib/startup-profiler';
 import { Layout } from './components/Layout';
 import { ListView } from './components/views/ListView';
@@ -274,6 +278,7 @@ function App() {
     const [viewFromUrl] = useState(() => readViewFromUrl());
     const [currentView, setCurrentView] = useState(viewFromUrl ?? restoredLastView?.view ?? DEFAULT_DESKTOP_VIEW);
     const [activeView, setActiveView] = useState(viewFromUrl ?? restoredLastView?.view ?? DEFAULT_DESKTOP_VIEW);
+    const [navigationTrace, setNavigationTrace] = useState<RendererNavigationTrace | null>(null);
     // handleViewChange keeps ?view= in sync on every later navigation, but a
     // fresh load that resolves the view from localStorage (no ?view= yet)
     // never calls it — write the resolved initial view back once so copying
@@ -352,6 +357,7 @@ function App() {
     const [resolvingExternalSync, setResolvingExternalSync] = useState(false);
     const [hasHydratedSettings, setHasHydratedSettings] = useState(false);
     const [startupDataReady, setStartupDataReady] = useState(false);
+    const taskLinkController = useTaskDeepLink(startupDataReady && !isLoading, isTauriRuntime() && !sandboxMode, t);
     useArchiveRetentionRunner(hasHydratedSettings && !isLoading, sandboxMode);
     // App tests seed the store directly and deliberately skip the native startup
     // hydration effect; in the app, only the completed fetch opens this gate.
@@ -1203,7 +1209,10 @@ function App() {
         };
     }, [isObsidianEnabled, obsidianVaultPath, sandboxMode, startObsidianWatcher, stopObsidianWatcher]);
 
-    useDesktopShellSync({ enabled: !sandboxMode, showTray, trayTooltip, closeBehavior });
+    useDesktopShellSync({
+        enabled: !sandboxMode, showTray, trayTooltip, closeBehavior,
+        trayLabels: { quickAdd: t('tray.quickAdd'), show: t('tray.show'), quit: t('tray.quit') },
+    });
 
     useEffect(() => {
         if (sandboxMode || import.meta.env.MODE === 'test' || import.meta.env.VITEST || process.env.NODE_ENV === 'test') return;
@@ -1293,6 +1302,7 @@ function App() {
     const handleViewChange = useCallback((view: string) => {
         const nextView = view === 'obsidian' && !useObsidianStore.getState().config.enabled ? 'settings' : view;
         const changeView = () => {
+            const trace = beginRendererNavigation(nextView);
             if (nextView !== 'settings') {
                 setSettingsInitialPage(undefined);
                 setSettingsOnboardingHintPage(undefined);
@@ -1309,6 +1319,7 @@ function App() {
             // Keep the current screen visible, just as for the other lazy routes.
             startTransition(() => {
                 setActiveView(nextView);
+                setNavigationTrace(trace);
             });
         };
         if (nextView === currentView) changeView();
@@ -1742,6 +1753,7 @@ function App() {
                         ) : (
                             <>
                                 {renderView()}
+                                <RendererNavigationProbe view={renderedView} trace={navigationTrace} />
                                 <StartupReadyProbe ready={startupDataReady} />
                             </>
                         )}
@@ -1814,6 +1826,7 @@ function App() {
                         blocked={startupPromptsBlocked}
                         prompts={startupPrompts}
                     />
+                    <CalendarOpenTaskModal controller={taskLinkController} readOnly={taskLinkController.openTask?.status === 'archived'} />
                     {externalSyncChange && (
                         <Dialog
                             onClose={() => !resolvingExternalSync && setExternalSyncChange(null)}

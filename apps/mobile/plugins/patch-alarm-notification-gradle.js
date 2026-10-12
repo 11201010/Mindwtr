@@ -1513,6 +1513,59 @@ const applyAlarmIosPendingKindPatchToSource = (original) => {
   );
 };
 
+// iOS cannot replace a delivered notification from a pending one: two pending
+// requests may not share an identifier (#888), and no app code runs when a
+// local notification is delivered in the background. So a task's reminders get
+// the task's `tag` as their thread (Notification Center stacks them as one),
+// snooze and the repeat re-arm keep it, and JS collapses each reminder thread
+// to its newest delivered notification on every reminder cycle.
+const applyAlarmIosReminderThreadPatchToSource = (original) => {
+  if (original.includes('// Mindwtr reminder threads')) return original;
+  const removeAllMarker = 'RCT_EXPORT_METHOD(removeAllFiredNotifications){';
+  const detailsBody = 'content.body = [NSString localizedUserNotificationStringForKey:details[@"message"] arguments:nil];';
+  const copiedBody = 'content.body = contentInfo.body;';
+  if (!original.includes(removeAllMarker) || !original.includes(detailsBody) || !original.includes(copiedBody)) return original;
+  return original
+    .split(detailsBody).join(`${detailsBody}
+            if ([details[@"tag"] isKindOfClass:[NSString class]] && [(NSString *)details[@"tag"] length] > 0) {
+                content.threadIdentifier = details[@"tag"];
+            }`)
+    .split(copiedBody).join(`${copiedBody}
+            content.threadIdentifier = contentInfo.threadIdentifier;`)
+    .replace(removeAllMarker, `// Mindwtr reminder threads: keeps only the newest delivered notification of
+// each reminder thread, so a task's earlier reminders leave the tray.
+RCT_EXPORT_METHOD(collapseDeliveredReminderNotifications:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject){
+    if (@available(iOS 10.0, *)) {
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> * _Nonnull notifications) {
+            NSMutableDictionary<NSString *, UNNotification *> *newest = [NSMutableDictionary dictionary];
+            NSMutableArray<NSString *> *superseded = [NSMutableArray array];
+            for (UNNotification *notification in notifications) {
+                NSString *thread = notification.request.content.threadIdentifier;
+                if (![thread hasPrefix:@"mindwtr-reminder:"]) continue;
+                UNNotification *kept = newest[thread];
+                if (kept == nil) {
+                    newest[thread] = notification;
+                } else if ([notification.date compare:kept.date] == NSOrderedDescending) {
+                    [superseded addObject:kept.request.identifier];
+                    newest[thread] = notification;
+                } else {
+                    [superseded addObject:notification.request.identifier];
+                }
+            }
+            if (superseded.count > 0) {
+                [center removeDeliveredNotificationsWithIdentifiers:superseded];
+            }
+            resolve(@(superseded.count));
+        }];
+    } else {
+        resolve(@0);
+    }
+}
+
+${removeAllMarker}`);
+};
+
 const logPatchedCandidate = (label, candidate) => {
   console.log(`[${label}] patched ${candidate}`);
 };
@@ -1565,6 +1618,85 @@ const applyAlarmExactPermissionModulePatchToSource = (original) => {
 
 ${marker}`
   );
+};
+
+const applyAlarmBootRecoveryUtilPatchToSource = (original) => {
+  const disabled = 'if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {';
+  const enabled = 'if (setting != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {';
+  const marker = '    private void enableBootReceiver(Context context) {';
+  if (!original.includes(marker) || (!original.includes(disabled) && !original.includes(enabled))) {
+    throw new Error('alarm-boot-recovery-util: boot enable anchor missing');
+  }
+  let next = original.replace(disabled, enabled);
+  if (next.includes('boolean rearmFutureAlarm(int id)')) return next;
+  return next.replace(marker, `    boolean rearmFutureAlarm(int id) {
+        AlarmModel alarm = getAlarmDB().getAlarm(id);
+        if (alarm == null || alarm.getActive() != 1) return false;
+        String scheduleType = alarm.getScheduleType();
+        if (!"once".equals(scheduleType) && !"repeat".equals(scheduleType)) return false;
+        Calendar fireTime = getCalendarFromAlarm(alarm);
+        fireTime.setLenient(false);
+        if ("once".equals(scheduleType) && fireTime.getTimeInMillis() <= System.currentTimeMillis()) return false;
+        // Reuse the existing row and alarmId-backed PendingIntent; never insert or replay a delivered one-shot.
+        setAlarm(alarm);
+        return true;
+    }
+
+${marker}`);
+};
+
+const applyAlarmBootRecoveryModulePatchToSource = (original) => {
+  if (original.includes('public void rearmAlarms(')) return original;
+  const marker = `    @ReactMethod
+    public void removeAllFiredNotifications() {`;
+  if (!original.includes(marker)) throw new Error('alarm-boot-recovery-module: method anchor missing');
+  return original.replace(marker, `    @ReactMethod
+    public void rearmAlarms(com.facebook.react.bridge.ReadableArray ids, Promise promise) {
+        // Serialize row advancement with AlarmReceiver, which runs on the main thread.
+        com.facebook.react.bridge.UiThreadUtil.runOnUiThread(() -> {
+            int rearmed = 0;
+            int skipped = 0;
+            int failed = 0;
+            java.util.HashSet<Integer> seen = new java.util.HashSet<>();
+            for (int index = 0; index < ids.size(); index++) {
+                try {
+                    double value = ids.getDouble(index);
+                    if (!Double.isFinite(value) || value <= 0 || value > Integer.MAX_VALUE || value != Math.floor(value)) {
+                        failed++;
+                        continue;
+                    }
+                    int id = (int) value;
+                    if (!seen.add(id)) continue;
+                    if (alarmUtil.rearmFutureAlarm(id)) rearmed++;
+                    else skipped++;
+                } catch (Exception error) {
+                    failed++;
+                }
+            }
+            try {
+                alarmUtil.setBootReceiver();
+                android.content.ComponentName receiver = new android.content.ComponentName(mReactContext, AlarmBootReceiver.class);
+                boolean bootEnabled = mReactContext.getPackageManager().getComponentEnabledSetting(receiver)
+                        == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+                android.app.AlarmManager manager = (android.app.AlarmManager) mReactContext
+                        .getSystemService(android.content.Context.ALARM_SERVICE);
+                boolean exactAllowed = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+                        || (manager != null && manager.canScheduleExactAlarms());
+                WritableMap result = Arguments.createMap();
+                result.putInt("requested", ids.size());
+                result.putInt("rearmed", rearmed);
+                result.putInt("skipped", skipped);
+                result.putInt("failed", failed);
+                result.putBoolean("bootEnabled", bootEnabled);
+                result.putBoolean("exactAllowed", exactAllowed);
+                promise.resolve(result);
+            } catch (Exception error) {
+                promise.reject("E_REARM_ALARMS_FAILED", error);
+            }
+        });
+    }
+
+${marker}`);
 };
 
 // A reminder cycle forgets an expired alarm and deletes its row, but its
@@ -1854,6 +1986,24 @@ const PATCHES = [
     appliedMarker: 'public void clearNotification(int notificationId)',
   },
   {
+    id: 'alarm-boot-recovery-util',
+    platform: 'android',
+    getCandidates: androidJavaCandidates('AlarmUtil.java'),
+    transform: applyAlarmBootRecoveryUtilPatchToSource,
+    required: true,
+    firstMatchOnly: false,
+    appliedMarker: 'boolean rearmFutureAlarm(int id)',
+  },
+  {
+    id: 'alarm-boot-recovery-module',
+    platform: 'android',
+    getCandidates: androidJavaCandidates('ANModule.java'),
+    transform: applyAlarmBootRecoveryModulePatchToSource,
+    required: true,
+    firstMatchOnly: false,
+    appliedMarker: 'public void rearmAlarms(',
+  },
+  {
     id: 'alarm-ios-complete-action',
     platform: 'ios',
     getCandidates: iosSourceCandidates,
@@ -1900,6 +2050,18 @@ const PATCHES = [
     firstMatchOnly: true,
     appliedMarker: '// Mindwtr pending notification kind',
   },
+
+  {
+    id: 'alarm-ios-reminder-thread',
+    platform: 'ios',
+    getCandidates: iosSourceCandidates,
+    transform: applyAlarmIosReminderThreadPatchToSource,
+    required: true,
+    firstMatchOnly: true,
+    appliedMarker: '// Mindwtr reminder threads',
+  },
+
+
 
 ];
 

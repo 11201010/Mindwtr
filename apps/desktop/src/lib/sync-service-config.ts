@@ -57,11 +57,13 @@ type WebDavConfigWrite = {
 };
 
 const setWebDavConfigLocal = (config: WebDavConfigWrite) => {
+    if (!config.url && getSyncBackendLocal() === 'webdav') setSyncBackendLocal('off');
     localStorage.setItem(WEBDAV_URL_KEY, config.url);
     localStorage.setItem(WEBDAV_USERNAME_KEY, config.username || '');
     localStorage.setItem(WEBDAV_ALLOW_INSECURE_HTTP_KEY, config.allowInsecureHttp === true ? 'true' : 'false');
     localStorage.setItem(WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY, config.allowWeakFingerprint === false ? 'false' : 'true');
     if (!config.url || config.replacePassword === true) {
+        if (!config.url) localStorage.removeItem(WEBDAV_PASSWORD_KEY);
         if (config.password) {
             sessionStorage.setItem(WEBDAV_PASSWORD_KEY, config.password);
         } else {
@@ -183,6 +185,19 @@ export async function writeWebDavConfig(
         setWebDavConfigLocal(config);
         return;
     }
+    const capturedLegacy = !config.url ? new Map([
+        WEBDAV_URL_KEY, WEBDAV_USERNAME_KEY, WEBDAV_PASSWORD_KEY,
+        WEBDAV_ALLOW_INSECURE_HTTP_KEY, WEBDAV_ALLOW_WEAK_FINGERPRINT_KEY, SYNC_BACKEND_KEY,
+    ].map((field) => [field, localStorage.getItem(field)])) : null;
+    const capturedSessionPassword = capturedLegacy ? sessionStorage.getItem(WEBDAV_PASSWORD_KEY) : null;
+    const retireLegacy = () => {
+        // Retired renderer credentials must not migrate back after an explicit clear.
+        for (const [field, value] of capturedLegacy ?? []) {
+            if (field === SYNC_BACKEND_KEY && value !== 'webdav') continue;
+            if (localStorage.getItem(field) === value) localStorage.removeItem(field);
+        }
+        if (sessionStorage.getItem(WEBDAV_PASSWORD_KEY) === capturedSessionPassword) sessionStorage.removeItem(WEBDAV_PASSWORD_KEY);
+    };
     try {
         await deps.invokeNative('set_webdav_config', {
             url: config.url,
@@ -192,7 +207,14 @@ export async function writeWebDavConfig(
             allowWeakFingerprint: config.allowWeakFingerprint,
             replacePassword: config.replacePassword === true,
         });
+        if (!config.url) retireLegacy();
     } catch (error) {
+        if (!config.url) {
+            try {
+                const persisted = await deps.invokeNative<WebDavConfig>('get_webdav_config');
+                if (!persisted.url && !persisted.username && persisted.hasPassword === false) retireLegacy();
+            } catch { /* Removal remains unconfirmed; keep the captured legacy values for retry. */ }
+        }
         deps.reportError('Failed to set WebDAV config', error);
         throw error;
     }

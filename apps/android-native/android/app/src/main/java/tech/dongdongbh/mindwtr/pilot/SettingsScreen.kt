@@ -96,8 +96,10 @@ fun SettingsList(model: InboxViewModel) = with(model.menu.settings) {
             "general" -> GeneralSettings(model, shown.view)
             "manage" -> ManageSettings(model, shown)
             "data" -> DataSettings(model, shown.view)
+            "notifications" -> NotificationsSettings(model, shown.view)
             "sync" -> SyncSettings(model, shown.view)
             "ai" -> AISettings(model, shown.view)
+            "about" -> AboutSettings(model, shown.view)
             else -> GtdSettings(model, shown.view)
         }
         Spacer(Modifier.height(16.dp))
@@ -184,17 +186,22 @@ internal fun Card(top: Int = 0, content: @Composable ColumnScope.() -> Unit) =
  * lock's line in RN's danger color under the description (TalkBack hears it when it shows).
  */
 @Composable
-private fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
-                       trailing: @Composable RowScope.() -> Unit = {}) {
+internal fun SettingRow(label: String, description: String?, divider: Boolean = false, modifier: Modifier = Modifier, failure: String? = null,
+                        dimmed: Boolean = false, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val c = LocalTheme.current.colors
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).then(if (divider) Modifier.hairline(c.border, top = true) else Modifier).then(modifier).padding(16.dp),
         verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+        // RN's dimmed row fades its label and description only (opacity 0.5), never its control.
+        Column(Modifier.weight(1f).padding(end = 16.dp).fade(if (dimmed) 0.5f else 1f)) {
             Text(label, style = rnText(16, 500, 21), color = c.text)
             description?.let { Text(it, style = rnText(13, 400, 18), color = c.secondaryText, modifier = Modifier.padding(top = 2.dp)) }
             failure?.let { Text(it, style = rnText(13, 400, 18), color = c.danger, modifier = Modifier.padding(top = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
         }
-        trailing()
+        // RN's settingRow gap (12) between the label block and its control.
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            trailing()
+        }
     }
 }
 
@@ -339,6 +346,12 @@ private fun DataSettings(model: InboxViewModel, view: JSONObject) = with(model.m
     val diagnostics = view.getJSONObject("diagnostics")
     SectionTitle(diagnostics.getString("title"), top = 24, color = c.text)
     Card {
+        // RN's analytics switch, in a build with the heartbeat: on while opted out; turning it on asks core's question first.
+        diagnostics.optJSONObject("analytics")?.let { analytics ->
+            ToggleRow(model, analytics, false, props = theme.analyticsSwitch) { edit ->
+                if (edit.getBoolean("value")) settings.editLocal { put("analyticsConfirm", true) } else settings.data(edit)
+            }
+        }
         // RN always draws this row's top border (it follows the Encryption block). Share and Clear touch no app data, so they work
         // in every state, as RN's do (a retry owed included).
         ToggleRow(model, diagnostics.getJSONObject("debugLogging"), true) { settings.data(it) }
@@ -964,6 +977,20 @@ private fun SettingsDialogs(model: InboxViewModel, page: SettingsPage) = with(mo
         "manageEditor" -> ManageEditor(model, page.view, open)
     }
     if (settings.screen == "ai") AISettingsDialogs(model, page.view)
+    if (settings.screen == "about") AboutOverlays(model, page.view)
+    // Data's analytics question (RN's Alert): Keep enabled closes it; Disable sends the switch's edit.
+    if (settings.screen == "data" && settings.local.optBoolean("analyticsConfirm")) page.view.getJSONObject("diagnostics").optJSONObject("analytics")?.let { analytics ->
+        val confirm = analytics.getJSONObject("confirm")
+        val close = { settings.editLocal { remove("analyticsConfirm") } }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = close,
+            title = { Text(confirm.getString("title")) },
+            text = { Text(confirm.getString("message")) },
+            confirmButton = { androidx.compose.material3.TextButton({ close(); settings.data(analytics.getJSONObject("edit")) }, Modifier.testTag("analytics-disable")) {
+                Text(confirm.getString("disableLabel").uppercase()) } },
+            dismissButton = { androidx.compose.material3.TextButton(close, Modifier.testTag("analytics-keep")) { Text(confirm.getString("keepLabel").uppercase()) } },
+        )
+    }
     if (settings.screen == "gtd-task-editor") settings.local.optString("sheetField").ifEmpty { null }?.let { id ->
         val field = page.view.getJSONObject("taskEditor").menuObjects("groups").flatMap { it.menuObjects("fields") }.firstOrNull { it.getString("id") == id }
         if (field != null) FieldSheet(model, field)
@@ -983,11 +1010,12 @@ private fun Picker(model: InboxViewModel, view: JSONObject, picker: String) = wi
         "quickAccess" -> view.getJSONObject("appearance").getJSONObject("quickAccess")
         "language" -> view.getJSONObject("language")
         "defaultArea" -> view.getJSONObject("capture").getJSONObject("defaultArea")
+        "weeklyReviewDay" -> view.getJSONObject("weeklyReview").getJSONObject("day")
         else -> view.getJSONObject("regional").optJSONObject(picker)
     } ?: return@with
     val groups = if (picker == "theme") source.getJSONArray("groups").let { all -> List(all.length()) { all.getJSONArray(it).let { g -> List(g.length()) { g.getJSONObject(it) } } } }
         else listOf(source.menuObjects("options"))
-    val write = { edit: JSONObject -> keepDialog(null); if (picker == "defaultArea") settings.gtd(edit) else settings.general(edit) }
+    val write = { edit: JSONObject -> keepDialog(null); when (picker) { "defaultArea" -> settings.gtd(edit); "weeklyReviewDay" -> settings.notifications(edit); else -> settings.general(edit) } }
     BackHandler { keepDialog(null) }
     Box(Modifier.fillMaxSize().background(theme.settingsScrim).pointerInput(Unit) { detectTapGestures { keepDialog(null) } }.padding(20.dp),
         contentAlignment = Alignment.Center) {
@@ -1011,7 +1039,8 @@ private fun Picker(model: InboxViewModel, view: JSONObject, picker: String) = wi
                                     contentAlignment = Alignment.Center) { Icon(icon, null, tint = if (on) c.tint else c.secondaryText, modifier = Modifier.size(17.dp)) }
                             }
                             Text(label, style = rnText(13, 600), color = if (on) c.tint else c.text, maxLines = 2, modifier = Modifier.weight(1f))
-                            if (on) Icon(SettingsIonicons.Checkmark, null, tint = c.tint, modifier = Modifier.size(18.dp))
+                            // Notifications' day picker draws RN's lucide Check (stroke 2.5); the others Ionicons' checkmark.
+                            if (on) Icon(if (picker == "weeklyReviewDay") Lucide.CheckPicked else SettingsIonicons.Checkmark, null, tint = c.tint, modifier = Modifier.size(18.dp))
                         }
                     }
                 }

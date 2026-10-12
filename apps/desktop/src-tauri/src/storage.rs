@@ -3777,6 +3777,67 @@ where
     result
 }
 
+fn row_to_area_value(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+    let mut map = serde_json::Map::new();
+    map.insert("id".to_string(), Value::String(row.get::<_, String>("id")?));
+    map.insert(
+        "name".to_string(),
+        Value::String(row.get::<_, String>("name")?),
+    );
+    if let Ok(val) = row.get::<_, Option<String>>("color") {
+        if let Some(v) = val {
+            map.insert("color".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("icon") {
+        if let Some(v) = val {
+            map.insert("icon".to_string(), Value::String(v));
+        }
+    }
+    if let Some(num) = json_number_from_f64(row.get::<_, f64>("orderNum")?) {
+        map.insert("order".to_string(), num);
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
+        if let Some(v) = val {
+            map.insert("deletedAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("deletedAtBeforeProjectArchive") {
+        if let Some(v) = val {
+            map.insert(
+                "deletedAtBeforeProjectArchive".to_string(),
+                Value::String(v),
+            );
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("projectArchivedAt") {
+        if let Some(v) = val {
+            map.insert("projectArchivedAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<i64>>("rev") {
+        if let Some(v) = val {
+            map.insert("rev".to_string(), Value::Number(v.into()));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("revBy") {
+        if let Some(v) = val {
+            map.insert("revBy".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("createdAt") {
+        if let Some(v) = val {
+            map.insert("createdAt".to_string(), Value::String(v));
+        }
+    }
+    if let Ok(val) = row.get::<_, Option<String>>("updatedAt") {
+        if let Some(v) = val {
+            map.insert("updatedAt".to_string(), Value::String(v));
+        }
+    }
+    Ok(Value::Object(map))
+}
+
 pub(crate) fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
     let mut tasks_stmt = conn
         .prepare("SELECT * FROM tasks")
@@ -3828,66 +3889,7 @@ pub(crate) fn read_sqlite_data(conn: &Connection) -> Result<Value, String> {
         .prepare("SELECT * FROM areas")
         .map_err(|e| e.to_string())?;
     let area_rows = areas_stmt
-        .query_map([], |row| {
-            let mut map = serde_json::Map::new();
-            map.insert("id".to_string(), Value::String(row.get::<_, String>("id")?));
-            map.insert(
-                "name".to_string(),
-                Value::String(row.get::<_, String>("name")?),
-            );
-            if let Ok(val) = row.get::<_, Option<String>>("color") {
-                if let Some(v) = val {
-                    map.insert("color".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("icon") {
-                if let Some(v) = val {
-                    map.insert("icon".to_string(), Value::String(v));
-                }
-            }
-            if let Some(num) = json_number_from_f64(row.get::<_, f64>("orderNum")?) {
-                map.insert("order".to_string(), num);
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("deletedAt") {
-                if let Some(v) = val {
-                    map.insert("deletedAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("deletedAtBeforeProjectArchive") {
-                if let Some(v) = val {
-                    map.insert(
-                        "deletedAtBeforeProjectArchive".to_string(),
-                        Value::String(v),
-                    );
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("projectArchivedAt") {
-                if let Some(v) = val {
-                    map.insert("projectArchivedAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<i64>>("rev") {
-                if let Some(v) = val {
-                    map.insert("rev".to_string(), Value::Number(v.into()));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("revBy") {
-                if let Some(v) = val {
-                    map.insert("revBy".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("createdAt") {
-                if let Some(v) = val {
-                    map.insert("createdAt".to_string(), Value::String(v));
-                }
-            }
-            if let Ok(val) = row.get::<_, Option<String>>("updatedAt") {
-                if let Some(v) = val {
-                    map.insert("updatedAt".to_string(), Value::String(v));
-                }
-            }
-            Ok(Value::Object(map))
-        })
+        .query_map([], row_to_area_value)
         .map_err(|e| e.to_string())?;
     let mut areas: Vec<Value> = Vec::new();
     for row in area_rows {
@@ -4253,6 +4255,7 @@ impl TaskMutationReadScope {
         project_id: Option<&str>,
         section_id: Option<&str>,
         area_id: Option<&str>,
+        include_focus_context: bool,
     ) -> Self {
         Self {
             task_id: Some(task_id.to_string()),
@@ -4260,6 +4263,7 @@ impl TaskMutationReadScope {
             section_id: Self::normalize_container_id(section_id),
             area_id: Self::normalize_container_id(area_id),
             include_target_containers: true,
+            include_focus_context,
             ..Self::default()
         }
     }
@@ -4272,9 +4276,19 @@ pub(crate) struct ProjectMutationReadScope {
     target_area_supplied: bool,
     include_children: bool,
     include_section_tasks: bool,
+    update_area: bool,
 }
 
 impl ProjectMutationReadScope {
+    pub(crate) fn area_update(area_id: &str) -> Self {
+        Self {
+            target_area_id: Some(area_id.to_string()),
+            target_area_supplied: true,
+            update_area: true,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn lifecycle(project_id: &str) -> Self {
         Self {
             project_id: Some(project_id.to_string()),
@@ -4310,6 +4324,7 @@ impl ProjectMutationReadScope {
 
 #[derive(Debug, Default)]
 pub(crate) struct ProjectMutationRows {
+    pub(crate) areas: Vec<Value>,
     pub(crate) projects: Vec<Value>,
     pub(crate) tasks: Vec<Value>,
     pub(crate) sections: Vec<Value>,
@@ -4493,6 +4508,7 @@ where
 fn read_task_mutation_data(
     conn: &Connection,
     scope: &TaskMutationReadScope,
+    now: OffsetDateTime,
 ) -> Result<(Value, TaskMutationReadStats), String> {
     let mut stats = TaskMutationReadStats::default();
     let mut tasks = Vec::new();
@@ -4603,44 +4619,58 @@ fn read_task_mutation_data(
         .unwrap_or_default();
 
     let mut focused_count = None;
-    if scope.include_focus_context {
+    if scope.include_focus_context
+        && (scope.task_id.is_none()
+            || target.as_ref().is_some_and(|task| {
+                task.as_object().is_some_and(|task| {
+                    !crate::local_api::local_api_task_is_counted_as_focused(
+                        task,
+                        now,
+                        &crate::local_query::local_wall,
+                    )
+                })
+            }))
+    {
         stats.statements += 1;
-        let today = OffsetDateTime::now_utc().date().to_string();
-        // Match local_api_task_is_future_start: choose recurring fallback fields by instant,
-        // then compare the chosen value's own calendar date against today.
+        let today = crate::local_query::local_wall(now)
+            .map(|value| value.date())
+            .unwrap_or_else(|| now.to_offset(time::UtcOffset::UTC).date())
+            .to_string();
+        // Match local_api_task_is_future_start: offset timestamps use local days;
+        // date-only and floating timestamps keep their written days.
         let count: i64 = conn
             .query_row(
                 "WITH focus_values AS (
                    SELECT startTime, dueDate, reviewAt, recurrence,
                      CASE WHEN julianday(startTime) IS NOT NULL
                        AND date(substr(startTime, 1, 10), '+0 days') = substr(startTime, 1, 10)
-                       AND (length(startTime) = 10 OR (
-                         substr(startTime, 11, 1) IN ('T', 't')
-                         AND (upper(substr(startTime, -1, 1)) = 'Z'
-                           OR (substr(startTime, -6, 1) IN ('+', '-')
-                             AND substr(startTime, -3, 1) = ':'))
-                       ))
-                       THEN substr(startTime, 1, 10)
+                       AND (length(startTime) = 10 OR substr(startTime, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(startTime, -1, 1)) = 'Z'
+                         OR (substr(startTime, -6, 1) IN ('+', '-')
+                           AND substr(startTime, -3, 1) = ':')
+                         THEN COALESCE(date(startTime, 'localtime'), date(startTime))
+                         ELSE substr(startTime, 1, 10)
+                       END
                      END AS startDay,
                      CASE WHEN julianday(dueDate) IS NOT NULL
                        AND date(substr(dueDate, 1, 10), '+0 days') = substr(dueDate, 1, 10)
-                       AND (length(dueDate) = 10 OR (
-                         substr(dueDate, 11, 1) IN ('T', 't')
-                         AND (upper(substr(dueDate, -1, 1)) = 'Z'
-                           OR (substr(dueDate, -6, 1) IN ('+', '-')
-                             AND substr(dueDate, -3, 1) = ':'))
-                       ))
-                       THEN substr(dueDate, 1, 10)
+                       AND (length(dueDate) = 10 OR substr(dueDate, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(dueDate, -1, 1)) = 'Z'
+                         OR (substr(dueDate, -6, 1) IN ('+', '-')
+                           AND substr(dueDate, -3, 1) = ':')
+                         THEN COALESCE(date(dueDate, 'localtime'), date(dueDate))
+                         ELSE substr(dueDate, 1, 10)
+                       END
                      END AS dueDay,
                      CASE WHEN julianday(reviewAt) IS NOT NULL
                        AND date(substr(reviewAt, 1, 10), '+0 days') = substr(reviewAt, 1, 10)
-                       AND (length(reviewAt) = 10 OR (
-                         substr(reviewAt, 11, 1) IN ('T', 't')
-                         AND (upper(substr(reviewAt, -1, 1)) = 'Z'
-                           OR (substr(reviewAt, -6, 1) IN ('+', '-')
-                             AND substr(reviewAt, -3, 1) = ':'))
-                       ))
-                       THEN substr(reviewAt, 1, 10)
+                       AND (length(reviewAt) = 10 OR substr(reviewAt, 11, 1) IN ('T', 't'))
+                       THEN CASE WHEN upper(substr(reviewAt, -1, 1)) = 'Z'
+                         OR (substr(reviewAt, -6, 1) IN ('+', '-')
+                           AND substr(reviewAt, -3, 1) = ':')
+                         THEN COALESCE(date(reviewAt, 'localtime'), date(reviewAt))
+                         ELSE substr(reviewAt, 1, 10)
+                       END
                      END AS reviewDay
                    FROM tasks
                    WHERE isFocusedToday = 1
@@ -4655,7 +4685,7 @@ fn read_task_mutation_data(
                      THEN CASE
                        WHEN dueDay IS NULL THEN reviewDay
                        WHEN reviewDay IS NULL THEN dueDay
-                       WHEN julianday(dueDate) <= julianday(reviewAt) THEN dueDay
+                       WHEN dueDay <= reviewDay THEN dueDay
                        ELSE reviewDay
                      END
                    END AS deferDate
@@ -4673,15 +4703,25 @@ fn read_task_mutation_data(
         stats.rows += 1;
         focused_count = Some(count.max(0) as u64);
 
-        let focus_project_id = scope.project_id.as_deref().or_else(|| {
-            scope.section_id.as_deref().and_then(|section_id| {
-                sections
-                    .iter()
-                    .find(|section| section.get("id").and_then(Value::as_str) == Some(section_id))
-                    .and_then(|section| section.get("projectId"))
-                    .and_then(Value::as_str)
+        let focus_section_id = scope
+            .section_id
+            .as_deref()
+            .or_else(|| target.as_ref()?.get("sectionId")?.as_str());
+        let focus_project_id = scope
+            .project_id
+            .as_deref()
+            .or_else(|| {
+                focus_section_id.and_then(|section_id| {
+                    sections
+                        .iter()
+                        .find(|section| {
+                            section.get("id").and_then(Value::as_str) == Some(section_id)
+                        })
+                        .and_then(|section| section.get("projectId"))
+                        .and_then(Value::as_str)
+                })
             })
-        });
+            .or(current_project_id);
         if let Some(project_id) = focus_project_id {
             if let Some(project) = projects
                 .iter()
@@ -4690,8 +4730,9 @@ fn read_task_mutation_data(
                 if project.get("isSequential").and_then(Value::as_bool) == Some(true) {
                     let section_scoped =
                         project.get("sequentialScope").and_then(Value::as_str) == Some("section");
-                    if section_scoped {
-                        if let Some(section_id) = scope.section_id.as_deref() {
+                    // A patch can move or clear its section before eligibility is checked.
+                    if section_scoped && scope.task_id.is_none() {
+                        if let Some(section_id) = focus_section_id {
                             append_scoped_task_rows(
                                 conn,
                                 "SELECT * FROM tasks
@@ -4774,6 +4815,31 @@ fn read_project_mutation_data(
     let mut tasks = Vec::new();
     let mut sections = Vec::new();
     let mut areas = Vec::new();
+
+    if scope.update_area {
+        stats.statements += 1;
+        let mut statement = conn
+            .prepare("SELECT * FROM areas")
+            .map_err(|e| e.to_string())?;
+        for row in statement
+            .query_map([], row_to_area_value)
+            .map_err(|e| e.to_string())?
+        {
+            areas.push(row.map_err(|e| e.to_string())?);
+            stats.rows += 1;
+        }
+        stats.statements += 1;
+        let mut statement = conn
+            .prepare("SELECT * FROM projects WHERE areaId = ?1")
+            .map_err(|e| e.to_string())?;
+        for row in statement
+            .query_map([scope.target_area_id.as_deref()], row_to_project_value)
+            .map_err(|e| e.to_string())?
+        {
+            projects.push(row.map_err(|e| e.to_string())?);
+            stats.rows += 1;
+        }
+    }
 
     if let Some(project_id) = scope.project_id.as_deref() {
         load_scoped_project(conn, project_id, &mut projects, &mut stats)?;
@@ -5051,6 +5117,28 @@ where
     let result = (|| {
         let (mut canonical, read_stats) = read_project_mutation_data(conn, scope)?;
         let (result, changed) = mutate(&mut canonical)?;
+        for area in changed.areas {
+            // UPDATE preserves child foreign keys; REPLACE would detach them.
+            let changed = conn
+                .execute(
+                    "UPDATE areas SET name = ?2, color = ?3, icon = ?4, orderNum = ?5,
+                 rev = ?6, revBy = ?7, updatedAt = ?8 WHERE id = ?1",
+                    params![
+                        area["id"].as_str(),
+                        area["name"].as_str(),
+                        area["color"].as_str(),
+                        area["icon"].as_str(),
+                        area["order"].as_f64(),
+                        area["rev"].as_i64(),
+                        area["revBy"].as_str(),
+                        area["updatedAt"].as_str()
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            if changed != 1 {
+                return Err("Area not found".to_string());
+            }
+        }
         let mut written_ids = HashSet::new();
         for project in changed.projects {
             let project_id = project
@@ -5161,6 +5249,23 @@ pub(crate) fn local_operation_test_seed(conn: &mut Connection, data: &Value) -> 
 }
 
 #[cfg(test)]
+pub(crate) fn local_area_operation_test_commit<F>(
+    conn: &Connection,
+    area_id: &str,
+    mut mutate: F,
+) -> Result<Value, String>
+where
+    F: FnMut(&mut Value) -> Result<((), ProjectMutationRows), String>,
+{
+    commit_project_row_mutation(
+        conn,
+        &ProjectMutationReadScope::area_update(area_id),
+        &mut mutate,
+    )?;
+    read_sqlite_data(conn)
+}
+
+#[cfg(test)]
 pub(crate) fn local_operation_test_commit<F>(
     conn: &Connection,
     scope: TaskMutationReadScope,
@@ -5184,7 +5289,8 @@ where
     conn.execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| e.to_string())?;
     let result = (|| {
-        let (mut canonical, read_stats) = read_task_mutation_data(conn, scope)?;
+        let (mut canonical, read_stats) =
+            read_task_mutation_data(conn, scope, OffsetDateTime::now_utc())?;
         let (result, changed_tasks) = mutate(&mut canonical)?;
         let mut written_ids = HashSet::new();
         for task in changed_tasks {
@@ -10092,6 +10198,7 @@ mod tests {
                         projects: vec![project],
                         tasks,
                         sections,
+                        ..ProjectMutationRows::default()
                     },
                 ))
             };
@@ -10176,6 +10283,7 @@ mod tests {
                     projects: vec![project],
                     tasks,
                     sections,
+                    ..ProjectMutationRows::default()
                 },
             ))
         };
@@ -10360,10 +10468,75 @@ mod tests {
     }
 
     #[test]
+    fn focused_create_scope_counts_local_schedule_days() {
+        let conn = Connection::open_in_memory().expect("database");
+        conn.execute_batch(SQLITE_SCHEMA).expect("schema");
+        let now = OffsetDateTime::parse(
+            "2026-10-11T23:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let local_now = crate::local_query::local_wall(now).unwrap();
+        let today = local_now.date();
+        let tomorrow = today.next_day().unwrap();
+        let offset = time::UtcOffset::from_whole_seconds(
+            (local_now.assume_utc().unix_timestamp() - now.unix_timestamp()) as i32,
+        )
+        .unwrap();
+        let offset_today = today
+            .with_hms(23, 30, 0)
+            .unwrap()
+            .assume_offset(offset)
+            .to_offset(time::UtcOffset::from_hms(14, 0, 0).unwrap())
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        for (index, schedule) in [
+            serde_json::json!({"startTime": today.to_string()}),
+            serde_json::json!({"startTime": format!("{today}T23:30")}),
+            serde_json::json!({"startTime": offset_today}),
+            serde_json::json!({"startTime": tomorrow.to_string()}),
+            serde_json::json!({"startTime": format!("{tomorrow}T07:00")}),
+            serde_json::json!({
+                "dueDate": tomorrow.to_string(), "reviewAt": offset_today,
+                "recurrence": {"rule": "daily"}
+            }),
+            serde_json::json!({
+                "dueDate": offset_today, "reviewAt": tomorrow.to_string(),
+                "recurrence": {"rule": "daily"}
+            }),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut task = schedule.as_object().unwrap().clone();
+            task.extend(
+                serde_json::json!({
+                    "id": format!("focused-{index}"), "title": "Focus", "status": "next",
+                    "isFocusedToday": true, "tags": [], "contexts": [], "rev": 1,
+                    "createdAt": "2026-10-11T23:00:00Z", "updatedAt": "2026-10-11T23:00:00Z"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            );
+            replace_task_row(&conn, &Value::Object(task)).expect("seed task");
+        }
+        let scope = TaskMutationReadScope::create(None, None, None, true);
+        let (data, _) = read_task_mutation_data(&conn, &scope, now).expect("Focus context");
+        assert_eq!(
+            data[TASK_MUTATION_FOCUSED_COUNT_KEY], 5,
+            "SQL Focus count must use local schedule days"
+        );
+    }
+
+    #[test]
     fn focused_create_scope_reads_only_referenced_context_and_sequential_candidates() {
         let conn = Connection::open_in_memory().expect("database");
         conn.execute_batch(SQLITE_SCHEMA).expect("schema");
-        let today = OffsetDateTime::now_utc().date();
+        let now = OffsetDateTime::now_utc();
+        let today = crate::local_query::local_wall(now)
+            .map(|value| value.date())
+            .unwrap_or_else(|| now.date());
         let tomorrow = today.next_day().expect("tomorrow");
         let mut tasks = (0..1_000)
             .map(|index| {
@@ -10402,8 +10575,8 @@ mod tests {
             }),
             serde_json::json!({
                 "id": "recurring-queued-focus", "title": "Recurring queued", "status": "next",
-                "dueDate": format!("{tomorrow}T00:30:00+14:00"),
-                "reviewAt": format!("{today}T23:45:00-10:00"),
+                "dueDate": tomorrow.to_string(),
+                "reviewAt": format!("{tomorrow}T23:45:00"),
                 "recurrence": { "rule": "daily" }, "isFocusedToday": true,
                 "tags": [], "contexts": [], "rev": 1,
                 "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
@@ -10438,7 +10611,7 @@ mod tests {
             true,
         );
 
-        let (data, stats) = read_task_mutation_data(&conn, &scope).expect("scoped context");
+        let (data, stats) = read_task_mutation_data(&conn, &scope, now).expect("scoped context");
 
         assert_eq!(data["projects"].as_array().map(Vec::len), Some(1));
         assert_eq!(data["sections"].as_array().map(Vec::len), Some(1));
@@ -10478,9 +10651,77 @@ mod tests {
                 "createdAt": "2026-07-31T08:00:00Z", "updatedAt": "2026-07-31T08:00:00Z"
             }),
         )
-        .expect("insert unsupported local datetime");
-        let (data, _) = read_task_mutation_data(&conn, &scope).expect("invalid date context");
-        assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 3);
+        .expect("insert future local datetime");
+        let (data, _) = read_task_mutation_data(&conn, &scope, now).expect("invalid date context");
+        assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 2);
+    }
+
+    #[test]
+    fn patch_focus_scope_counts_only_new_stars_and_reads_current_sequential_chain() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SQLITE_SCHEMA).unwrap();
+        replace_data_in_transaction(&conn, serde_json::json!({
+            "tasks": [
+                {"id": "first", "title": "First", "status": "next", "projectId": "project", "sectionId": "section", "orderNum": 0},
+                {"id": "second", "title": "Second", "status": "next", "projectId": "project", "sectionId": "section", "orderNum": 1},
+                {"id": "unsectioned", "title": "Unsectioned", "status": "next", "projectId": "project", "orderNum": -1},
+                {"id": "focused", "title": "Focused", "status": "next", "isFocusedToday": true}
+            ],
+            "projects": [{"id": "project", "title": "Sequential", "status": "active", "isSequential": true, "sequentialScope": "section", "color": "#000000"}],
+            "sections": [{"id": "section", "title": "Section", "projectId": "project"}],
+            "areas": [], "people": [], "settings": {"gtd": {"focusTaskLimit": 3}}
+        })).unwrap();
+        let now = OffsetDateTime::now_utc();
+        for (id, requested) in [("second", false), ("focused", true), ("missing", true)] {
+            let scope = TaskMutationReadScope::patch(id, None, None, None, requested);
+            let (data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+            assert!(
+                data.get(TASK_MUTATION_FOCUSED_COUNT_KEY).is_none(),
+                "{id} {requested}"
+            );
+            assert!(data["tasks"].as_array().unwrap().len() <= 1);
+        }
+        let patch = serde_json::json!({"isFocusedToday": true});
+        for id in ["first", "second"] {
+            let scope = TaskMutationReadScope::patch(id, None, None, None, true);
+            let (mut data, stats) = read_task_mutation_data(&conn, &scope, now).unwrap();
+            assert_eq!(data[TASK_MUTATION_FOCUSED_COUNT_KEY], 1);
+            assert!(stats.task_rows <= 4);
+            assert!(data["tasks"].as_array().unwrap().len() >= 2);
+            let task =
+                crate::local_api::patch_task_in_data(&mut data, id, patch.as_object().unwrap())
+                    .expect("core accepts sequential stars below the cap");
+            assert_eq!(task["isFocusedToday"], true, "{id}");
+        }
+        let scope = TaskMutationReadScope::patch("first", None, None, None, true);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let reordered = serde_json::json!({"isFocusedToday": true, "orderNum": 2});
+        let task = crate::local_api::patch_task_in_data(
+            &mut data,
+            "first",
+            reordered.as_object().unwrap(),
+        )
+        .expect("core accepts a star when reordering below the cap");
+        assert_eq!(task["isFocusedToday"], true);
+        assert_eq!(task["orderNum"], 2);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let moved = serde_json::json!({"isFocusedToday": true, "sectionId": null});
+        let task =
+            crate::local_api::patch_task_in_data(&mut data, "first", moved.as_object().unwrap())
+                .expect("core accepts a star when clearing its section below the cap");
+        assert_eq!(task["isFocusedToday"], true);
+        assert!(task.get("sectionId").is_none());
+        conn.execute(
+            "UPDATE projects SET status = 'someday' WHERE id = 'project'",
+            [],
+        )
+        .unwrap();
+        let scope = TaskMutationReadScope::patch("first", None, None, None, true);
+        let (mut data, _) = read_task_mutation_data(&conn, &scope, now).unwrap();
+        let task =
+            crate::local_api::patch_task_in_data(&mut data, "first", patch.as_object().unwrap())
+                .expect("core accepts a star in an inactive project below the cap");
+        assert_eq!(task["isFocusedToday"], true);
     }
 
     #[test]
@@ -10520,8 +10761,10 @@ mod tests {
             Some("project-b"),
             Some("section-b"),
             Some("area-b"),
+            false,
         );
-        let (data, stats) = read_task_mutation_data(&conn, &scope).expect("patch context");
+        let (data, stats) = read_task_mutation_data(&conn, &scope, OffsetDateTime::now_utc())
+            .expect("patch context");
 
         assert_eq!(data["tasks"].as_array().map(Vec::len), Some(1));
         assert_eq!(data["projects"].as_array().map(Vec::len), Some(2));
@@ -10682,7 +10925,8 @@ mod tests {
                 let conn = Connection::open(db_path).expect("writer connection");
                 conn.busy_timeout(Duration::from_secs(5))
                     .expect("writer busy timeout");
-                let scope = TaskMutationReadScope::patch(task_id, Some("project-b"), None, None);
+                let scope =
+                    TaskMutationReadScope::patch(task_id, Some("project-b"), None, None, false);
                 let patch = serde_json::json!({ "projectId": "project-b" })
                     .as_object()
                     .expect("project patch")

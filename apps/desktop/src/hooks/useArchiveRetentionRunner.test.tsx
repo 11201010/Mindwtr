@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => ({
     days: 0, loading: false, error: null as string | null, editLockCount: 0, editingTaskId: null as string | null,
-    run: vi.fn(async () => ({ success: true })),
+    run: vi.fn(async (_options: { syncConfigured: boolean }) => ({ success: true })),
+    syncBackend: vi.fn(async (): Promise<string> => 'off'),
 }));
-vi.mock('@mindwtr/core', () => ({
+vi.mock('@mindwtr/core', async (importOriginal) => ({
+    canAutoSync: (await importOriginal<typeof import('@mindwtr/core')>()).canAutoSync,
     isArchiveRetentionDays: (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 36500,
     useTaskStore: Object.assign(
         (selector: (state: unknown) => unknown) => selector({ settings: { gtd: { archiveRetentionDays: harness.days } } }),
@@ -14,8 +16,20 @@ vi.mock('@mindwtr/core', () => ({
 }));
 vi.mock('../store/ui-store', () => ({ useUiStore: { getState: () => ({ editingTaskId: harness.editingTaskId }) } }));
 vi.mock('../lib/app-log', () => ({ logError: vi.fn(async () => undefined) }));
+// A stored backend with disconnected Dropbox credentials: selected, but unable to sync right now.
+vi.mock('../lib/sync-service', () => ({
+    SyncService: {
+        getPersistedSyncConfigurationSnapshot: async () => ({
+            backend: await harness.syncBackend(), syncPath: '', webdav: { url: '' }, cloud: { url: '' }, cloudProvider: 'dropbox',
+        }),
+        getDropboxAppKey: async () => 'app-id',
+        isDropboxConnected: async () => false,
+    },
+}));
 
 import { useArchiveRetentionRunner } from './useArchiveRetentionRunner';
+
+const settle = () => act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
 
 const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
 
@@ -24,6 +38,7 @@ describe('useArchiveRetentionRunner', () => {
         vi.useFakeTimers();
         harness.days = 0; harness.loading = false; harness.error = null;
         harness.editLockCount = 0; harness.editingTaskId = null; harness.run.mockClear();
+        harness.syncBackend.mockReset(); harness.syncBackend.mockResolvedValue('off');
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     });
     afterEach(() => {
@@ -40,6 +55,7 @@ describe('useArchiveRetentionRunner', () => {
         await act(async () => { vi.advanceTimersByTime(30 * 60 * 1000); window.dispatchEvent(new Event('focus')); });
         expect(harness.run).not.toHaveBeenCalled();
         rerender({ hydrated: true, disabled: false });
+        await settle();
         expect(harness.run).toHaveBeenCalledTimes(1);
         unmount();
     });
@@ -55,8 +71,8 @@ describe('useArchiveRetentionRunner', () => {
         expect(harness.run).not.toHaveBeenCalled();
         harness.editLockCount = 0;
         act(() => window.dispatchEvent(new Event('focus')));
+        await settle();
         expect(harness.run).toHaveBeenCalledTimes(1);
-        await act(async () => { await Promise.resolve(); });
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
         act(() => vi.advanceTimersByTime(15 * 60 * 1000));
         expect(harness.run).toHaveBeenCalledTimes(1);
@@ -66,7 +82,36 @@ describe('useArchiveRetentionRunner', () => {
         expect(harness.run).toHaveBeenCalledTimes(1);
         harness.loading = false;
         act(() => document.dispatchEvent(new Event('visibilitychange')));
+        await settle();
         expect(harness.run).toHaveBeenCalledTimes(2);
+        unmount();
+    });
+
+    it('tells retention whether a sync backend is selected so it waits for the first sync (R-2)', async () => {
+        harness.days = 30;
+        harness.syncBackend.mockResolvedValue('webdav');
+        const { unmount } = renderHook(() => useArchiveRetentionRunner(true, false));
+        await settle();
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        harness.syncBackend.mockResolvedValue('off');
+        act(() => window.dispatchEvent(new Event('focus')));
+        await settle();
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: false });
+        // An unreadable sync configuration must not count as "sync is off".
+        harness.syncBackend.mockRejectedValue(new Error('config unavailable'));
+        act(() => window.dispatchEvent(new Event('focus')));
+        await settle();
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        expect(harness.run).toHaveBeenCalledTimes(3);
+        unmount();
+    });
+
+    it('keeps waiting while the selected Dropbox backend is disconnected', async () => {
+        harness.days = 30;
+        harness.syncBackend.mockResolvedValue('cloud');
+        const { unmount } = renderHook(() => useArchiveRetentionRunner(true, false));
+        await settle();
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
         unmount();
     });
 });

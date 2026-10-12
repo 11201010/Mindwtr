@@ -15,6 +15,22 @@ const baseTask: Task = {
 };
 
 describe('useTaskItemRecurrence', () => {
+    it.each([
+        ['FREQ=MONTHLY;BYDAY=MO', 'custom'],
+        ['FREQ=MONTHLY;BYDAY=2TU', 'custom'],
+        ['FREQ=MONTHLY;BYMONTHDAY=10', 'date'],
+        ['FREQ=MONTHLY;INTERVAL=3', 'date'],
+    ])('reads %s as the %s pattern like mobile', (rrule, pattern) => {
+        const task: Task = { ...baseTask, dueDate: '2026-06-10' };
+        const { result } = renderHook(() => useTaskItemRecurrence({
+            task,
+            draft: { ...createTaskDraft(task), recurrence: 'monthly', recurrenceRRule: rrule },
+            setField: vi.fn(),
+        }));
+
+        expect(result.current.monthlyRecurrence.pattern).toBe(pattern);
+    });
+
     it('anchors custom monthly recurrence controls to the start date when no due date is set', () => {
         const setField = vi.fn();
         const task: Task = {

@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { DOMParser } from '@xmldom/xmldom';
 import { parseWebdavAttachmentInventory } from '../../../packages/core/src/webdav-attachment-inventory';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -72,6 +74,19 @@ describe('URL Polyfill Shim', () => {
             '//other.example.test' + path + 'example.pdf', 'example.pdf?download=1', 'example.pdf#fragment']) {
             expect(() => parse(inventory(child))).toThrow(/WebDAV attachment inventory/);
         }
+    });
+
+    test('fallback accepts Synology mod_dav namespaces and root-relative audio paths (#1342)', () => {
+        const xml = readFileSync(fileURLToPath(new originalURL('./__fixtures__/synology-webdav-inventory.xml', import.meta.url).href), 'utf8');
+        globalThis.URL = undefined as unknown as typeof URL;
+        loadFreshUrlPolyfill();
+        expect(parseWebdavAttachmentInventory(xml,
+            'https://nas.example.test:5006/DataUser/__Mindwtr/attachments/',
+            source => ({ document: new DOMParser().parseFromString(source, 'application/xml') as unknown as Document }),
+        )).toEqual([
+            'attachments/11111111-1111-4111-8111-111111111111.m4a',
+            'attachments/22222222-2222-4222-8222-222222222222.wav',
+        ]);
     });
 
     test('fallback URL resolves an absolute path against the bases expo-router uses', async () => {

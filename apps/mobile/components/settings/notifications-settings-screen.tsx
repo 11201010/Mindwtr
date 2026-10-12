@@ -1,17 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Check } from 'lucide-react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { areDueDateRemindersEnabled,
-    areStartDateRemindersEnabled,
-    areTaskRemindersEnabled,
-    hasActiveMobileNotificationFeature,
-    isWeeklyReviewReminderEnabled,
-    normalizeDateFormatSetting,
-    resolveDateLocaleTag,
-    useTaskStore, tFallback, } from '@mindwtr/core';
+import {
+    buildNotificationsSettingsModel,
+    buildNotificationsSettingsUpdate,
+    type NotificationsSettingsEdit,
+    type NotificationsSettingsModel,
+    useTaskStore,
+    tFallback,
+} from '@mindwtr/core';
 
 import { requestNotificationPermission, startMobileNotifications } from '@/lib/notification-service';
 import {
@@ -28,57 +28,55 @@ import { useSettingsLocalization, useSettingsScrollContent } from './settings.ho
 import { SettingsTopBar } from './settings.shell';
 import { styles } from './settings.styles';
 
+type Toggle = NotificationsSettingsModel['reminders']['enable'];
+type TimeRow = NotificationsSettingsModel['weeklyReview']['time'];
+
+const toTimePickerDate = (row: TimeRow) => {
+    const date = new Date();
+    date.setHours(row.hour, row.minute, 0, 0);
+    return date;
+};
+const toTimeValue = (date: Date) => {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+};
+
+/** Settings › Notifications, drawn from core's model (packages/core/src/notifications-settings-model.ts), which the native app draws too. */
 export function NotificationsSettingsScreen() {
     const tc = useThemeColors();
     const { language, t } = useSettingsLocalization();
     const { settings, updateSettings } = useTaskStore();
     const scrollContentStyle = useSettingsScrollContent();
-    const [digestTimePicker, setDigestTimePicker] = useState<'morning' | 'evening' | null>(null);
-    const [digestTimeDraft, setDigestTimeDraft] = useState<Date | null>(null);
-    const [weeklyReviewTimePicker, setWeeklyReviewTimePicker] = useState(false);
-    const [weeklyReviewTimeDraft, setWeeklyReviewTimeDraft] = useState<Date | null>(null);
+    const [timePicker, setTimePicker] = useState<TimeRow['type'] | null>(null);
+    const [timeDraft, setTimeDraft] = useState<Date | null>(null);
     const [weeklyReviewDayPickerOpen, setWeeklyReviewDayPickerOpen] = useState(false);
+    const [persistentCaptureEnabled, setPersistentCaptureEnabled] = useState(false);
+    const persistentCaptureSupported = isPersistentCaptureSupported();
 
-    const notificationsEnabled = areTaskRemindersEnabled(settings);
-    const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(
-        hasActiveMobileNotificationFeature(settings),
-    );
-    const startDateNotificationsEnabled = areStartDateRemindersEnabled(settings);
-    const dueDateNotificationsEnabled = areDueDateRemindersEnabled(settings);
-    const dailyDigestMorningEnabled = settings.dailyDigestMorningEnabled === true;
-    const dailyDigestEveningEnabled = settings.dailyDigestEveningEnabled === true;
-    const dailyDigestMorningTime = settings.dailyDigestMorningTime || '09:00';
-    const dailyDigestEveningTime = settings.dailyDigestEveningTime || '20:00';
-    const weeklyReviewEnabled = isWeeklyReviewReminderEnabled(settings);
-    const weeklyReviewTime = settings.weeklyReviewTime || '18:00';
-    const weeklyReviewDay = Number.isFinite(settings.weeklyReviewDay) ? (settings.weeklyReviewDay as number) : 0;
-    const dateFormat = normalizeDateFormatSetting(settings.dateFormat);
     const systemLocale = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat === 'function'
         ? Intl.DateTimeFormat().resolvedOptions().locale
         : '';
-    const locale = resolveDateLocaleTag({
+    const model = useMemo(() => buildNotificationsSettingsModel({
+        settings,
+        t,
         language,
-        dateFormat,
-        calendarSystem: settings.calendarSystem,
         systemLocale,
-    });
+        persistentCapture: persistentCaptureSupported ? { enabled: persistentCaptureEnabled } : undefined,
+    }), [language, persistentCaptureEnabled, persistentCaptureSupported, settings, systemLocale, t]);
+    const { reminders, weeklyReview, dailyDigest } = model;
+    const { showNotice: showExactAlarmNotice } = useExactAlarmPermission(reminders.exactAlarmNotice !== null);
+    const timeRows: Record<TimeRow['type'], TimeRow> = {
+        weeklyReviewTime: weeklyReview.time,
+        dailyDigestMorningTime: dailyDigest.morningTime,
+        dailyDigestEveningTime: dailyDigest.eveningTime,
+    };
+    const openTimeRow = timePicker ? timeRows[timePicker] : null;
 
-    const toTimePickerDate = (time: string) => {
-        const [hours, minutes] = time.split(':').map((v) => parseInt(v, 10));
-        const date = new Date();
-        date.setHours(Number.isFinite(hours) ? hours : 9, Number.isFinite(minutes) ? minutes : 0, 0, 0);
-        return date;
-    };
-    const toTimeValue = (date: Date) => {
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${hours}:${minutes}`;
-    };
-    const formatTime = (time: string) => time;
-    const getWeekdayLabel = useCallback((dayIndex: number) => {
-        const base = new Date(2024, 0, 7 + dayIndex);
-        return base.toLocaleDateString(locale, { weekday: 'long' });
-    }, [locale]);
+    useEffect(() => {
+        if (!persistentCaptureSupported) return;
+        readPersistentCaptureEnabled().then(setPersistentCaptureEnabled).catch(console.error);
+    }, [persistentCaptureSupported]);
 
     const ensureNotificationsPermission = useCallback(async () => {
         const result = await requestNotificationPermission();
@@ -89,217 +87,101 @@ export function NotificationsSettingsScreen() {
         return false;
     }, []);
 
-    const [persistentCaptureEnabled, setPersistentCaptureEnabled] = useState(false);
-    useEffect(() => {
-        if (!isPersistentCaptureSupported()) return;
-        readPersistentCaptureEnabled().then(setPersistentCaptureEnabled).catch(console.error);
-    }, []);
-    const persistentCaptureStrings = useCallback(() => ({
-        title: tFallback(t, 'captureNotification.title', 'Quick capture'),
-        text: tFallback(t, 'captureNotification.text', 'Tap to capture to your Inbox'),
-        channelName: tFallback(t, 'captureNotification.channelName', 'Quick capture'),
-    }), [t]);
-    const togglePersistentCapture = useCallback((value: boolean) => {
-        if (!value) {
-            setPersistentCaptureEnabled(false);
-            applyPersistentCaptureNotification(false, persistentCaptureStrings());
-            writePersistentCaptureEnabled(false).catch(console.error);
+    const applyEdit = useCallback((edit: NotificationsSettingsEdit) => {
+        const update = buildNotificationsSettingsUpdate(edit);
+        if (update) {
+            updateSettings(update).catch(console.error);
+            return;
+        }
+        // The persistent capture notification is this device's own switch, never a synced setting.
+        const enabled = edit.value as boolean;
+        setPersistentCaptureEnabled(enabled);
+        applyPersistentCaptureNotification(enabled, model.persistentCaptureNotification);
+        writePersistentCaptureEnabled(enabled).catch(console.error);
+    }, [model.persistentCaptureNotification, updateSettings]);
+
+    const onToggle = (toggle: Toggle) => () => {
+        if (!toggle.askPermission) {
+            applyEdit(toggle.edit);
             return;
         }
         ensureNotificationsPermission()
             .then((granted) => {
                 if (!granted) return;
-                setPersistentCaptureEnabled(true);
-                applyPersistentCaptureNotification(true, persistentCaptureStrings());
-                writePersistentCaptureEnabled(true).catch(console.error);
+                applyEdit(toggle.edit);
             })
             .catch(console.error);
-    }, [ensureNotificationsPermission, persistentCaptureStrings]);
-
-    const openDigestTimePicker = useCallback((picker: 'morning' | 'evening') => {
-        setDigestTimePicker(picker);
-        if (Platform.OS !== 'ios') return;
-        const current = picker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime;
-        setDigestTimeDraft(toTimePickerDate(current));
-    }, [dailyDigestEveningTime, dailyDigestMorningTime]);
-
-    const closeDigestTimePicker = useCallback(() => {
-        setDigestTimePicker(null);
-        setDigestTimeDraft(null);
-    }, []);
-
-    const saveDigestTimePicker = useCallback(() => {
-        const picker = digestTimePicker;
-        const selected = digestTimeDraft;
-        closeDigestTimePicker();
-        if (!picker || !selected) return;
-        const value = toTimeValue(selected);
-        if (picker === 'morning') {
-            updateSettings({ dailyDigestMorningTime: value }).catch(console.error);
-            return;
-        }
-        updateSettings({ dailyDigestEveningTime: value }).catch(console.error);
-    }, [closeDigestTimePicker, digestTimeDraft, digestTimePicker, updateSettings]);
-
-    const openWeeklyReviewTimePicker = useCallback(() => {
-        setWeeklyReviewTimePicker(true);
-        if (Platform.OS !== 'ios') return;
-        setWeeklyReviewTimeDraft(toTimePickerDate(weeklyReviewTime));
-    }, [weeklyReviewTime]);
-
-    const closeWeeklyReviewTimePicker = useCallback(() => {
-        setWeeklyReviewTimePicker(false);
-        setWeeklyReviewTimeDraft(null);
-    }, []);
-
-    const saveWeeklyReviewTimePicker = useCallback(() => {
-        const selected = weeklyReviewTimeDraft;
-        closeWeeklyReviewTimePicker();
-        if (!selected) return;
-        updateSettings({ weeklyReviewTime: toTimeValue(selected) }).catch(console.error);
-    }, [closeWeeklyReviewTimePicker, updateSettings, weeklyReviewTimeDraft]);
-
-    const onDigestTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
-        const picker = digestTimePicker;
-        setDigestTimePicker(null);
-        if (!picker || !selected) return;
-        const value = toTimeValue(selected);
-        if (picker === 'morning') {
-            updateSettings({ dailyDigestMorningTime: value }).catch(console.error);
-        } else {
-            updateSettings({ dailyDigestEveningTime: value }).catch(console.error);
-        }
     };
+    const toggleRow = (toggle: Toggle, divider = true) => (
+        <SettingToggleRow
+            divider={divider}
+            dimmed={toggle.disabled}
+            label={toggle.label}
+            description={toggle.description}
+            value={toggle.value}
+            disabled={toggle.disabled}
+            onChange={onToggle(toggle)}
+        />
+    );
 
-    const onWeeklyReviewTimeChange = (_event: DateTimePickerEvent, selected?: Date) => {
-        setWeeklyReviewTimePicker(false);
-        if (!selected) return;
-        updateSettings({ weeklyReviewTime: toTimeValue(selected) }).catch(console.error);
+    const openTimePicker = (row: TimeRow) => {
+        setTimePicker(row.type);
+        if (Platform.OS !== 'ios') return;
+        setTimeDraft(toTimePickerDate(row));
     };
-
-    const weeklyDays = useMemo(() => Array.from({ length: 7 }, (_, idx) => idx), []);
+    const timeRow = (row: TimeRow) => (
+        <SettingRow
+            divider
+            dimmed={row.disabled}
+            onPress={() => openTimePicker(row)}
+            disabled={row.disabled}
+            label={row.label}
+            description={row.description}
+        />
+    );
+    const closeTimePicker = useCallback(() => {
+        setTimePicker(null);
+        setTimeDraft(null);
+    }, []);
+    const saveTime = (type: TimeRow['type'], selected: Date | null | undefined) => {
+        if (!selected) return;
+        applyEdit({ type, value: toTimeValue(selected) });
+    };
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: tc.bg }]} edges={['bottom']}>
-            <SettingsTopBar title={t('settings.notifications')} />
+            <SettingsTopBar title={model.title} />
             <ScrollView style={styles.scrollView} contentContainerStyle={scrollContentStyle}>
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg }]}>
-                    <SettingToggleRow
-                        label={t('settings.notificationsEnable')}
-                        description={t('settings.notificationsDesc')}
-                        value={notificationsEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ notificationsEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ notificationsEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
+                    {toggleRow(reminders.enable, false)}
+                    {toggleRow(reminders.startReminders)}
+                    {toggleRow(reminders.dueReminders)}
 
-                    <SettingToggleRow
-                        divider
-                        dimmed={!notificationsEnabled}
-                        label={t('settings.startDateNotifications')}
-                        description={t('settings.startDateNotificationsDesc')}
-                        value={startDateNotificationsEnabled}
-                        disabled={!notificationsEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ startDateNotificationsEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ startDateNotificationsEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
-
-                    <SettingToggleRow
-                        divider
-                        dimmed={!notificationsEnabled}
-                        label={t('settings.dueDateNotifications')}
-                        description={t('settings.dueDateNotificationsDesc')}
-                        value={dueDateNotificationsEnabled}
-                        disabled={!notificationsEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ dueDateNotificationsEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ dueDateNotificationsEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
-
-                    {showExactAlarmNotice && (
+                    {showExactAlarmNotice && reminders.exactAlarmNotice && (
                         <ExactAlarmNoticeRow
                             divider
-                            label={t('settings.exactAlarmsLabel')}
-                            description={t('settings.exactAlarmsDesc')}
-                            actionLabel={t('settings.exactAlarmsAllow')}
+                            label={reminders.exactAlarmNotice.label}
+                            description={reminders.exactAlarmNotice.description}
+                            actionLabel={reminders.exactAlarmNotice.actionLabel}
                         />
                     )}
 
-                    {isPersistentCaptureSupported() && (
-                        <SettingToggleRow
-                            divider
-                            label={t('settings.persistentCaptureLabel')}
-                            description={t('settings.persistentCaptureDesc')}
-                            value={persistentCaptureEnabled}
-                            onChange={togglePersistentCapture}
-                        />
-                    )}
+                    {reminders.persistentCapture && toggleRow(reminders.persistentCapture)}
                 </View>
 
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
-                    <SettingToggleRow
-                        label={t('settings.weeklyReview')}
-                        description={t('settings.weeklyReviewDesc')}
-                        value={weeklyReviewEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ weeklyReviewEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ weeklyReviewEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
+                    {toggleRow(weeklyReview.enable, false)}
 
                     <SettingRow
                         divider
-                        dimmed={!weeklyReviewEnabled}
+                        dimmed={weeklyReview.day.disabled}
                         onPress={() => setWeeklyReviewDayPickerOpen(true)}
-                        disabled={!weeklyReviewEnabled}
-                        label={t('settings.weeklyReviewDay')}
-                        description={getWeekdayLabel(weeklyReviewDay)}
+                        disabled={weeklyReview.day.disabled}
+                        label={weeklyReview.day.label}
+                        description={weeklyReview.day.description}
                     />
 
-                    <SettingRow
-                        divider
-                        dimmed={!weeklyReviewEnabled}
-                        onPress={openWeeklyReviewTimePicker}
-                        disabled={!weeklyReviewEnabled}
-                        label={t('settings.weeklyReviewTime')}
-                        description={formatTime(weeklyReviewTime)}
-                    />
+                    {timeRow(weeklyReview.time)}
                 </View>
 
                 <Modal
@@ -313,30 +195,26 @@ export function NotificationsSettingsScreen() {
                             style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                             onStartShouldSetResponder={() => true}
                         >
-                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('settings.weeklyReviewDay')}</Text>
+                            <Text style={[styles.pickerTitle, { color: tc.text }]}>{weeklyReview.day.pickerTitle}</Text>
                             <ScrollView style={styles.pickerList} contentContainerStyle={styles.pickerListContent}>
-                                {weeklyDays.map((idx) => {
-                                    const label = getWeekdayLabel(idx);
-                                    const selected = weeklyReviewDay === idx;
-                                    return (
-                                        <TouchableOpacity
-                                            key={label}
-                                            style={[
-                                                styles.pickerOption,
-                                                { borderColor: tc.border, backgroundColor: selected ? tc.filterBg : 'transparent' },
-                                            ]}
-                                            onPress={() => {
-                                                updateSettings({ weeklyReviewDay: idx }).catch(console.error);
-                                                setWeeklyReviewDayPickerOpen(false);
-                                            }}
-                                        >
-                                            <Text style={[styles.pickerOptionText, { color: selected ? tc.tint : tc.text }]}>
-                                                {label}
-                                            </Text>
-                                            {selected && <Check size={18} color={tc.tint} strokeWidth={2.5} />}
-                                        </TouchableOpacity>
-                                    );
-                                })}
+                                {weeklyReview.day.options.map((option) => (
+                                    <TouchableOpacity
+                                        key={option.label}
+                                        style={[
+                                            styles.pickerOption,
+                                            { borderColor: tc.border, backgroundColor: option.selected ? tc.filterBg : 'transparent' },
+                                        ]}
+                                        onPress={() => {
+                                            applyEdit(option.edit);
+                                            setWeeklyReviewDayPickerOpen(false);
+                                        }}
+                                    >
+                                        <Text style={[styles.pickerOptionText, { color: option.selected ? tc.tint : tc.text }]}>
+                                            {option.label}
+                                        </Text>
+                                        {option.selected && <Check size={18} color={tc.tint} strokeWidth={2.5} />}
+                                    </TouchableOpacity>
+                                ))}
                             </ScrollView>
                         </View>
                     </Pressable>
@@ -344,93 +222,46 @@ export function NotificationsSettingsScreen() {
 
                 <View style={[styles.settingCard, { backgroundColor: tc.cardBg, marginTop: 12 }]}>
                     <SettingRow
-                        label={t('settings.dailyDigest')}
-                        description={t('settings.dailyDigestDesc')}
+                        label={dailyDigest.label}
+                        description={dailyDigest.description}
                     />
 
-                    <SettingToggleRow
-                        divider
-                        label={t('settings.dailyDigestMorning')}
-                        description={`${t('settings.dailyDigestMorningTime')}: ${formatTime(dailyDigestMorningTime)}`}
-                        value={dailyDigestMorningEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ dailyDigestMorningEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ dailyDigestMorningEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
-
-                    <SettingRow
-                        divider
-                        dimmed={!dailyDigestMorningEnabled}
-                        onPress={() => openDigestTimePicker('morning')}
-                        disabled={!dailyDigestMorningEnabled}
-                        label={t('settings.dailyDigestMorningTime')}
-                        description={formatTime(dailyDigestMorningTime)}
-                    />
-
-                    <SettingToggleRow
-                        divider
-                        label={t('settings.dailyDigestEvening')}
-                        description={`${t('settings.dailyDigestEveningTime')}: ${formatTime(dailyDigestEveningTime)}`}
-                        value={dailyDigestEveningEnabled}
-                        onChange={(value) => {
-                            if (!value) {
-                                updateSettings({ dailyDigestEveningEnabled: false }).catch(console.error);
-                                return;
-                            }
-                            ensureNotificationsPermission()
-                                .then((granted) => {
-                                    if (!granted) return;
-                                    updateSettings({ dailyDigestEveningEnabled: true }).catch(console.error);
-                                })
-                                .catch(console.error);
-                        }}
-                    />
-
-                    <SettingRow
-                        divider
-                        dimmed={!dailyDigestEveningEnabled}
-                        onPress={() => openDigestTimePicker('evening')}
-                        disabled={!dailyDigestEveningEnabled}
-                        label={t('settings.dailyDigestEveningTime')}
-                        description={formatTime(dailyDigestEveningTime)}
-                    />
+                    {toggleRow(dailyDigest.morning)}
+                    {timeRow(dailyDigest.morningTime)}
+                    {toggleRow(dailyDigest.evening)}
+                    {timeRow(dailyDigest.eveningTime)}
                 </View>
 
-                {digestTimePicker && Platform.OS === 'ios' && (
-                    <Modal transparent visible animationType="fade" onRequestClose={closeDigestTimePicker}>
-                        <Pressable style={styles.pickerOverlay} onPress={closeDigestTimePicker}>
+                {openTimeRow && Platform.OS === 'ios' && (
+                    <Modal transparent visible animationType="fade" onRequestClose={closeTimePicker}>
+                        <Pressable style={styles.pickerOverlay} onPress={closeTimePicker}>
                             <View
                                 style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
                                 onStartShouldSetResponder={() => true}
                             >
-                                <Text style={[styles.pickerTitle, { color: tc.text }]}>
-                                    {digestTimePicker === 'morning' ? t('settings.dailyDigestMorningTime') : t('settings.dailyDigestEveningTime')}
-                                </Text>
+                                <Text style={[styles.pickerTitle, { color: tc.text }]}>{openTimeRow.label}</Text>
                                 <DateTimePicker
-                                    value={digestTimeDraft ?? toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
+                                    value={timeDraft ?? toTimePickerDate(openTimeRow)}
                                     mode="time"
                                     display="spinner"
                                     onChange={(_, date) => {
                                         if (!date) return;
-                                        setDigestTimeDraft(date);
+                                        setTimeDraft(date);
                                     }}
                                 />
                                 <View style={[styles.timePickerActions, { borderTopColor: tc.border }]}>
-                                    <TouchableOpacity onPress={closeDigestTimePicker} style={styles.timePickerActionButton}>
+                                    <TouchableOpacity onPress={closeTimePicker} style={styles.timePickerActionButton}>
                                         <Text style={[styles.timePickerActionText, { color: tc.secondaryText }]}>
                                             {tFallback(t, 'common.cancel', 'Cancel')}
                                         </Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity onPress={saveDigestTimePicker} style={styles.timePickerActionButton}>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            closeTimePicker();
+                                            saveTime(openTimeRow.type, timeDraft);
+                                        }}
+                                        style={styles.timePickerActionButton}
+                                    >
                                         <Text style={[styles.timePickerActionText, { color: tc.tint }]}>
                                             {tFallback(t, 'common.done', 'Done')}
                                         </Text>
@@ -441,66 +272,15 @@ export function NotificationsSettingsScreen() {
                     </Modal>
                 )}
 
-                {digestTimePicker && Platform.OS === 'android' && (
+                {openTimeRow && Platform.OS === 'android' && (
                     <DateTimePicker
-                        value={toTimePickerDate(digestTimePicker === 'morning' ? dailyDigestMorningTime : dailyDigestEveningTime)}
+                        value={toTimePickerDate(openTimeRow)}
                         mode="time"
                         display="default"
                         onChange={(event, date) => {
-                            if (event.type === 'dismissed') {
-                                setDigestTimePicker(null);
-                                return;
-                            }
-                            onDigestTimeChange(event, date);
-                        }}
-                    />
-                )}
-
-                {weeklyReviewTimePicker && Platform.OS === 'ios' && (
-                    <Modal transparent visible animationType="fade" onRequestClose={closeWeeklyReviewTimePicker}>
-                        <Pressable style={styles.pickerOverlay} onPress={closeWeeklyReviewTimePicker}>
-                            <View
-                                style={[styles.pickerCard, { backgroundColor: tc.cardBg, borderColor: tc.border }]}
-                                onStartShouldSetResponder={() => true}
-                            >
-                                <Text style={[styles.pickerTitle, { color: tc.text }]}>{t('settings.weeklyReviewTime')}</Text>
-                                <DateTimePicker
-                                    value={weeklyReviewTimeDraft ?? toTimePickerDate(weeklyReviewTime)}
-                                    mode="time"
-                                    display="spinner"
-                                    onChange={(_, date) => {
-                                        if (!date) return;
-                                        setWeeklyReviewTimeDraft(date);
-                                    }}
-                                />
-                                <View style={[styles.timePickerActions, { borderTopColor: tc.border }]}>
-                                    <TouchableOpacity onPress={closeWeeklyReviewTimePicker} style={styles.timePickerActionButton}>
-                                        <Text style={[styles.timePickerActionText, { color: tc.secondaryText }]}>
-                                            {tFallback(t, 'common.cancel', 'Cancel')}
-                                        </Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={saveWeeklyReviewTimePicker} style={styles.timePickerActionButton}>
-                                        <Text style={[styles.timePickerActionText, { color: tc.tint }]}>
-                                            {tFallback(t, 'common.done', 'Done')}
-                                        </Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        </Pressable>
-                    </Modal>
-                )}
-
-                {weeklyReviewTimePicker && Platform.OS === 'android' && (
-                    <DateTimePicker
-                        value={toTimePickerDate(weeklyReviewTime)}
-                        mode="time"
-                        display="default"
-                        onChange={(event, date) => {
-                            if (event.type === 'dismissed') {
-                                setWeeklyReviewTimePicker(false);
-                                return;
-                            }
-                            onWeeklyReviewTimeChange(event, date);
+                            setTimePicker(null);
+                            if (event.type === 'dismissed') return;
+                            saveTime(openTimeRow.type, date);
                         }}
                     />
                 )}

@@ -16,6 +16,7 @@ import { mergeAppDataWithStats } from './sync';
 import { buildQuickAddParseOptions } from './quick-add';
 import { buildFocusPools, buildFocusTaskSections, deriveFocusTaskLists } from './focus-sections';
 import { isTaskActionable } from './task-status';
+import { createProjectToSectionPreviewer } from './project-to-section';
 import type {
     AppData,
     Area,
@@ -101,6 +102,9 @@ const LARGE_STORE_PERFORMANCE_BUDGETS_MS: Record<LargeStoreSize, Record<Budgeted
         captureParseOptions: 450,
     },
 };
+
+// 200 projects x 5k tasks. Calling previewProjectToSection per destination took 88-126 ms here.
+const PROJECT_TO_SECTION_BUDGET_MS = 3;
 
 const STORE_MUTATION_BUDGETS_MS: Record<LargeStoreSize, number> = {
     1_000: 100,
@@ -467,6 +471,26 @@ describePerf('large-store performance budgets', () => {
 
         expect(result.value).toBe(5_000);
         expectWithinBudget('Trash timeline derivation', 10_000, result.durationMs, 100);
+    });
+
+    it('builds the 200-project convert-to-section destination list over 5k tasks within budget', () => {
+        const fixture = createLargeStoreFixture(10_000);
+        // An eligible source: no sections, tags, dates, or focus. Ineligible sources exit early.
+        const source = { ...fixture.projects[0], status: 'active' as const, tagIds: [], dueDate: undefined, isFocused: false };
+        const projects = [source, ...fixture.projects.slice(1, 200)];
+        const state = {
+            _allProjects: projects,
+            _allSections: fixture.sections.filter((row) => row.projectId !== source.id && projects.some((p) => p.id === row.projectId)),
+            _allTasks: fixture.tasks.slice(0, 5_000),
+        };
+        // What one dialog render does: build once, then filter every project through it.
+        const result = measureBest(() => {
+            const previewDestination = createProjectToSectionPreviewer(state, source.id);
+            return projects.filter((project) => previewDestination(project.id).ok).length;
+        }, 5);
+
+        expect(result.value).toBeGreaterThan(100);
+        expectWithinBudget('Convert-to-section destination list', 10_000, result.durationMs, PROJECT_TO_SECTION_BUDGET_MS);
     });
 
     it('keeps generated core hot paths within explicit budgets', () => {

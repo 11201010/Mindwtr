@@ -48,6 +48,13 @@
     "observations": [
      "Android's new Mindwtr calendar carries this install's marker as its internal name, mindwtr:<uuid> (the harness records the uuid as <marker>), in place of mindwtr. In push: turn on, choose targets, refresh (step 1), push: the managed calendar, a new color, then off (step 2) and in Chinese: push on and a test (step 1)."
     ]
+   },
+   {
+    "base": "b14db39de",
+    "command": "cd apps/mobile && MINDWTR_DUMP_CALENDAR_SETTINGS=<file> TZ=UTC bunx vitest run components/settings/calendar-settings-screen.parity.test.tsx, with the React Native fix in place; only the control labels below changed, and every other observation matched the frozen one",
+    "observations": [
+     "An Area option is a checkbox whose accessibility label is the Area name alone: ☐ Work and ☑ Home now read Work and Home as control labels, while the visible text keeps its check mark. The scenario presses Work and Home by those labels. In device calendars: turn on, grant, choose calendars and areas (steps 5 to 8) and feeds: add, test, toggle, color, areas, remove (steps 12 to 15). (#1305)"
+    ]
    }
   ]
  },
@@ -463,15 +470,15 @@
     ],
     [
      "press",
-     "☐ Work"
+     "Work"
     ],
     [
      "press",
-     "☐ Home"
+     "Home"
     ],
     [
      "press",
-     "☑ Work"
+     "Work"
     ],
     [
      "press",
@@ -626,7 +633,7 @@
     ],
     [
      "press",
-     "☐ Home"
+     "Home"
     ],
     [
      "press",
@@ -4683,12 +4690,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☐ Home",
+      "Home",
       false,
       false
      ],
@@ -4796,12 +4803,12 @@
       false
      ],
      [
-      "☑ Work",
+      "Work",
       true,
       false
      ],
      [
-      "☐ Home",
+      "Home",
       false,
       false
      ],
@@ -4909,12 +4916,12 @@
       false
      ],
      [
-      "☑ Work",
+      "Work",
       true,
       false
      ],
      [
-      "☑ Home",
+      "Home",
       true,
       false
      ],
@@ -5022,12 +5029,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☑ Home",
+      "Home",
       true,
       false
      ],
@@ -7897,12 +7904,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☐ Home",
+      "Home",
       false,
       false
      ],
@@ -8104,12 +8111,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☑ Home",
+      "Home",
       true,
       false
      ],
@@ -8389,12 +8396,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☐ Home",
+      "Home",
       false,
       false
      ],
@@ -8537,12 +8544,12 @@
       false
      ],
      [
-      "☐ Work",
+      "Work",
       false,
       false
      ],
      [
-      "☐ Home",
+      "Home",
       false,
       false
      ],

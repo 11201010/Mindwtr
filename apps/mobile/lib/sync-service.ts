@@ -241,6 +241,9 @@ export const clearMobileSyncConfigCache = (): void => {
   mobileSyncService().clearMobileSyncConfigCache();
 };
 
+export const getMobileSelectedSyncBackend: MobileSyncService['getMobileSelectedSyncBackend'] = () => (
+  mobileSyncService().getMobileSelectedSyncBackend()
+);
 export const getMobileSyncConfigurationStatus: MobileSyncService['getMobileSyncConfigurationStatus'] = () => (
   mobileSyncService().getMobileSyncConfigurationStatus()
 );

@@ -1753,6 +1753,143 @@ describe('SyncService testability hooks', () => {
         expect(logInfo).not.toHaveBeenCalled();
     });
 
+    it.each(['cloud', 'webdav'] as const)('clears WebDAV settings while preserving an active %s backend safely', async (backend) => {
+        __syncServiceTestUtils.setDependenciesForTests({ isTauriRuntime: () => false });
+        localStorage.setItem(SYNC_BACKEND_KEY, backend);
+        localStorage.setItem(WEBDAV_URL_KEY, 'https://dav.example.com');
+        localStorage.setItem(WEBDAV_USERNAME_KEY, 'old-account');
+        sessionStorage.setItem(WEBDAV_PASSWORD_KEY, 'old-secret');
+        localStorage.setItem(WEBDAV_PASSWORD_KEY, 'legacy-secret');
+        localStorage.setItem(CLOUD_URL_KEY, 'https://cloud.example.com');
+        sessionStorage.setItem(CLOUD_TOKEN_KEY, 'cloud-secret');
+        const logInfo = vi.fn(async () => null);
+        __syncServiceTestUtils.setDependenciesForTests({ logInfo });
+
+        const cleared = await SyncService.clearWebDavConfig();
+
+        expect(cleared.backend).toBe(backend === 'webdav' ? 'off' : 'cloud');
+        expect(cleared.webdav).toMatchObject({ url: '', username: '', password: '', hasPassword: false });
+        expect(sessionStorage.getItem(WEBDAV_PASSWORD_KEY)).toBeNull();
+        expect(localStorage.getItem(WEBDAV_PASSWORD_KEY)).toBeNull();
+        expect(cleared.cloud).toMatchObject({ url: 'https://cloud.example.com', token: 'cloud-secret' });
+        expect(SyncService.getLastKnownSyncSelection().configuration).toEqual(cleared);
+        expect(logInfo).toHaveBeenCalledWith('WebDAV settings cleared', {
+            scope: 'sync', extra: { releaseCheck: 'v1.3.5/webdav-settings-clear', backend: cleared.backend, outcome: 'cleared' },
+        });
+    });
+
+    it('waits for the active sync configuration operation before clearing WebDAV settings', async () => {
+        __syncServiceTestUtils.setDependenciesForTests({ isTauriRuntime: () => false });
+        localStorage.setItem(WEBDAV_URL_KEY, 'https://dav.example.com');
+        let release!: () => void;
+        const blocker = __syncServiceTestUtils.runSyncRestoreExclusiveForTests(() => new Promise<void>((resolve) => { release = resolve; }));
+        const clear = SyncService.clearWebDavConfig();
+        await waitForAssertion(() => expect(release).toBeDefined());
+        expect(localStorage.getItem(WEBDAV_URL_KEY)).toBe('https://dav.example.com');
+        release();
+        await blocker;
+        expect((await clear).webdav.url).toBe('');
+    });
+
+    it.each([
+        { backend: 'cloud' as const, lostResponse: false, newerLegacy: false },
+        { backend: 'webdav' as const, lostResponse: false, newerLegacy: false },
+        { backend: 'cloud' as const, lostResponse: true, newerLegacy: false },
+        { backend: 'webdav' as const, lostResponse: true, newerLegacy: false },
+        { backend: 'cloud' as const, lostResponse: false, newerLegacy: true },
+    ])('verifies native WebDAV removal: $backend, lost response $lostResponse, newer legacy $newerLegacy', async ({ backend, lostResponse, newerLegacy }) => {
+        localStorage.setItem(SYNC_BACKEND_KEY, 'webdav');
+        localStorage.setItem(WEBDAV_URL_KEY, 'https://legacy-dav.example.com');
+        localStorage.setItem(WEBDAV_USERNAME_KEY, 'legacy-account');
+        localStorage.setItem(WEBDAV_PASSWORD_KEY, 'legacy-secret');
+        sessionStorage.setItem(WEBDAV_PASSWORD_KEY, 'legacy-session-secret');
+        let snapshot = {
+            backend: backend as SyncBackend, syncPath: '', cloudProvider: 'selfhosted' as const,
+            webdav: { url: 'https://old-dav.example.com', username: 'old-account', password: null as string | null,
+                passwordAuthority: 'opaque' as 'opaque' | 'known', hasPassword: true, allowInsecureHttp: false, allowWeakFingerprint: true },
+            cloud: { url: 'https://cloud.example.com', token: null, tokenAuthority: 'opaque' as const, rememberToken: true, allowInsecureHttp: false },
+        };
+        const originalCloud = structuredClone(snapshot.cloud);
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'recover_dropbox_credentials_before_sync_configuration') return true;
+            if (command === 'get_sync_backend') return snapshot.backend;
+            if (command === 'get_webdav_config') return snapshot.webdav;
+            if (command === 'get_sync_configuration_snapshot') {
+                if (snapshot.backend === 'webdav' && snapshot.webdav.passwordAuthority === 'opaque') throw new Error('old binding mismatch');
+                return structuredClone(snapshot);
+            }
+            if (command === 'set_webdav_config') {
+                expect(args).toMatchObject({ url: '', username: '', password: '', replacePassword: true });
+                snapshot = { ...snapshot, backend: backend === 'webdav' ? 'off' : backend,
+                    webdav: { ...snapshot.webdav, url: '', username: '', password: '', passwordAuthority: 'known', hasPassword: false } };
+                if (newerLegacy) {
+                    localStorage.setItem(WEBDAV_URL_KEY, 'https://newer-dav.example.com');
+                    localStorage.setItem(WEBDAV_PASSWORD_KEY, 'newer-secret');
+                    sessionStorage.setItem(WEBDAV_PASSWORD_KEY, 'newer-session-secret');
+                }
+                if (lostResponse) throw new Error('clear response lost');
+                return;
+            }
+            throw new Error(`Unexpected command: ${command}`);
+        });
+        __syncServiceTestUtils.setDependenciesForTests({ isTauriRuntime: () => true, invoke: invoke as never });
+        let cleared;
+        if (lostResponse) {
+            await expect(SyncService.clearWebDavConfig()).rejects.toThrow('clear response lost');
+            cleared = SyncService.getLastKnownSyncSelection().configuration!;
+        } else {
+            cleared = await SyncService.clearWebDavConfig();
+        }
+        expect(cleared.backend).toBe(backend === 'webdav' ? 'off' : backend);
+        expect(cleared.cloud).toEqual(originalCloud);
+        expect(localStorage.getItem(WEBDAV_URL_KEY)).toBe(newerLegacy ? 'https://newer-dav.example.com' : null);
+        expect(localStorage.getItem(WEBDAV_PASSWORD_KEY)).toBe(newerLegacy ? 'newer-secret' : null);
+        expect(sessionStorage.getItem(WEBDAV_PASSWORD_KEY)).toBe(newerLegacy ? 'newer-session-secret' : null);
+        expect(localStorage.getItem(SYNC_BACKEND_KEY)).toBeNull();
+        expect(invoke).toHaveBeenCalledWith('get_sync_configuration_snapshot', { requireWebdavPassword: !lostResponse, requireCloudToken: false });
+    });
+
+    it('refreshes a durably disabled backend without reporting success when native clear fails', async () => {
+        const logInfo = vi.fn(async () => null);
+        localStorage.setItem(WEBDAV_URL_KEY, 'https://legacy-dav.example.com');
+        localStorage.setItem(WEBDAV_PASSWORD_KEY, 'legacy-secret');
+        const previous = {
+            backend: 'webdav' as SyncBackend, syncPath: '', cloudProvider: 'selfhosted',
+            webdav: { url: 'https://dav.example.com', username: 'old-account', password: 'old-secret', passwordAuthority: 'known', hasPassword: true },
+            cloud: { url: '', token: '', tokenAuthority: 'known' },
+        };
+        const invoke = vi.fn(async (command: string) => {
+            if (command === 'recover_dropbox_credentials_before_sync_configuration') return true;
+            if (command === 'get_sync_backend') return previous.backend;
+            if (command === 'get_sync_configuration_snapshot') return structuredClone(previous);
+            if (command === 'set_webdav_config') previous.backend = 'off';
+            throw new Error('native clear failed');
+        });
+        __syncServiceTestUtils.setDependenciesForTests({ isTauriRuntime: () => true, invoke: invoke as never, logInfo });
+        await expect(SyncService.clearWebDavConfig()).rejects.toThrow('native clear failed');
+        expect(SyncService.getLastKnownSyncSelection().backend).toBe('off');
+        expect(localStorage.getItem(WEBDAV_URL_KEY)).toBe('https://legacy-dav.example.com');
+        expect(localStorage.getItem(WEBDAV_PASSWORD_KEY)).toBe('legacy-secret');
+        expect(logInfo).not.toHaveBeenCalled();
+    });
+
+    it('rejects a native clear whose strict snapshot cannot prove removal', async () => {
+        const logInfo = vi.fn(async () => null);
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'recover_dropbox_credentials_before_sync_configuration') return true;
+            if (command === 'set_webdav_config') return;
+            if (command === 'get_sync_backend') return 'cloud';
+            if (command === 'get_sync_configuration_snapshot') {
+                if (args?.requireWebdavPassword) throw new Error('secret readback failed');
+                return { backend: 'cloud', webdav: { url: '', username: '', passwordAuthority: 'opaque', hasPassword: null } };
+            }
+            throw new Error(`Unexpected command: ${command}`);
+        });
+        __syncServiceTestUtils.setDependenciesForTests({ isTauriRuntime: () => true, invoke: invoke as never, logInfo });
+        await expect(SyncService.clearWebDavConfig()).rejects.toThrow('secret readback failed');
+        expect(logInfo).not.toHaveBeenCalled();
+    });
+
     it.each([
         {
             name: 'sync backend',

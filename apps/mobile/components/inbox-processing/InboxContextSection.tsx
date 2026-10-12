@@ -69,7 +69,9 @@ export function InboxContextSection({
   return (
     <View style={[styles.singleSection, { borderBottomColor: tc.border }]}>
       <Text style={[styles.stepQuestion, { color: tc.text }]}>
-        {showContextsField ? t('taskEdit.contextsLabel') : t('taskEdit.tagsLabel')}
+        {showContextsField && showTagsField
+          ? t('filters.contexts')
+          : showContextsField ? t('taskEdit.contextsLabel') : t('taskEdit.tagsLabel')}
         {showContextsField && showTagsField ? ` ${t('inbox.selectMultipleHint')}` : ''}
       </Text>
       {showContextsField && selectedContexts.length > 0 && (

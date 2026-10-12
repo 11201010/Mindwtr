@@ -72,8 +72,8 @@ export type NativeEntryPoint = {
     capture: { text: string; options: QuickCaptureOptions } | null;
     /** React Native's capture confirmation screen, with the route params React Native pushes to it (openCaptureModal's `params`). */
     captureModal: { params: CaptureModalParams } | null;
-    /** React Native's toast. */
-    notice: QuickCaptureNotice | null;
+    /** React Native's toast (a missing task link's has no title). */
+    notice: QuickCaptureNotice | Omit<QuickCaptureNotice, 'title'> | null;
 };
 
 /** The capture popup's Import .txt: ask to create one task per line, put one line in the field, do nothing, or refuse. */
@@ -163,7 +163,13 @@ export function createEntryPointMethods(deps: EntryPointDeps) {
             case 'entityOpen': {
                 const entity = parseEntityOpenUrl(path);
                 const target = entity && !sandbox ? resolveEntityOpenTarget(entity.kind, entity.id, useTaskStore.getState()) : null;
-                if (!target) return opened({ route: '/inbox' });
+                if (!target) {
+                    // React Native says a task link found no task (#1368); a missing project link stays silent.
+                    return opened(entity?.kind === 'task' && !sandbox
+                        ? { route: '/inbox', notice: { tone: 'error', message: tFallback(deps.t(), 'task.linkNotFound',
+                            'This task is not in this library. It may have been deleted or not synced to this device.') } }
+                        : { route: '/inbox' });
+                }
                 return target.pathname === '/focus'
                     ? opened({ route: '/focus', taskId: target.taskId })
                     : opened({ route: '/projects-screen', projectId: target.projectId ?? null });

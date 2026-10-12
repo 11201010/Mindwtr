@@ -27,7 +27,7 @@
     "postcss": "8.5.25",
     "qs": "6.16.0",
     "@humanfs/node": "0.16.8",
-    "shell-quote": "1.10.0",
+    "shell-quote": "1.12.0",
     "tar": "7.5.22",
     "undici": "6.28.1",
     "uuid": "14.0.0",
@@ -36,7 +36,7 @@
     "yaml": "2.8.3",
     "decode-uri-component": "0.5.0",
     "browserslist": "4.28.8",
-    "postcss-selector-parser": "6.1.4",
+    "postcss-selector-parser": "7.1.6",
     "@eslint/eslintrc": {
       "ajv": "6.14.0"
     },
@@ -49,7 +49,10 @@
       }
     },
     "body-parser": "2.3.0",
-    "@hono/node-server": "2.0.12"
+    "@hono/node-server": "2.0.12",
+    "compression": "1.8.2",
+    "source-map-js": "1.2.2",
+    "proxy-addr": "2.0.8"
   },
   "resolutions": {
     "@babel/core": "7.29.7",
@@ -76,7 +79,7 @@
     "postcss": "8.5.25",
     "qs": "6.16.0",
     "@humanfs/node": "0.16.8",
-    "shell-quote": "1.10.0",
+    "shell-quote": "1.12.0",
     "tar": "7.5.22",
     "undici": "6.28.1",
     "uuid": "14.0.0",
@@ -87,7 +90,10 @@
     "body-parser": "2.3.0",
     "@hono/node-server": "2.0.12",
     "browserslist": "4.28.8",
-    "postcss-selector-parser": "6.1.4"
+    "postcss-selector-parser": "7.1.6",
+    "compression": "1.8.2",
+    "source-map-js": "1.2.2",
+    "proxy-addr": "2.0.8"
   },
   "scripts": {
     "desktop:dev": "bun run --filter mindwtr dev",
@@ -95,9 +101,10 @@
     "desktop:build": "bun run --filter mindwtr build",
     "desktop:web:build": "bun run --filter mindwtr build:vite",
     "test": "bun run --filter @mindwtr/core test && bun run --filter mindwtr test && bun run --filter mobile test && bun run --filter mindwtr-cloud test && bun run --filter mindwtr-mcp test",
-    "verify": "bun run typecheck && bun run lint:all && bun run test && bun run native:test && bun run test:governance && bun run i18n:check && bun run schema:check && bun run docs:check-readme",
+    "verify": "bun run typecheck && bun run lint:all && bun run test && bun run native:test && bun run governance && bun run schema:check",
+    "governance": "bash scripts/ci/governance.sh",
     "test:perf": "bun run --filter @mindwtr/core test:perf && MINDWTR_PERF_TEST=1 bun --cwd apps/desktop test src/components/views/ListView.performance.test.tsx src/components/views/TimelineView.performance.test.tsx && MINDWTR_PERF_TEST=1 bun --cwd apps/mobile test tests/large-store-performance.test.tsx",
-    "test:governance": "python3 scripts/ci/google-play-edit.test.py && python3 scripts/ci/android-play-release-plan.test.py && bun test scripts/ci scripts/migration scripts/*.test.ts",
+    "test:governance": "python3 scripts/ci/google-play-edit.test.py && python3 scripts/ci/android-play-release-plan.test.py && bun test scripts/ci scripts/migration scripts/*.test.ts apps/android-native/scripts/run-device-batch.test.mjs",
     "lint:core": "bun run --filter @mindwtr/core lint",
     "lint:cloud": "bun run --filter mindwtr-cloud lint",
     "lint:node": "bun run lint:core && bun run lint:cloud",
@@ -105,8 +112,9 @@
     "lint:mobile": "bun run --filter mobile lint",
     "lint:mcp": "bun run --filter mindwtr-mcp lint",
     "lint:all": "bun run lint:node && bun run lint:desktop && bun run lint:mobile && bun run lint:mcp",
-    "typecheck": "bun run typecheck:core && bun run typecheck:cloud && bun run typecheck:desktop && bun run typecheck:mobile && bun run typecheck:mcp",
+    "typecheck": "bun run typecheck:core && bun run typecheck:native-host && bun run typecheck:cloud && bun run typecheck:desktop && bun run typecheck:mobile && bun run typecheck:mcp",
     "typecheck:core": "bun run --filter @mindwtr/core typecheck",
+    "typecheck:native-host": "bunx tsc --noEmit -p apps/android-native/tsconfig.host.json",
     "typecheck:cloud": "bun run --filter mindwtr-cloud typecheck",
     "typecheck:desktop": "bunx tsc --noEmit -p apps/desktop/tsconfig.json",
     "typecheck:mobile": "bunx tsc --noEmit -p apps/mobile/tsconfig.json",

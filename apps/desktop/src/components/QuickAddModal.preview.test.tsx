@@ -117,6 +117,15 @@ describe('QuickAddModal live preview', () => {
         },
     );
 
+    it('previews and saves the exact typed custom estimate (#1358)', async () => {
+        await openModalWithDraft();
+        fireEvent.change(screen.getByPlaceholderText('Add Task'), { target: { value: 'Write report /estimate:1h30m' } });
+        expect(screen.getByTestId('quick-add-preview')).toHaveTextContent('Time Estimate');
+        expect(screen.getByTestId('quick-add-preview')).toHaveTextContent('1h 30m');
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        await waitFor(() => expect(addTask).toHaveBeenCalledWith('Write report', expect.objectContaining({ timeEstimate: 'custom:90' })));
+    });
+
     it('shows what the parser found in the draft', async () => {
         await openModalWithDraft();
 

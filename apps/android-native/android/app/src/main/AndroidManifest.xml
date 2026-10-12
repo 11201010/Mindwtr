@@ -51,6 +51,7 @@
             android:exported="false"
             android:label="Mindwtr Native Dev"
             android:launchMode="singleTask"
+            android:theme="@style/Theme.App.SplashScreen"
             android:windowSoftInputMode="adjustResize" />
 
         <!-- RN's component name, <applicationId>.MainActivity: home-screen icons, pinned shortcuts and widgets launch it
@@ -132,6 +133,11 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <!-- RN's persistent quick-capture notification (modules/notification-open-intents, PersistentCaptureNotifier.kt reused as it
+             is): re-posts it when the user swipes it away; the app's own cancel() fires no delete intent. Not exported, as RN's. -->
+        <receiver
+            android:name="tech.dongdongbh.mindwtr.notificationopenintents.PersistentCaptureDismissReceiver"
+            android:exported="false" />
     </application>
 
     <!-- RN's app lock asks BiometricPrompt (AppLock.kt), as expo-local-authentication's manifest allows. -->

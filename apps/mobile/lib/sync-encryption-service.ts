@@ -2,12 +2,13 @@
 // backend dispatch, the remote ports, the remote mutation fence, the File Sync lease rules
 // and the transition diagnostics — lives in core
 // (`packages/core/src/sync-encryption-service.ts`) so the native app runs the same code.
-// This module binds it to AsyncStorage, the mobile state store, the native crypto, the
+// This module binds it to AsyncStorage's sync keys, the mobile state store, the native crypto, the
 // background-safe fetch, xmldom, and File Sync's lock and folder IO.
 //
 // Out of scope by design: CloudKit and self-hosted mindwtr-cloud.
 
 import {
+    createStorageSyncEncryptionLocation,
     createSyncEncryptionService,
     type SyncEncryptionService,
     type SyncEncryptionStatus,
@@ -44,7 +45,7 @@ import {
     syncEncryptionKeyCache,
     syncEncryptionLocalState,
     loadSyncEncryptionLocalState,
-    reloadSyncEncryptionLocalStateForRecovery,
+    restoreAfterFenceLoss,
 } from './sync-encryption-state';
 import { backgroundSafeFetch } from './background-safe-fetch';
 
@@ -58,10 +59,13 @@ export type { SyncEncryptionProgressCallback, SyncEncryptionTransitionOptions } 
 let service: SyncEncryptionService | null = null;
 const encryptionService = (): SyncEncryptionService => {
     service ??= createSyncEncryptionService<MobileFileSyncLease>({
-        storage: { getItem: (key) => AsyncStorage.getItem(key) },
+        location: createStorageSyncEncryptionLocation({
+            getItem: (key) => AsyncStorage.getItem(key),
+            removeItem: (key) => AsyncStorage.removeItem(key),
+        }),
         state: {
             loadSyncEncryptionLocalState: () => loadSyncEncryptionLocalState(),
-            reloadSyncEncryptionLocalStateForRecovery: () => reloadSyncEncryptionLocalStateForRecovery(),
+            restoreAfterFenceLoss: (before, attempted) => restoreAfterFenceLoss(before, attempted),
             flushSyncEncryptionLocalState: () => flushSyncEncryptionLocalState(),
             syncEncryptionLocalState,
             syncEncryptionKeyCache,
@@ -141,7 +145,7 @@ export const abandonSyncEncryptionTransition = (): Promise<SyncEncryptionTransit
 
 /** Whether the sync location holds ciphertext beside plaintext (a sample of its attachments; core's probeSyncLocationCiphertext). */
 export const probeSyncLocationCiphertext = (
-    target?: { webdav?: { url: string; username?: string; password?: string; allowInsecureHttp?: boolean } },
+    target?: Parameters<SyncEncryptionService['probeSyncLocationCiphertext']>[0],
 ): Promise<'plaintext' | 'encrypted' | 'mixed'> => encryptionService().probeSyncLocationCiphertext(target ?? {});
 
 /** "Check this location again" for a location held as partly encrypted (core's recheckPartlyEncryptedLocation). */

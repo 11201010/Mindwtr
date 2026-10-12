@@ -162,8 +162,8 @@ test("Android releases use the isolated, repository-locked EAS CLI", () => {
   );
   expect(workflow).not.toContain("npm install -g eas-cli");
 
-  const ci = read(".github/workflows/ci.yml");
-  expect(ci).toContain(
+  // The CI governance job runs scripts/ci/governance.sh.
+  expect(read("scripts/ci/governance.sh")).toContain(
     "npm ci --prefix tools/eas-cli --ignore-scripts --legacy-peer-deps --dry-run",
   );
 });

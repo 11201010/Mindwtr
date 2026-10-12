@@ -100,12 +100,17 @@ enum DurableFile {
 #if DEBUG
 // IO boundary only; no fixtures, domain mutation hooks, or release-build knobs.
 final class HostIOFaults {
+    var notificationPermissionRead: NativeNotificationPermission.Reader?
+    var notificationAuthorizationRequest: NativeNotificationAuthorization.Requester?
+    var calendarAuthorizationRequest: NativeCalendarAuthorization.Requester?
+    var reminderPort: (any NativeReminderPort)?
     var beforeSQL: ((String) throws -> Void)?
     var afterSQL: ((String) throws -> Void)?
     var checkpoint: (() throws -> Void)?
     var afterIntegrity: (() throws -> Void)?
     var journalWrite: (() throws -> Void)?
     var journalRemove: (() throws -> Void)?
+    var cleanupBoundary: ((String) throws -> Void)?
     var editorDraftRemove: (() throws -> Void)?
     var commandDiagnostic: ((String) -> Void)?
     var configureDeviceStorage: ((NativeDeviceKV) -> Void)?
@@ -119,6 +124,8 @@ final class HostIOFaults {
     var secretBeforeOperation: ((String, String) -> Void)?
     var secretAfterOperation: ((String, String) -> Void)?
     var configureSecretJobs: ((NativeSecretJobs) -> Void)?
+    var calendarReaderFactory: (() -> any NativeCalendarReading)?
+    var configureCalendarJobs: ((NativeCalendarJobs) -> Void)?
     var cryptoBeforeOperation: ((String) -> Void)?
     var cryptoAfterOperation: ((String) -> Void)?
     var cryptoArgon2Unavailable: (() -> Bool)?

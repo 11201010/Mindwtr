@@ -203,6 +203,9 @@ export type SyncPayloadTraceEvent =
 
 /** Phase checkpoints for mobile's elapsed-time/payload-shape diagnostics
  *  (issue #766 log analysis). Desktop leaves `onDiagnostic` unset. */
+export type SyncFollowUpReason = 'stale-local' | 'remote-conflict' | 'server-contribution'
+    | 'remote-fence-busy' | 'remote-fence-release' | 'file-lock-busy';
+
 export type SyncRunDiagnosticEvent = {
     event:
         | 'flush'
@@ -210,8 +213,11 @@ export type SyncRunDiagnosticEvent = {
         | 'merge-complete'
         | 'merge-skipped'
         | 'attachment-sync-applied'
-        | 'requeued';
+        | 'requeued'
+        | 'follow-up-requested';
     data?: AppData | null;
+    previousData?: AppData | null;
+    followUpReason?: SyncFollowUpReason;
     extra?: Record<string, string>;
 };
 

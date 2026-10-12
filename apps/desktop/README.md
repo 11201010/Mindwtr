@@ -113,7 +113,7 @@ Tasks are saved to:
 - **Linux data**: `~/.local/share/mindwtr/mindwtr.db` (the working database), plus `~/.local/share/mindwtr/data.json` (the sync and backup snapshot)
 - **Linux config**: `~/.config/mindwtr/config.toml`
 
-Desktop Settings → Sync → Local Data shows the exact paths for your OS. If you used very early builds, data may exist under legacy Tauri directories like `~/.config/tech.dongdongbh.mindwtr/` and `~/.local/share/tech.dongdongbh.mindwtr/` and will be migrated automatically.
+For the paths on macOS and Windows, see [Data Storage](https://docs.mindwtr.app/data-sync/#data-storage) in the user docs. If you used very early builds, data may exist under legacy Tauri directories like `~/.config/tech.dongdongbh.mindwtr/` and `~/.local/share/tech.dongdongbh.mindwtr/` and will be migrated automatically.
 
 Portable Windows builds store local state beside the executable:
 

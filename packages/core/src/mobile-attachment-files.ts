@@ -20,7 +20,7 @@ import { isSandboxMode } from './sandbox';
 import { sanitizeAttachmentUriForSyncMerge } from './sync-normalization';
 import { createWebdavDownloadBackoff } from './sync-runtime-utils';
 import { readSyncLocationScope } from './sync-encryption-local-state';
-import { CLOUD_ALLOW_INSECURE_HTTP_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, type SyncKeyValueStoragePort } from './sync-storage-keys';
+import { ATTACHMENT_PRESENCE_RECONCILE_KEY, CLOUD_ALLOW_INSECURE_HTTP_KEY, CLOUD_TOKEN_KEY, CLOUD_URL_KEY, type SyncKeyValueStoragePort } from './sync-storage-keys';
 import { isLikelyFilePath, loadWebDavSyncConfig, runDropboxAuthorized as runCoreDropboxAuthorized, type MobileWebDavStoredConfig } from './mobile-sync-utils';
 import type { MobileCloudSyncConfig, MobileSyncDropboxAuthPort, MobileSyncLogPort } from './mobile-sync-service';
 
@@ -53,7 +53,6 @@ export const getManagedAttachmentFileName = (attachment: Pick<Attachment, 'id' |
 const ATTACHMENT_UPLOAD_REFUSAL_MAX_ATTEMPTS = 3;
 type AttachmentUploadRefusal = { contentIdentity: string; attempts: number };
 
-const ATTACHMENT_PRESENCE_RECONCILE_KEY = '@mindwtr_attachment_presence_reconcile_v1';
 const ATTACHMENT_TEMP_FILE_PREFIX = '.mindwtr-attachment-write-';
 
 /** What the host's file system reports for a path. `exists` stays undefined when the platform
@@ -169,6 +168,9 @@ const buildTempUri = (targetUri: string): string => {
   return `${parent}${ATTACHMENT_TEMP_FILE_PREFIX}${suffix}.tmp`;
 };
 
+// Errno codes a local fs error may carry after the path it names; fixed words, never user text.
+const FS_ERROR_CODE_PATTERN = /\b(EACCES|EPERM|ENOENT|ENOSPC|EEXIST|EISDIR|ENOTDIR|EROFS|EBUSY|EIO|EMFILE|ENFILE|EXDEV)\b/;
+
 const isTempAttachmentFile = (name: string): boolean => {
   return /^\.mindwtr-attachment-write-[0-9a-z]+-[0-9a-f]{12}\.tmp$/.test(name);
 };
@@ -277,13 +279,43 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
     return { attempts, reachedLimit: true, mutated, message, logMessage };
   };
 
+  /**
+   * Local fs error text quotes the uris it failed on, and a picked file's name is the user's
+   * text (#854). Known uris become their {@link describeAttachmentUriForLog} shape in every
+   * form a native error prints them (encoded, decoded, without `file://`); the first other uri
+   * or absolute path becomes `[path]` and the rest of the text is dropped. Only callers that
+   * pass the local uris they touched get this: other callers' errors carry WebDAV/cloud URLs
+   * whose host a tester needs.
+   */
+  const describeErrorForLog = (error: unknown, knownUris: string[]): string => {
+    let text = error instanceof Error ? error.message : String(error);
+    for (const uri of knownUris) {
+      const path = uri.replace(/^file:\/\//i, '');
+      for (const form of [uri, decodeUriSafe(uri), path, decodeUriSafe(path)]) {
+        if (form) text = text.split(form).join(describeAttachmentUriForLog(uri));
+      }
+    }
+    // A file name may hold spaces, quotes or brackets, so no end marker for an unknown path is
+    // safe: drop everything from its start and keep only a known errno code from the tail.
+    const start = /(^|[\s'"(=:])['"]?(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/)/.exec(text);
+    if (!start) return text;
+    const code = FS_ERROR_CODE_PATTERN.exec(text.slice(start.index))?.[1];
+    return `${text.slice(0, start.index)}${start[1]}[path]${code ? ` (${code})` : ''}`;
+  };
+
   const logAttachmentWarn = (
     message: string,
     error?: unknown,
     extra?: Record<string, string>,
+    knownUris: string[] = [],
   ) => {
     const fields = error
-      ? { ...extra, error: host.log.sanitize(error instanceof Error ? error.message : String(error)) }
+      ? {
+        ...extra,
+        error: host.log.sanitize(knownUris.length > 0
+          ? describeErrorForLog(error, knownUris)
+          : error instanceof Error ? error.message : String(error)),
+      }
       : extra;
     void host.log.warn(message, { scope: 'attachment', extra: fields });
   };
@@ -362,24 +394,26 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
 
   const copyFileSafely = async (sourceUri: string, targetUri: string): Promise<void> => {
     const tempUri = buildTempUri(targetUri);
+    const knownUris = [sourceUri, targetUri, tempUri];
+    const copied = { sourceUri: describeAttachmentUriForLog(sourceUri), targetUri: describeAttachmentUriForLog(targetUri) };
     try {
       await fs.copy(sourceUri, tempUri);
     } catch (error) {
-      logAttachmentWarn('Attachment temp copy failed, falling back to byte write', error);
+      logAttachmentWarn('Attachment temp copy failed, falling back to byte write', error, undefined, knownUris);
       await writeBytesSafely(targetUri, await readFileAsBytes(sourceUri));
-      logAttachmentInfo('Attachment byte fallback copied file', { sourceUri, targetUri });
+      logAttachmentInfo('Attachment byte fallback copied file', copied);
       return;
     }
     try {
       await fs.move(tempUri, targetUri);
     } catch (moveError) {
-      logAttachmentWarn('Attachment temp move failed, falling back to direct copy', moveError);
+      logAttachmentWarn('Attachment temp move failed, falling back to direct copy', moveError, undefined, knownUris);
       try {
         await fs.copy(sourceUri, targetUri);
       } catch (copyError) {
-        logAttachmentWarn('Attachment direct copy failed, falling back to byte write', copyError);
+        logAttachmentWarn('Attachment direct copy failed, falling back to byte write', copyError, undefined, knownUris);
         await writeBytesSafely(targetUri, await readFileAsBytes(sourceUri));
-        logAttachmentInfo('Attachment byte fallback copied file', { sourceUri, targetUri });
+        logAttachmentInfo('Attachment byte fallback copied file', copied);
       } finally {
         try {
           await fs.delete(tempUri);
@@ -1023,6 +1057,7 @@ export const createMobileAttachmentFiles = (host: MobileAttachmentFilesHost) => 
     runDropboxAuthorized,
     loadWebDavConfig,
     loadCloudConfig,
+    getManagedAttachmentsDir,
     getAttachmentsDir,
     deleteManagedAttachmentFile,
     cleanupAttachmentTempFiles,

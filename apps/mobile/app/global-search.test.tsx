@@ -246,7 +246,8 @@ describe('SearchScreen task results', () => {
             .toEqual(fixture.extendedCases.adapter.ids);
     });
 
-    it('opens the task editor when pressing a task search result', () => {
+    it.each([undefined, '2099-12-10'])('opens the task editor directly for a result with start date %s', (startTime) => {
+        storeState._allTasks = [makeTask('task-1', 'Launch checklist', { startTime })];
         let tree!: ReturnType<typeof create>;
 
         act(() => {

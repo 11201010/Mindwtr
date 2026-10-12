@@ -31,6 +31,7 @@ import { fetchExternalCalendarEvents, summarizeExternalCalendarWarnings } from '
 import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 import { useLocalDayKey } from '../../../hooks/useLocalDayKey';
 import { getWorkspaceCache } from '../../../lib/workspace-cache';
+import { filterVisibleReviewCalendarEvents } from '../calendar/use-calendar-external-events';
 
 type DailyReviewStep = 'today' | 'focus' | 'inbox' | 'waiting' | 'completed';
 type DailyReviewStepDefinition = {
@@ -152,9 +153,9 @@ export function DailyReviewGuideModal({ onClose }: DailyReviewGuideModalProps) {
                 const tomorrowEnd = new Date(todayStart);
                 tomorrowEnd.setDate(tomorrowEnd.getDate() + 2);
                 tomorrowEnd.setMilliseconds(-1);
-                const { events, warnings } = await fetchExternalCalendarEvents(todayStart, tomorrowEnd);
+                const { calendars, events, warnings } = await fetchExternalCalendarEvents(todayStart, tomorrowEnd);
                 if (cancelled) return;
-                setExternalCalendarEvents(events);
+                setExternalCalendarEvents(filterVisibleReviewCalendarEvents(events, calendars));
                 setExternalCalendarError(summarizeExternalCalendarWarnings(warnings));
             } catch (error) {
                 if (cancelled) return;

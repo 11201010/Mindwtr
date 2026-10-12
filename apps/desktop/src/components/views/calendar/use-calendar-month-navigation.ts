@@ -20,9 +20,11 @@ import {
 } from 'date-fns';
 import {
     addCalendarMonths as addCalendarSystemMonths,
+    coerceCalendarViewMode,
     endOfCalendarMonth,
     getCalendarYear,
     isSameCalendarMonth,
+    needsCalendarSelectedDate,
     setCalendarMonthIndex,
     setCalendarYear,
     startOfCalendarMonth,
@@ -78,14 +80,6 @@ const parseCalendarDateParam = (value: string | null): Date | null => {
     return next;
 };
 
-const parseCalendarViewMode = (value: string | null): CalendarViewMode => (
-    value === 'day' || value === 'week' || value === 'schedule' ? value : 'month'
-);
-
-const needsCalendarSelectedDate = (viewMode: CalendarViewMode): boolean => (
-    viewMode === 'day' || viewMode === 'week' || viewMode === 'schedule'
-);
-
 const readStoredTimelineDayCount = (): number => {
     if (typeof window === 'undefined') return CALENDAR_TIMELINE_DAY_COUNT_DEFAULT;
     try {
@@ -104,7 +98,7 @@ const getInitialCalendarState = (fallback: Date): { currentMonth: Date; selected
         return { currentMonth: fallback, selectedDate: null, viewMode: 'month' };
     }
     const params = new URLSearchParams(window.location.search);
-    const viewMode = parseCalendarViewMode(params.get(CALENDAR_VIEW_PARAM));
+    const viewMode = coerceCalendarViewMode(params.get(CALENDAR_VIEW_PARAM));
     const selectedDate = parseCalendarDateParam(params.get(CALENDAR_DATE_PARAM))
         ?? (needsCalendarSelectedDate(viewMode) ? new Date(fallback) : null);
     const monthDate = parseCalendarDateParam(`${params.get(CALENDAR_MONTH_PARAM) ?? ''}-01`);

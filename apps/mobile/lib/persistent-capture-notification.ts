@@ -52,8 +52,16 @@ async function hasNotificationPermission(): Promise<boolean> {
     }
 }
 
-/** Post or remove the notification to match `enabled`. */
+// Bumped by every switch the user applies: a restore whose read started before one acts on nothing.
+let switchGeneration = 0;
+
+/** Post or remove the notification to match `enabled` (the settings switch). */
 export function applyPersistentCaptureNotification(enabled: boolean, strings: PersistentCaptureStrings): void {
+    switchGeneration += 1;
+    showOrHide(enabled, strings);
+}
+
+function showOrHide(enabled: boolean, strings: PersistentCaptureStrings): void {
     if (!isPersistentCaptureSupported()) return;
     if (enabled) {
         showPersistentCaptureNotification(strings.title, strings.text, strings.channelName);
@@ -63,17 +71,31 @@ export function applyPersistentCaptureNotification(enabled: boolean, strings: Pe
 }
 
 /**
- * Re-post the notification on app start when the preference is on — Android
+ * Re-post the notification on app start when the preference is on (and remove it when off) — Android
  * drops notifications on reboot and there is deliberately no boot receiver in
  * v1, so the app re-arms it the next time it runs. Permission is only checked
  * here, never requested; prompting belongs to the settings toggle.
  */
 export async function restorePersistentCaptureNotificationOnStartup(strings: PersistentCaptureStrings): Promise<void> {
     if (!isPersistentCaptureSupported()) return;
-    const enabled = await readPersistentCaptureEnabled();
-    if (!enabled) return;
+    const generation = switchGeneration;
+    let stored: string | null;
+    try {
+        stored = await AsyncStorage.getItem(STORAGE_KEY);
+    } catch {
+        return;
+    }
+    // The switch changed while the read was pending: it already applied what is stored now.
+    if (generation !== switchGeneration) return;
+    if (stored !== 'true') {
+        // A stored off with the notifier's mirror still on (the switch's two steps interrupted) re-pins at every process
+        // start: removing it here clears the mirror too.
+        showOrHide(false, strings);
+        return;
+    }
     if (!(await hasNotificationPermission())) return;
-    applyPersistentCaptureNotification(true, strings);
+    if (generation !== switchGeneration) return;
+    showOrHide(true, strings);
 }
 
 /**

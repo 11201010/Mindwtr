@@ -34,7 +34,8 @@
         {
           "name": "MINDWTR_MCP_CLOUD_TOKEN",
           "description": "Bearer token for self-hosted Mindwtr Cloud mode.",
-          "isRequired": false
+          "isRequired": false,
+          "isSecret": true
         },
         {
           "name": "MINDWTR_MCP_API_URL",

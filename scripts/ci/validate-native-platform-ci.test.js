@@ -504,7 +504,7 @@ test("manual native CI selects one platform or all platforms", () => {
   }
 });
 
-test("SwiftUI client changes and shared host changes select the isolated Apple build", () => {
+test("SwiftUI client detection is retained while its CI job is paused for migration", () => {
   const workflow = parse(readFileSync(".github/workflows/native-platform-ci.yml", "utf8"));
   for (const event of ["push", "pull_request"]) {
     expect(workflow.on[event].paths).toContain("apps/ios-native/**");
@@ -529,6 +529,7 @@ test("SwiftUI client changes and shared host changes select the isolated Apple b
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
   const job = workflow.jobs["ios-client"];
+  expect(job.if).toStartWith("false && ");
   expect(job.if).toContain("needs.changes.outputs.ios_client == 'true'");
   expect(job.if).toContain("needs.changes.outputs.macmini != 'true'");
   const validation = job.steps.find((step) => step.run?.includes("bash apps/ios-native/scripts/validate.sh"));
@@ -536,7 +537,8 @@ test("SwiftUI client changes and shared host changes select the isolated Apple b
   expect(validation.run).toContain("set -o pipefail");
   expect(validation.run).toContain('bash apps/ios-native/scripts/validate.sh 2>&1 | tee "$RUNNER_TEMP/ios-swiftui-artifacts/validation.log"');
   expect(readFileSync("apps/ios-native/scripts/validate.sh", "utf8")).toContain("export TZ=America/New_York");
-  expect(workflow.jobs["ios-macmini"].if).toContain("needs.changes.outputs.ios_client == 'true'");
+  expect(workflow.jobs["ios-macmini"].if).toBe("needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini == 'true'");
+  expect(workflow.jobs["ios-native"].if).toBe("needs.changes.outputs.ios == 'true' && needs.changes.outputs.macmini != 'true'");
 });
 
 test("macOS native CI links the release Rust and Swift bridges", () => {

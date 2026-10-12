@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { ReviewHeader, ReviewListControls } from './review/ReviewHeader';
 import { ReviewFiltersBar } from './review/ReviewFiltersBar';
@@ -57,7 +57,7 @@ function sanitizeReviewViewState(value: unknown, fallback: ReviewPersistedViewSt
 
 export function ReviewView() {
     const perf = usePerformanceMonitor('ReviewView');
-    const { tasks, projects, areas, settings, updateSettings, batchMoveTasks, batchDeleteTasks, batchUpdateTasks, restoreTask, highlightTaskId } = useTaskStore(
+    const { tasks, projects, areas, settings, updateSettings, batchMoveTasks, batchDeleteTasks, batchUpdateTasks, restoreTask, highlightTaskId, highlightTaskAt } = useTaskStore(
         (state) => ({
             tasks: state.tasks,
             projects: state.projects,
@@ -69,6 +69,7 @@ export function ReviewView() {
             batchUpdateTasks: state.batchUpdateTasks,
             restoreTask: state.restoreTask,
             highlightTaskId: state.highlightTaskId,
+            highlightTaskAt: state.highlightTaskAt,
         }),
         shallow
     );
@@ -171,6 +172,26 @@ export function ReviewView() {
             };
         });
     }, [filterStatus, normalizedSearchQuery, nowTick, scope, sortBy, tasks, visibility]);
+    const revealedHighlightRef = useRef<{ id: string; at: number | null } | null>(null);
+    useEffect(() => {
+        if (!highlightTaskId) {
+            revealedHighlightRef.current = null;
+            return;
+        }
+        const previous = revealedHighlightRef.current;
+        if (previous?.id === highlightTaskId && previous.at === highlightTaskAt) return;
+        const target = tasksById[highlightTaskId];
+        if (!target) return;
+        // Consume each navigation once so later scope/filter choices still win.
+        revealedHighlightRef.current = { id: highlightTaskId, at: highlightTaskAt };
+        if (getReviewOverviewTasks([target], 'all').length === 0) return;
+        const revealInAll = scope === 'all' || !isTaskDueForReview(target, new Date(nowTick));
+        if (revealInAll) {
+            setScope('all');
+            if (filterStatus !== 'all' && filterStatus !== target.status) setFilterStatus('all');
+        }
+        if (normalizedSearchQuery && !target.title.toLowerCase().includes(normalizedSearchQuery)) setSearchQuery('');
+    }, [filterStatus, highlightTaskAt, highlightTaskId, normalizedSearchQuery, nowTick, scope, setFilterStatus, tasksById]);
     const filteredTaskIds = useMemo(() => filteredTasks.map((task) => task.id), [filteredTasks]);
     const {
         activeAction,
@@ -204,6 +225,10 @@ export function ReviewView() {
         [areas, filteredTasks, groupBy, projectMapById, settings?.theme, t],
     );
     const isGrouping = groupBy !== 'none' && filteredTasks.length > 0;
+    useEffect(() => {
+        if (!isGrouping || !highlightTaskId || !filteredTaskIds.includes(highlightTaskId)) return;
+        document.querySelector<HTMLElement>(`[data-task-id="${highlightTaskId}"]`)?.scrollIntoView?.({ block: 'start' });
+    }, [filteredTaskIds, highlightTaskAt, highlightTaskId, isGrouping]);
 
     const bulkStatuses: TaskStatus[] = ['inbox', 'next', 'waiting', 'someday', 'reference', 'done'];
 
@@ -423,6 +448,7 @@ export function ReviewView() {
                         selectionMode={selectionMode}
                         multiSelectedIds={multiSelectedIds}
                         highlightTaskId={highlightTaskId}
+                        highlightTaskAt={highlightTaskAt}
                         onToggleSelect={toggleMultiSelect}
                         emptyMessage={normalizedSearchQuery ? t('filters.noMatch') : t(scope === 'due' ? 'review.dueEmpty' : 'review.overviewEmpty')}
                         t={t}

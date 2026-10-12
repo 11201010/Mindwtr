@@ -331,7 +331,8 @@ test("runtime exposure guard catches static, side-effect, dynamic, and template-
 
 test("shipped runtime sources never import the excepted Node build-tool chains", () => {
   const files = (path) => readdirSync(path, {withFileTypes: true}).flatMap((entry) => {
-    if (["node_modules", "__tests__", ".expo", "dist"].includes(entry.name)) return [];
+    // build/.build/Pods hold Gradle, SwiftPM, and CocoaPods output under the native module dirs, never shipped JS source.
+    if (["node_modules", "__tests__", ".expo", "dist", "build", ".build", "Pods"].includes(entry.name)) return [];
     const child = join(path, entry.name);
     return entry.isDirectory() ? files(child) : /\.[cm]?[jt]sx?$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name) ? [child] : [];
   });
@@ -341,6 +342,11 @@ test("shipped runtime sources never import the excepted Node build-tool chains",
     "packages/core/src", "apps/cloud/src", "apps/mcp-server/src",
   ];
   const sources = [...roots.flatMap(files), "apps/mobile/index.js", "apps/mobile/polyfills.js"];
-  const imports = sources.flatMap((path) => buildToolImports(readFileSync(path, "utf8"), path).map((name) => `${path}: ${name}`));
+  // Parsing all ~1,300 files takes over 20 s on a loaded machine; a file that never names a chain cannot import it.
+  const imports = sources.flatMap((path) => {
+    const source = readFileSync(path, "utf8");
+    if (!buildToolImportNames.some((name) => source.includes(name))) return [];
+    return buildToolImports(source, path).map((name) => `${path}: ${name}`);
+  });
   expect(imports).toEqual([]);
-});
+}, 20_000);

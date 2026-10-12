@@ -2,7 +2,8 @@
 Type=Application
 Name=Mindwtr
 Comment=Local-first GTD task manager
-Exec=mindwtr
+Exec=mindwtr %u
+MimeType=x-scheme-handler/mindwtr;
 Icon=tech.dongdongbh.mindwtr
 Terminal=false
 Categories=Office;

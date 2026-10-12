@@ -110,7 +110,8 @@ test("App Store: all bundled Mach-O imports are checked immediately before packa
   expect(run).toContain('python3 scripts/ci/validate-macos-private-apis.py "$APP_PATH"\n\nxcrun productbuild');
   expect(run).toContain('--component "$APP_PATH" /Applications');
   expect(run).toContain('set -euo pipefail');
-  expect(readFileSync(".github/workflows/ci.yml", "utf8")).toContain(
+  // The CI governance job runs scripts/ci/governance.sh.
+  expect(readFileSync("scripts/ci/governance.sh", "utf8")).toContain(
     "python3 scripts/ci/validate-macos-private-apis.test.py",
   );
 });

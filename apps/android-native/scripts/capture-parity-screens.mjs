@@ -10,6 +10,8 @@
 // database, and shoots Inbox, Focus, Projects, the task editor (Form tab) for one
 // task opened from Focus, global search for "kitchen", Process Inbox's first step, the
 // capture popup (empty, with text and core's preview, and with the contexts picker open),
+// (PARITY_ONLY=r2 shoots only pass R2's screens, with the weekly review on in the fixture: Settings › Notifications from its
+// top and its end, and its day picker.)
 // RN's capture screen for each entry kind (a capture link with the keyboard up and down, a share, an assistant note, and a
 // widget's quick capture), the Menu tab (the More sheet, Waiting, Someday, History's Done, Contexts, Trash with one trashed
 // task, and Review), the Weekly Review's first step, the Calendar's week and month, the Board, and Settings'
@@ -44,6 +46,7 @@ const aapt2 = process.env.AAPT2 ?? '/home/dd/Android/Sdk/build-tools/36.1.0/aapt
 const coreSrc = resolve(import.meta.dirname, '../../../packages/core/src');
 const { en } = await import(resolve(coreSrc, 'i18n/locales/en.ts'));
 const out = resolve(harness, 'parity', new Date().toISOString().replace(/[:.]/g, '-'));
+const R2_ONLY = process.env.PARITY_ONLY === 'r2';
 let apks;
 try {
     const built = JSON.parse(readFileSync(resolve(harness, 'apks/manifest.json'), 'utf8'));
@@ -148,6 +151,8 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     // RN's quick-access tab set to Projects (both tab bars show the same tabs), and one Someday section for the headings.
     await store().updateSettings({ appearance: { mobileQuickAccessView: 'projects' },
         gtd: { ...(store().settings.gtd ?? {}), viewSections: { someday: [{ id: 'someday-travel', title: 'Travel', order: 0 }] } } });
+    // Pass R2's shots: the weekly review on (its day picker opens).
+    if (process.env.FIXTURE_R2 === '1') await store().updateSettings({ weeklyReviewEnabled: true });
     await flushPendingSave();
     if (store().persistenceFailure) throw new Error('save failed: ' + store().persistenceFailure.message);
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -155,7 +160,7 @@ const buildFixture = () => execFileSync('bun', ['-e', `
     console.log(store()._allTasks.filter((task) => !task.deletedAt).length);
     process.exit(0);
 `], { encoding: 'utf8', env: { ...process.env, FIXTURE_DB: fixture, FIXTURE_TITLES: JSON.stringify(T), FIXTURE_TRASHED: TRASHED,
-    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length) } }).trim().split('\n').pop();
+    FIXTURE_FILE_TITLE: ATTACHMENT_FILE.title, FIXTURE_FILE_URI: ATTACHMENT_FILE.uri, FIXTURE_FILE_SIZE: String(ATTACHMENT_FILE.bytes.length), FIXTURE_R2: R2_ONLY ? '1' : '' } }).trim().split('\n').pop();
 
 // ---- the device ----
 const device = connect({ serial, pkg: PKG, uiFile: '/data/local/tmp/mindwtr-parity-ui.xml' });
@@ -552,6 +557,41 @@ const shootProjectDetails = async (prefix, suffix, rn) => {
     for (let step = 0; step < 4 && !tab(await screen(), 'Inbox'); step += 1) await back();
     if (!rn) { const nodes = await screen(); if (button(nodes, 'Back')) await back(); }
 };
+/** Pass R2: Settings › Notifications (top, end) and its day picker. */
+const shootR2 = async (prefix, suffix, rn) => {
+    if (rn) openLink('focus');
+    else {
+        const tabs = await waitFor('the native tabs', (current) => Boolean(tab(current, 'Focus')), 60_000);
+        if (!tabSelected(tabs, 'Focus')) await tap(tab(tabs, 'Focus'));
+    }
+    const menu = await waitFor('the Menu tab', (current) => Boolean(rn ? current.find((node) => node['content-desc'] === 'Menu') : tab(current, 'Menu')), 30_000);
+    await tap(rn ? menu.find((node) => node['content-desc'] === 'Menu') : tab(menu, 'Menu'));
+    const sheet = await waitFor('the Settings tile', (current) => Boolean(withDescription(current, en['nav.settings'])), 15_000);
+    await tap(withDescription(sheet, en['nav.settings']));
+    const label = `${en['settings.notifications']}. ${en['settings.menuDesc.notifications']}`;
+    const rows = await waitFor('the Notifications row', (current) => Boolean(withDescription(current, label)), 30_000);
+    await tap(withDescription(rows, label));
+    await shoot(`${prefix}-settings-notifications-${suffix}`, (current) => hasText(current, en['settings.notificationsEnable']));
+    let nodes = await screen();
+    for (let step = 0; step < 3; step += 1) nodes = await device.swipe(nodes, 'down');
+    await shoot(`${prefix}-settings-notifications-end-${suffix}`, (current) => hasText(current, en['settings.dailyDigestEveningTime']));
+    for (let step = 0; step < 3; step += 1) nodes = await device.swipe(nodes, 'up');
+    let day = await waitFor('the Review day row', (current) => current.some((node) => node.text === en['settings.weeklyReviewDay']
+        || (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)), 15_000);
+    // The row can sit at the screen's bottom edge: one drag brings it up.
+    day = await device.swipe(day, 'down');
+    await tap(day.find((node) => (node['content-desc'] ?? '').startsWith(`${en['settings.weeklyReviewDay']}: `)) ?? day.find((node) => node.text === en['settings.weeklyReviewDay']));
+    await shoot(`${prefix}-notifications-day-picker-${suffix}`, (current) => hasText(current, 'Wednesday'));
+    // Back until the tabs show (the picker, Notifications, Settings), never past them.
+    for (let step = 0; step < 6; step += 1) {
+        const current = await screen();
+        if (rn ? current.some((node) => node['content-desc'] === 'Menu') && !hasText(current, en['settings.notificationsEnable']) && !hasText(current, 'Wednesday')
+            : Boolean(tab(current, 'Inbox')) && !hasText(current, en['settings.notificationsEnable']) && !hasText(current, 'Wednesday')) break;
+        requireAppFront();
+        sh('input keyevent KEYCODE_BACK');
+        await sleep(900);
+    }
+};
 const SCREENS = [
     { name: 'inbox', link: 'inbox', tab: 'Inbox', text: T.call },
     { name: 'focus', link: 'focus', tab: 'Focus', text: T.outline },
@@ -584,6 +624,7 @@ try {
             await stopApp();
             device.launch(RN_ACTIVITY);
         }
+        if (R2_ONLY) { await shootR2('rn', mode === 'yes' ? 'dark' : 'light', true); continue; }
         for (const screen of SCREENS) {
             openLink(screen.link);
             await shoot(`rn-${screen.name}-${mode === 'yes' ? 'dark' : 'light'}`, (nodes) => hasText(nodes, screen.text));
@@ -616,6 +657,7 @@ try {
     device.launch(NATIVE_ACTIVITY);
     for (const mode of ['no', 'yes']) {
         if (mode === 'yes') await setNight('yes');
+        if (R2_ONLY) { await shootR2('native', mode === 'yes' ? 'dark' : 'light', false); continue; }
         for (const screen of SCREENS) {
             const nodes = await waitFor('the native tabs', (current) => Boolean(tab(current, screen.tab)), 60_000);
             if (!tabSelected(nodes, screen.tab)) await tap(tab(nodes, screen.tab));

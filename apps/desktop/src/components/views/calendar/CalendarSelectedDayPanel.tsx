@@ -1,7 +1,7 @@
 import { format } from 'date-fns';
 import type { DragEvent } from 'react';
 import { Check, Clock, MoreHorizontal, Plus, X } from 'lucide-react';
-import { getTaskCalendarOccurrenceDate, hasTimeComponent, isProjectedRecurringTask, safeFormatDate, safeParseDate, type Task } from '@mindwtr/core';
+import { getProjectedRecurrenceDisplayLabel, hasTimeComponent, isProjectedRecurringTask, safeFormatDate, safeParseDate } from '@mindwtr/core';
 
 import { cn } from '../../../lib/utils';
 import { reportError } from '../../../lib/report-error';
@@ -45,16 +45,6 @@ type CalendarSelectedDayPanelController = Pick<
 type CalendarSelectedDayPanelProps = {
     controller: CalendarSelectedDayPanelController;
 };
-
-const PROJECTED_RECURRENCE_LABEL_DATE_FORMAT = 'MMM d';
-
-function getProjectedRecurrenceDisplayLabel(task: Task, projectedLabel: string): string {
-    const occurrenceDateLabel = safeFormatDate(
-        getTaskCalendarOccurrenceDate(task),
-        PROJECTED_RECURRENCE_LABEL_DATE_FORMAT
-    );
-    return occurrenceDateLabel ? `${projectedLabel} · ${occurrenceDateLabel}` : projectedLabel;
-}
 
 export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPanelProps) {
     const {
@@ -213,7 +203,7 @@ export function CalendarSelectedDayPanel({ controller }: CalendarSelectedDayPane
                             {selectedTaskRows.map(({ id, kind, task, start }) => {
                                 const projected = isProjectedRecurringTask(task);
                                 const projectedLabel = projected
-                                    ? getProjectedRecurrenceDisplayLabel(task, resolveText('calendar.projectedRecurrence', 'Projected'))
+                                    ? getProjectedRecurrenceDisplayLabel(task, resolveText('calendar.projectedRecurrence', 'Projected'), safeFormatDate)
                                     : '';
                                 const durationMinutes = timeEstimateToMinutes(task.timeEstimate);
                                 const isAllDayScheduled = kind === 'scheduled' && !hasTimeComponent(task.startTime);

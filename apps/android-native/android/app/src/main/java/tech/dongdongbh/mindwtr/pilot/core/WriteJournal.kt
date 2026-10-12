@@ -60,8 +60,8 @@ class WriteJournal(
             "projectEdit" to "{requestId,projectId,kind}",
         ) + listOf("archiveAction", "contextsAction", "trashAction", "reviewAction", "reviewTask", "calendarAction", "calendarCreate", "boardAction",
             "boardCreate", "bulkAction", "focusGroup", "focusSave", "focusCriterion", "focusDelete", "focusReorder", "bulkCreate", "mindSweepAdd",
-            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "manageEditor", "manageDelete", "syncPreference", "setAISetting",
-            "openAISettings").associateWith { "{requestId}" }
+            "savedSearchDelete", "generalSetting", "gtdSetting", "dataSetting", "notificationsSetting", "manageEditor", "manageDelete", "syncPreference",
+            "setAISetting", "openAISettings").associateWith { "{requestId}" }
         val WRITES = SHAPES.keys
         /**
          * Writes never journaled: a key (the host method, or a Menu command's name) whose core command is in core's

@@ -1549,7 +1549,7 @@ export const ListView = memo(function ListView({ title, statusFilter }: ListView
                                             className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                                             aria-label={t('quickAdd.syntaxHelp')}
                                             aria-expanded={quickAddSyntaxOpen}
-                                            title={formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled })}
+                                            title={formatQuickAddHelp(t('quickAdd.help'), { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled })}
                                         >
                                             <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
                                         </button>

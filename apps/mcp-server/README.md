@@ -8,11 +8,11 @@ By default this is a **stdio** server: MCP clients launch it as a subprocess and
 
 ## App Binaries vs. MCP Helper
 
-The desktop app includes a built-in MCP server in **Settings → Integrations → MCP**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
+The desktop app includes a built-in MCP server in **Settings → Integrations → Local MCP server (advanced)**. It requires no separately installed runtime or helper. The desktop installer does not add a standalone `mindwtr-mcp` command to your `PATH`; mobile apps do not host MCP.
 
 You do **not** need to run the whole app from source to use MCP. You can use the normal desktop app binary for your tasks, then run this separate MCP helper from the repository with Bun, or build the helper once and run it with Node. Point the helper at the desktop app's local `mindwtr.db`, or use the Local API backend below.
 
-On desktop, the app shows the exact local data path in **Settings -> Sync -> Local Data**. Mobile binaries do not expose a local MCP server surface.
+On desktop, find the database in the default database locations listed under [Requirements](#requirements). Mobile binaries do not expose a local MCP server surface.
 
 ---
 
@@ -36,7 +36,7 @@ In MCP client configurations using `npx`, add `"--allow-scripts=better-sqlite3"`
 
 Default database locations. The installed Windows and macOS apps keep the database in a `data` subfolder from version 1.3.2 on; Linux and the portable builds are unchanged. The server looks in both places, so it finds the database either way.
 
-- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`)
+- Linux: `~/.local/share/mindwtr/mindwtr.db` (Flatpak: `~/.var/app/tech.dongdongbh.mindwtr/data/mindwtr/mindwtr.db`; Snap: `~/snap/mindwtr/current/.local/share/mindwtr/mindwtr.db`)
 - macOS, 1.3.2 and later: `~/Library/Application Support/mindwtr/data/mindwtr.db`
 - macOS, 1.3.1 and earlier: `~/Library/Application Support/mindwtr/mindwtr.db`
 - Windows, 1.3.2 and later: `%APPDATA%\mindwtr\data\mindwtr.db`
@@ -49,7 +49,7 @@ Additional macOS paths for sandboxed builds:
 A `--db` path pinned in an MCP client configuration keeps working across that move: if the file is not at the configured path, the server checks the matching `data` subfolder (or the parent folder) and reports on stderr which database it opened.
 
 If `mindwtr.db` is missing but `data.json` exists in the same desktop data folder, the MCP server will bootstrap a fresh SQLite database from that local data snapshot on first start.
-Desktop Settings → Sync → Local Data shows the exact storage location used by the app.
+The desktop data folder is the folder that holds `mindwtr.db` in the default locations above.
 
 You can override local mode with:
 - `--db /path/to/mindwtr.db`
@@ -175,6 +175,8 @@ Flags (all have `MINDWTR_MCP_HTTP*` env var equivalents):
 - `--http-host <host>` / `MINDWTR_MCP_HTTP_HOST` — bind address, default `127.0.0.1`.
 - `--http-port <port>` / `MINDWTR_MCP_HTTP_PORT` — bind port, default `8722`.
 
+The desktop app's built-in MCP server also uses port `8722`. If it is on, pass another port with `--http-port`, for example `--http-port 8723`.
+
 The MCP endpoint is `POST /mcp` and requires `Authorization: Bearer <token>` on every request; `GET /healthz` returns `200 ok` without auth for reverse-proxy health checks. Requests without a valid token get `401`; repeated authentication failures get `429` with a `Retry-After` header. Bodies over 1 MiB get `413`. When HTTP mode is on, the server does not also connect a stdio transport — it stays alive as long as the HTTP server is listening, not stdin.
 
 There is no built-in TLS termination or rate limiting for authenticated requests. If you're exposing this beyond localhost, put a reverse proxy (e.g. Caddy, nginx) in front for TLS and put the resulting `https://` URL (plus your token) into the remote MCP client.
@@ -267,7 +269,7 @@ mindwtr-mcp --db "/path/to/mindwtr.db"
 
 ### Desktop app toggle?
 
-The desktop app has **Settings → Integrations → MCP**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
+The desktop app has **Settings → Integrations → Local MCP server (advanced)**. Access is disabled and read-only by default. Enable it and copy connection details for a client supporting authenticated Streamable HTTP at `http://127.0.0.1:8722/mcp`. Configuration syntax depends on the client; stdio-only clients can continue using this standalone helper.
 
 Enable **Allow changes** only to permit creating, editing, and deleting tasks and projects, including completing tasks. Connected AI clients can read exposed Mindwtr data and may send it to their provider. Keep the copied bearer token private; regenerating it disconnects old clients.
 

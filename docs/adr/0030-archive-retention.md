@@ -18,7 +18,7 @@ Deletion timestamps and revisions are fresh at cleanup time, never backdated to 
 
 ## Consequences
 
-Cancellation remains a distinct outcome and is covered when the cancelled record is archived. Restoring or editing work may defer expiration. No incremental-sync protocol or second synced document is introduced. Automatic cleanup runs while a supported app is active; it does not require an OS background job.
+Cancellation remains a distinct outcome and is covered when the cancelled record is archived. Restoring or editing work may defer expiration. No incremental-sync protocol or second synced document is introduced. Automatic cleanup runs while a supported app is active; it does not require an OS background job. When sync is configured, cleanup waits until the current app session has completed a sync, so a device that was offline cannot purge a record another device restored in the meantime.
 
 This feature does not promise secure erasure. Existing backups, recovery snapshots, exports, and provider version history have separate lifetimes and are not rewritten. Turning retention off cannot restore contents already removed.
 

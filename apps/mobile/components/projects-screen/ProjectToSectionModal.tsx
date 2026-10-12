@@ -1,9 +1,9 @@
 import React from 'react';
 import { Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import {
+    createProjectToSectionPreviewer,
     formatI18nTemplate,
     prepareProjectToSection,
-    previewProjectToSection,
     tFallback,
     useTaskStore,
     type PreparedProjectToSection,
@@ -42,9 +42,16 @@ export function ProjectToSectionModal({ visible, source, projects, onClose, onSu
         setRetryOnly(false);
         setError(null);
     }, [visible, source?.id, source?.title]);
-    const preview = source && destinationId
-        ? previewProjectToSection(useTaskStore.getState(), source.id, destinationId)
-        : null;
+    // Typing the section name re-renders; rebuild the destination list only when its inputs change.
+    const { _allProjects, _allSections, _allTasks } = useTaskStore.getState();
+    const sourceId = source?.id;
+    const previewDestination = React.useMemo(() => sourceId
+        ? createProjectToSectionPreviewer({ _allProjects, _allSections, _allTasks }, sourceId)
+        : null, [_allProjects, _allSections, _allTasks, sourceId]);
+    const destinations = React.useMemo(() => previewDestination
+        ? projects.filter((project) => previewDestination(project.id).ok)
+        : [], [projects, previewDestination]);
+    const preview = previewDestination && destinationId ? previewDestination(destinationId) : null;
     const shownPreview: ProjectToSectionPreview | null = prepared?.preview ?? (preview?.ok ? preview : null);
     const destination = prepared?.destination ?? projects.find((project) => project.id === destinationId);
     const sourceForSummary = prepared?.source.before ?? source;
@@ -86,7 +93,7 @@ export function ProjectToSectionModal({ visible, source, projects, onClose, onSu
                 <ScrollView keyboardShouldPersistTaps="handled">
                     {!prepared ? <>
                         <Text style={{ color: tc.text, marginBottom: 8 }}>{tFallback(t, 'projects.convertDestination', 'Destination project')}</Text>
-                        {projects.filter((project) => source && previewProjectToSection(useTaskStore.getState(), source.id, project.id).ok).map((project) =>
+                        {destinations.map((project) =>
                             <TouchableOpacity key={project.id} accessibilityRole="radio" accessibilityState={{ selected: destinationId === project.id }} onPress={() => { setDestinationId(project.id); setError(null); }} style={{ paddingVertical: 10 }}>
                                 <Text style={{ color: destinationId === project.id ? tc.tint : tc.text }}>{project.title}</Text>
                             </TouchableOpacity>)}

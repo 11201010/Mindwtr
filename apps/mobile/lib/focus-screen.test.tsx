@@ -7,6 +7,8 @@ import type { AppData, AppSettings, Project, StorageAdapter, Task } from '@mindw
 import FocusScreen from '../app/(drawer)/(tabs)/focus';
 import { SwipeableTaskItem } from '@/components/swipeable-task-item';
 
+const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
+const linkedTasks = new Map<string, Task>();
 const showToastMock = vi.hoisted(() => vi.fn());
 const openProjectScreenMock = vi.hoisted(() => vi.fn());
 const asyncStorageMock = vi.hoisted(() => ({
@@ -49,6 +51,7 @@ const makeProject = (id: string, overrides: Partial<Project> = {}): Project => (
 
 const storeState: {
   tasks: Task[];
+  _tasksById: Map<string, Task>;
   projects: Project[];
   settings: AppSettings;
   updateTask: ReturnType<typeof vi.fn>;
@@ -58,6 +61,7 @@ const storeState: {
   highlightTaskId: string | null;
   setHighlightTask: ReturnType<typeof vi.fn>;
 } = {
+  _tasksById: linkedTasks,
   tasks: [
     makeTask('focus-task', { isFocusedToday: true, dueDate: '2000-01-01' }),
     makeTask('next-task'),
@@ -90,6 +94,8 @@ const createImmediatePromise = <T,>(value: T): Promise<T> => ({
 }) as Promise<T>;
 
 beforeEach(() => {
+  linkedTasks.clear();
+  routeParams.current = {};
   storeState.tasks = [
     makeTask('focus-task', { isFocusedToday: true, dueDate: '2000-01-01' }),
     makeTask('next-task'),
@@ -170,7 +176,7 @@ vi.mock('expo-haptics', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => routeParams.current,
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -3086,4 +3092,26 @@ describe('FocusScreen', () => {
     expect(after.get('row-b')?.onLongPressAction).toBe(before.get('row-b')?.onLongPressAction);
   });
 
+});
+
+
+describe('linked archived task route', () => {
+  it.each([false, true])('opens a stored archived task read-only, including archived after copy=%s', (afterCopy) => {
+    const task = makeTask('linked-archive', { status: 'archived', description: 'Saved details' });
+    if (!afterCopy) linkedTasks.set(task.id, task);
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<FocusScreen />); });
+    if (afterCopy) linkedTasks.set(task.id, task);
+    routeParams.current = { taskId: task.id, openToken: 'external-open', taskTab: 'view' };
+    act(() => { tree.update(<FocusScreen />); });
+    const modal = tree.root.findByType('TaskEditModal' as never);
+    expect(modal.props.visible).toBe(true);
+    expect(modal.props.task).toEqual(task);
+    expect(modal.props.readOnly).toBe(true);
+    expect(modal.props.defaultTab).toBe('view');
+    expect(storeState.tasks.some((item) => item.id === task.id)).toBe(false);
+    expect(storeState.updateTask).not.toHaveBeenCalled();
+    expect(storeState.updateSettings).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
 });

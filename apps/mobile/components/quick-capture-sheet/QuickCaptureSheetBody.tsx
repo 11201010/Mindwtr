@@ -59,6 +59,9 @@ interface QuickCaptureSheetBodyProps {
   handleSaveAndEdit?: () => void;
   insetsBottom: number;
   inputRef: RefObject<TextInput | null>;
+  onModalShow?: () => void;
+  onInputFocus?: () => void;
+  onInputBlur?: () => void;
   keyboardAvoidingEnabled?: boolean;
   androidKeyboardInset?: number;
   noteValue: string;
@@ -85,6 +88,7 @@ interface QuickCaptureSheetBodyProps {
   /** Passive parse read-out; rendered under the title input, above the chips. */
   preview?: React.ReactNode;
   prioritiesEnabled: boolean;
+  timeEstimatesEnabled: boolean;
   priorityLabel: string;
   selectedPriority: TaskPriority | null;
   projectLabel: string;
@@ -122,6 +126,9 @@ export function QuickCaptureSheetBody({
   handleSaveAndEdit,
   insetsBottom,
   inputRef,
+  onModalShow,
+  onInputFocus,
+  onInputBlur,
   keyboardAvoidingEnabled = true,
   androidKeyboardInset = 0,
   noteValue,
@@ -147,6 +154,7 @@ export function QuickCaptureSheetBody({
   optionsExpanded,
   preview,
   prioritiesEnabled,
+  timeEstimatesEnabled,
   priorityLabel,
   selectedPriority,
   projectLabel,
@@ -168,7 +176,7 @@ export function QuickCaptureSheetBody({
   // on a keyboard-shrunk sheet (#1120 follow-up). Resets per open on purpose.
   const [syntaxHelpVisible, setSyntaxHelpVisible] = React.useState(false);
   // The popup's text is core's (getQuickCaptureText), shared with the native popup.
-  const text = getQuickCaptureText(t, { priorities: prioritiesEnabled });
+  const text = getQuickCaptureText(t, { priorities: prioritiesEnabled, timeEstimates: timeEstimatesEnabled });
   const optionsToggleLabel = optionsExpanded ? text.hideOptions : text.more;
   const defaultProjectLabel = tFallback(t, 'taskEdit.projectLabel', 'Project');
   const focusLabel = getQuickCaptureFocusLabel(t, {
@@ -228,6 +236,7 @@ export function QuickCaptureSheetBody({
   return (
     <Modal
       visible={visible}
+      onShow={onModalShow}
       transparent
       // Transparent Android modal animations can blend stale frames on some tablet GPUs.
       animationType={Platform.OS === 'android' ? 'none' : 'slide'}
@@ -297,6 +306,8 @@ export function QuickCaptureSheetBody({
                 placeholderTextColor={tc.secondaryText}
                 value={value}
                 onChangeText={onValueChange}
+                onFocus={onInputFocus}
+                onBlur={onInputBlur}
                 editable={!saving}
                 accessibilityState={{ busy: saving, disabled: saving }}
                 accessibilityLabel={t('quickAdd.inputLabel')}

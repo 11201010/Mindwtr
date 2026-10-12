@@ -1,0 +1,934 @@
+{
+  "now": "2026-10-11T12:00:00.000Z",
+  "before": {
+    "areas": [
+      {
+        "id": "area-1",
+        "name": "Work",
+        "order": 3,
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 4,
+        "revBy": "old-device",
+        "color": "#3b82f6",
+        "icon": "briefcase"
+      },
+      {
+        "id": "area-2",
+        "name": "Home",
+        "order": 1,
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 4,
+        "revBy": "old-device"
+      },
+      {
+        "id": "deleted-area",
+        "name": "Retired",
+        "order": 2,
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 4,
+        "revBy": "old-device",
+        "deletedAt": "2026-10-01T12:00:00.000Z"
+      },
+      {
+        "id": "decomposed",
+        "name": "Café",
+        "order": 4,
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 4,
+        "revBy": "old-device"
+      }
+    ],
+    "projects": [
+      {
+        "id": "linked",
+        "title": "linked",
+        "areaId": "area-1",
+        "areaTitle": "Work",
+        "color": "#3b82f6",
+        "status": "active",
+        "order": 0,
+        "tagIds": [
+          "keep"
+        ],
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 2,
+        "revBy": "old-device",
+        "supportNotes": "preserve notes"
+      },
+      {
+        "id": "archived",
+        "title": "archived",
+        "areaId": "area-1",
+        "areaTitle": "Old",
+        "color": "#ef4444",
+        "status": "archived",
+        "order": 0,
+        "tagIds": [],
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 8,
+        "revBy": "old-device",
+        "archivedAt": "2026-10-01T12:00:00.000Z"
+      },
+      {
+        "id": "deleted",
+        "title": "deleted",
+        "areaId": "area-1",
+        "areaTitle": "Work",
+        "color": "#3b82f6",
+        "status": "active",
+        "order": 0,
+        "tagIds": [],
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 0,
+        "revBy": "old-device",
+        "deletedAt": "2026-10-01T12:00:00.000Z"
+      },
+      {
+        "id": "unrelated",
+        "title": "unrelated",
+        "areaId": "area-2",
+        "areaTitle": "Home",
+        "color": "#ff0000",
+        "status": "active",
+        "order": 0,
+        "tagIds": [],
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 2,
+        "revBy": "old-device"
+      }
+    ],
+    "tasks": [
+      {
+        "id": "direct",
+        "title": "Preserve task",
+        "areaId": "area-1",
+        "status": "next",
+        "tags": [],
+        "contexts": [],
+        "description": "unchanged",
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 7,
+        "revBy": "old-device"
+      },
+      {
+        "id": "project-child",
+        "title": "Preserve project task",
+        "projectId": "linked",
+        "sectionId": "linked-section",
+        "status": "next",
+        "tags": [],
+        "contexts": [],
+        "description": "unchanged project child",
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 9,
+        "revBy": "old-device"
+      }
+    ],
+    "sections": [
+      {
+        "id": "linked-section",
+        "projectId": "linked",
+        "title": "Preserve section",
+        "order": 0,
+        "createdAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:00:00.000Z",
+        "rev": 3,
+        "revBy": "old-device"
+      }
+    ],
+    "people": [],
+    "settings": {
+      "deviceId": "area-test-device"
+    }
+  },
+  "cases": [
+    {
+      "label": "rename-mixed",
+      "patch": {
+        "name": " Office ",
+        "color": "#10b981",
+        "icon": "building",
+        "order": 1.5
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Office",
+          "order": 1.5,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#10b981",
+          "icon": "building"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Office",
+            "color": "#10b981",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Office",
+            "color": "#10b981",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Office",
+            "color": "#10b981",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "rename-only",
+      "patch": {
+        "name": " OFFICE "
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "OFFICE",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "OFFICE",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "OFFICE",
+            "color": "#ef4444",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "OFFICE",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "clear-color",
+      "patch": {
+        "color": null
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Work",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "unchanged-name",
+      "patch": {
+        "name": " Work "
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Work",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Old",
+            "color": "#ef4444",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 8,
+            "revBy": "old-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 0,
+            "revBy": "old-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "unchanged-color-repairs-title",
+      "patch": {
+        "color": "#3b82f6"
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Work",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 0,
+            "revBy": "old-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "icon-order-only",
+      "patch": {
+        "icon": null,
+        "order": -2.5
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Work",
+          "order": -2.5,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Old",
+            "color": "#ef4444",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 8,
+            "revBy": "old-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 0,
+            "revBy": "old-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "mixed-color-without-name",
+      "patch": {
+        "color": null,
+        "icon": "house",
+        "order": 8
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Work",
+          "order": 8,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "icon": "house"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Work",
+            "color": "#94a3b8",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "unicode-distinct",
+      "patch": {
+        "name": "﻿Café﻿"
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Café",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Café",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Café",
+            "color": "#ef4444",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Café",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    },
+    {
+      "label": "deleted-name-reuse",
+      "patch": {
+        "name": "Retired"
+      },
+      "expected": {
+        "area": {
+          "id": "area-1",
+          "name": "Retired",
+          "order": 3,
+          "createdAt": "2026-10-01T12:00:00.000Z",
+          "updatedAt": "2026-10-11T12:00:00.000Z",
+          "rev": 5,
+          "revBy": "area-test-device",
+          "color": "#3b82f6",
+          "icon": "briefcase"
+        },
+        "projects": [
+          {
+            "id": "linked",
+            "title": "linked",
+            "areaId": "area-1",
+            "areaTitle": "Retired",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [
+              "keep"
+            ],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 3,
+            "revBy": "area-test-device",
+            "supportNotes": "preserve notes"
+          },
+          {
+            "id": "archived",
+            "title": "archived",
+            "areaId": "area-1",
+            "areaTitle": "Retired",
+            "color": "#ef4444",
+            "status": "archived",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 9,
+            "revBy": "area-test-device",
+            "archivedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "deleted",
+            "title": "deleted",
+            "areaId": "area-1",
+            "areaTitle": "Retired",
+            "color": "#3b82f6",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-11T12:00:00.000Z",
+            "rev": 1,
+            "revBy": "area-test-device",
+            "deletedAt": "2026-10-01T12:00:00.000Z"
+          },
+          {
+            "id": "unrelated",
+            "title": "unrelated",
+            "areaId": "area-2",
+            "areaTitle": "Home",
+            "color": "#ff0000",
+            "status": "active",
+            "order": 0,
+            "tagIds": [],
+            "createdAt": "2026-10-01T12:00:00.000Z",
+            "updatedAt": "2026-10-01T12:00:00.000Z",
+            "rev": 2,
+            "revBy": "old-device"
+          }
+        ]
+      }
+    }
+  ],
+  "normalizationCases": [
+    {
+      "left": "﻿ HOME ﻿",
+      "right": "home",
+      "collides": true
+    },
+    {
+      "left": "HOME",
+      "right": "home",
+      "collides": false
+    },
+    {
+      "left": "ΟΣ",
+      "right": "ος",
+      "collides": true
+    },
+    {
+      "left": "İstanbul",
+      "right": "i̇stanbul",
+      "collides": true
+    },
+    {
+      "left": "Straße",
+      "right": "STRASSE",
+      "collides": false
+    },
+    {
+      "left": "Café",
+      "right": "Café",
+      "collides": false
+    },
+    {
+      "left": "Kelvin",
+      "right": "kelvin",
+      "collides": true
+    }
+  ]
+}

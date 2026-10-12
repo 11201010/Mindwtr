@@ -10,12 +10,14 @@ import {
     MAX_ERROR_BODY_BYTES,
     MAX_DOWNLOAD_BYTES,
     MAX_SYNC_DOCUMENT_BYTES,
+    readDecodedResponseText,
     readResponseBody,
     readResponseText,
     SYNC_LOCAL_INSECURE_URL_OPTIONS,
     toUint8Array,
 } from './http-utils';
 import { logWarn } from './logger';
+import { traceSection } from './perf-trace';
 import {
     decryptRemoteArtifactOrThrow,
     detectForeignSaltArtifact,
@@ -24,7 +26,7 @@ import {
     SyncEncryptionRemoteVersionUnavailableError,
     syncEncryptedArtifactName,
 } from './sync-encryption';
-import { encryptSyncArtifact, inspectSyncArtifact, SyncCryptoUnsupportedError, type SyncCryptoPrimitives, type SyncKeyMaterial } from './sync-crypto';
+import { encryptSyncArtifact, inspectSyncArtifact, SYNC_ARTIFACT_MAGIC_TEXT, SyncCryptoUnsupportedError, type SyncCryptoPrimitives, type SyncKeyMaterial } from './sync-crypto';
 
 export interface WebDavOptions {
     /** Download ceiling for this call. Defaults to the per-attachment cap; the sync
@@ -509,7 +511,7 @@ export async function webdavPutJson(
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
     headers[WEBDAV_AUTOMKCOL_HEADER] = headers[WEBDAV_AUTOMKCOL_HEADER] || '1';
 
-    const payload = JSON.stringify(data, null, 2);
+    const payload = traceSection('sync:serialize', () => JSON.stringify(data, null, 2));
     const sendPut = async (): Promise<WebDavPutResponse> => fetchWebdavPutAndConsumeError(
         url,
         {
@@ -592,7 +594,8 @@ const fetchWebdavPutAndConsumeError = async (
 async function webdavGetVersionedBytesOrNull(
     url: string,
     options: WebDavOptions,
-): Promise<WebDavVersionedBytes> {
+    preferText = false,
+): Promise<WebDavVersionedBytes & { text?: string }> {
     assertWebdavUrl(url, options);
     const fetcher = options.fetcher ?? fetch;
     return await fetchWithTimeoutAndConsume(
@@ -609,10 +612,15 @@ async function webdavGetVersionedBytesOrNull(
                 (error as { status?: number }).status = res.status;
                 throw error;
             }
+            const strongEtag = normalizeStrongWebdavEtag(res.headers.get('etag'));
+            // [preferText]: a body the host already decoded is plaintext unless it starts with the artifact magic; one that
+            // does is read again as its exact bytes and inspected whole (the native hosts' Response reads a second time).
+            const text = preferText ? await readDecodedResponseText(res, MAX_SYNC_DOCUMENT_BYTES, signal) : null;
+            if (text !== null && !text.startsWith(SYNC_ARTIFACT_MAGIC_TEXT)) return { bytes: null, text, exists: true, strongEtag };
             return {
                 bytes: new Uint8Array(await readResponseBody(res, undefined, MAX_SYNC_DOCUMENT_BYTES, signal)),
                 exists: true,
-                strongEtag: normalizeStrongWebdavEtag(res.headers.get('etag')),
+                strongEtag,
             };
         },
     );
@@ -758,7 +766,7 @@ export async function webdavGetSyncDocument<T>(
         try {
             return {
                 state: 'data',
-                data: JSON.parse(new TextDecoder().decode(plaintext)) as T,
+                data: traceSection('sync:jsonParse', () => JSON.parse(traceSection('sync:utf8Decode', () => new TextDecoder().decode(plaintext)))) as T,
                 exists: true,
                 strongEtag: remote.strongEtag,
             };
@@ -770,9 +778,9 @@ export async function webdavGetSyncDocument<T>(
         }
     }
 
-    const remote = await webdavGetVersionedBytesOrNull(url, webdavOptions);
-    if (remote.bytes) {
-        const inspected = inspectSyncArtifact(remote.bytes);
+    const remote = await webdavGetVersionedBytesOrNull(url, webdavOptions, true);
+    if (remote.bytes || remote.text !== undefined) {
+        const inspected = remote.bytes ? inspectSyncArtifact(remote.bytes) : { kind: 'plaintext' as const };
         if (inspected.kind === 'encrypted') {
             return {
                 state: 'encrypted-no-key',
@@ -785,13 +793,13 @@ export async function webdavGetSyncDocument<T>(
         if (inspected.kind === 'unsupported') {
             return unexpectedWebdavArtifact(inspected.reason);
         }
-        const text = new TextDecoder().decode(remote.bytes);
+        const text = remote.text ?? traceSection('sync:utf8Decode', () => new TextDecoder().decode(remote.bytes!));
         const normalizedBody = text.startsWith(UTF8_BOM) ? text.slice(1).trim() : text.trim();
         if (normalizedBody) {
             try {
                 return {
                     state: 'data',
-                    data: JSON.parse(normalizedBody) as T,
+                    data: traceSection('sync:jsonParse', () => JSON.parse(normalizedBody)) as T,
                     exists: true,
                     strongEtag: remote.strongEtag,
                 };

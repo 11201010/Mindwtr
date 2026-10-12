@@ -2,7 +2,7 @@
 // phone with a second device too). Nothing here reaches a real server.
 //
 // - serveWebdav: a WebDAV folder in memory with strong ETags and RN's conditional writes (If-Match, If-None-Match: *,
-//   412), Basic auth, and three faults a check can switch on: `failWrites` (a PUT of the sync document answers 500),
+//   412), Basic auth (`open`: none, for measure-merge-device.mjs), and three faults a check can switch on: `failWrites` (a PUT of the sync document answers 500),
 //   `down` (every request answers 503, as a server that went away behind a proxy) and `weakEtags` (every ETag is weak,
 //   W/"…", as a server that cannot promise byte-equal versions; sync encryption must refuse it).
 // - startCloud: the real self-hosted Mindwtr cloud (apps/cloud) under Bun, with one token and a scratch data folder.
@@ -22,13 +22,13 @@ import vm from 'node:vm';
 
 // ---- WebDAV ----
 
-export const serveWebdav = ({ port, username, password }) => new Promise((ready) => {
+export const serveWebdav = ({ port, username, password, open = false }) => new Promise((ready) => {
     const files = new Map();
     let version = 0;
     // `requests`: every request as it arrived; `authorized`: only those that carried the folder's user and password.
     // `delayMs`: every answer waits that long (a slow server).
     const state = { files, requests: [], authorized: [], failWrites: 0, down: false, delayMs: 0, weakEtags: false };
-    const authorized = (req) => req.headers.authorization === `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+    const authorized = (req) => open || req.headers.authorization === `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     const server = createServer((req, res) => {
         const chunks = [];
         req.on('data', (chunk) => chunks.push(chunk));
@@ -99,12 +99,14 @@ export const webdavDocument = (dav, folder) => {
 
 // ---- The self-hosted cloud ----
 
-/** apps/cloud under Bun on 127.0.0.1:[port], allowing only [token], its data under [dataDir]. */
+/** apps/cloud under Bun on 127.0.0.1:[port], allowing only [token], its data under [dataDir]. The body limit is raised from
+ *  the server's 2 MB default: the test phone's own library outgrew it (10-07, ~3,500 tasks), and the checks prove sync, not
+ *  that limit. */
 export const startCloud = async ({ repo, port, token, dataDir }) => {
     mkdirSync(dataDir, { recursive: true });
     const child = spawn(process.env.BUN ?? 'bun', ['run', resolve(repo, 'apps/cloud/src/server.ts'), '--port', String(port), '--host', '127.0.0.1'], {
         cwd: resolve(repo, 'apps/cloud'),
-        env: { ...process.env, MINDWTR_CLOUD_AUTH_TOKENS: token, MINDWTR_CLOUD_DATA_DIR: dataDir, NODE_ENV: 'development' },
+        env: { ...process.env, MINDWTR_CLOUD_AUTH_TOKENS: token, MINDWTR_CLOUD_DATA_DIR: dataDir, MINDWTR_CLOUD_MAX_BODY_BYTES: '64000000', NODE_ENV: 'development' },
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
@@ -339,6 +341,10 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
     };
     const device = {
         name, keyValue, secrets, events, lines, files,
+        /** Live task rows straight from this device's database: id, title, status, rev. */
+        tasks: () => database.prepare("SELECT id, title, status, rev FROM tasks WHERE COALESCE(deletedAt, '') = '' ORDER BY id").all().map((row) => ({ ...row })),
+        /** The bundle's MindwtrHost method names (check-boot-gates.mjs: Android's table). */
+        methods: Object.keys(host),
         call,
         stop: () => { clearInterval(pump); database.close(); },
         /** Boots on an empty database, reports the network online, and starts sync as ProcessCoreHost does. */

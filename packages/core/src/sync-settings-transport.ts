@@ -17,6 +17,7 @@
  * reports each state change.
  */
 import { CLOCK_SKEW_THRESHOLD_MS as CORE_CLOCK_SKEW_THRESHOLD_MS, type MergeStats } from './sync-types';
+import { runSerializedSyncDocumentOperation } from './data-transfer-transaction';
 import { cloudGetJson, isValidCloudSyncToken } from './cloud';
 import { isDropboxUnauthorizedError as isCoreDropboxUnauthorizedError } from './dropbox';
 import type { DropboxAccessTokenResolution, DropboxAuthTokens } from './dropbox-auth-tokens';
@@ -27,6 +28,7 @@ import {
     type MobileSyncConfigurationTransactionDependencies,
 } from './mobile-sync-configuration-transaction';
 import type { MobileDropboxSyncCredentials, MobileSyncConfigOverride } from './mobile-sync-service';
+import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
 import {
     coerceSupportedBackend,
     getMobileCloudRequestOptions,
@@ -38,7 +40,8 @@ import {
 } from './mobile-sync-utils';
 import { isConnectionAllowed, SYNC_LOCAL_INSECURE_URL_OPTIONS } from './http-utils';
 import { addBreadcrumb } from './log-breadcrumbs';
-import { SyncEncryptionRemoteVersionUnavailableError, isSyncEncryptionRemoteVersionUnavailableError, type SyncEncryptionTransitionKind } from './sync-encryption';
+import { isSandboxMode } from './sandbox';
+import { SyncEncryptionRemoteVersionUnavailableError, SyncEncryptionTransitionIncompleteError, isSyncEncryptionRemoteVersionUnavailableError, type SyncEncryptionTransitionKind } from './sync-encryption';
 import { normalizeCloudUrl, normalizeWebdavUrl } from './sync-helpers';
 import type { SyncRunResult } from './sync-run-ports';
 import { isLikelyOfflineSyncError } from './sync-service-utils';
@@ -204,7 +207,7 @@ export type SyncSettingsTransportHost = {
         delete(key: string): Promise<void>;
     };
     platform: { os(): string };
-    logInfo(message: string, context: { scope: string; extra: Record<string, string> }): unknown;
+    logInfo(message: string, context: { scope: string; force?: boolean; extra: Record<string, string> }): unknown;
     logSettingsError(error: unknown): void;
     performSync(syncPathOverride: string | undefined, options: {
         manual?: boolean;
@@ -270,8 +273,14 @@ const INITIAL_STATE: SyncSettingsTransportState = {
 export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
     const core: SyncSettingsTransportCoreFunctions = { ...CORE_FUNCTIONS, ...host.core };
     let state = INITIAL_STATE;
+    // A later backend/provider selection supersedes an Off request still waiting in
+    // the document queue. A started Off write may still commit, so track that case
+    // separately and make a later selection activate against its durable result.
+    let backendWrites = 0;
+    let offWriteStarted = 0;
     const listeners = new Set<() => void>();
     const set = (patch: Partial<SyncSettingsTransportState>) => {
+        if ('syncBackend' in patch || 'cloudProvider' in patch) backendWrites += 1;
         state = { ...state, ...patch };
         for (const listener of listeners) listener();
     };
@@ -282,24 +291,52 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
     let stagedDropboxCredentials: MobileDropboxSyncCredentials | null = null;
 
     const reconcileBackgroundSyncRegistration = () => {
-        void host.reconcileBackgroundSync().catch(logError);
+        void host.reconcileBackgroundSync().catch((error) => {
+            if (!(error instanceof NativeAttachmentCleanupUnconfirmedError)) logError(error);
+        });
     };
 
     const probeWebdavCompatibilityForCurrentEncryptionPosture = async (
         documentUrl: string,
         options: Parameters<typeof probeWebdavSyncCompatibility>[1],
     ): Promise<'strong-etag' | 'legacy-plaintext'> => {
-        const status = await host.encryption.getStatus();
-        const requireStrongEtag = status.state !== 'off' || Boolean(status.incompleteTransition);
-        const compatibility = await core.probeWebdavSyncCompatibility(
-            documentUrl,
-            options,
-            { requireStrongEtag },
-        );
-        if (compatibility === 'legacy-plaintext' && requireStrongEtag) {
-            throw new core.SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json');
+        let phase = 'encryption-status';
+        let requireStrongEtag: boolean | undefined;
+        let compatibility: 'strong-etag' | 'legacy-plaintext' | undefined;
+        let failure: unknown;
+        try {
+            const status = await host.encryption.getStatus();
+            requireStrongEtag = status.state !== 'off' || Boolean(status.incompleteTransition);
+            phase = 'compatibility';
+            compatibility = await core.probeWebdavSyncCompatibility(documentUrl, options, { requireStrongEtag });
+            if (compatibility === 'legacy-plaintext' && requireStrongEtag) {
+                throw new core.SyncEncryptionRemoteVersionUnavailableError('WebDAV data.json');
+            }
+            return compatibility;
+        } catch (error) {
+            failure = error;
+            compatibility = undefined;
+            throw error;
+        } finally {
+            try {
+                const status = (failure as { status?: unknown } | null)?.status;
+                const httpStatus = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599
+                    ? String(status) : undefined;
+                const reason = compatibility ?? (phase === 'encryption-status' ? 'encryption-status-unavailable'
+                    : httpStatus ? 'http'
+                    : core.isSyncEncryptionRemoteVersionUnavailableError(failure) ? 'strong-etag-required'
+                    : failure instanceof Error && failure.message.startsWith('WebDAV GET failed: invalid JSON (') ? 'invalid-json'
+                    : core.isLikelyOfflineSyncError(failure) ? 'network' : 'unknown');
+                void Promise.resolve(host.logInfo('WebDAV setup compatibility probe', {
+                    scope: 'sync-settings', force: !isSandboxMode(), extra: {
+                        releaseCheck: 'v1.3.5/webdav-setup-probe', phase,
+                        outcome: compatibility ? 'completed' : 'failed', reason,
+                        requireStrongEtag: requireStrongEtag === undefined ? 'unknown' : String(requireStrongEtag),
+                        ...(httpStatus ? { httpStatus } : {}),
+                    },
+                })).catch(() => undefined);
+            } catch { /* Diagnostics must preserve the probe's result and original rejection. */ }
         }
-        return compatibility;
     };
 
     /** Answers once the write is stored (React Native's screen does not wait for it). */
@@ -369,14 +406,11 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         return redacted;
     };
     const logError = (error: unknown) => host.logSettingsError(redactError(error));
-    const logInfo = (message: string, context: { scope: string; extra: Record<string, string> }) => host.logInfo(redact(message), {
+    const logInfo = (message: string, context: { scope: string; force?: boolean; extra: Record<string, string> }) => host.logInfo(redact(message), {
         scope: context.scope,
+        ...(context.force ? { force: true } : {}),
         extra: Object.fromEntries(Object.entries(context.extra).map(([key, entry]) => [key, redact(entry)])),
     });
-
-    // Every write of the backend key takes the next number; a failed Off write restores
-    // the screen only while no later write has started.
-    let backendWrites = 0;
 
     const formatText = (p: SyncSettingsTransportParams, key: string, replacements: Record<string, string | number>) => {
         let text = p.t(key);
@@ -638,32 +672,66 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         const nextBackend = backend === 'cloud'
             ? (cloudProvider === 'cloudkit' ? 'cloudkit' : 'cloud')
             : backend;
-        const previous = { syncBackend: state.syncBackend, proven: provenSyncBackend, pending: hasPendingSyncConfiguration };
         core.addBreadcrumb(`settings:syncBackend:${nextBackend}`);
-        set({ syncBackend: nextBackend });
         if (nextBackend === 'off') {
-            hasPendingSyncConfiguration = false;
-            provenSyncBackend = 'off';
-            p.resetSyncStatusForBackendSwitch();
             const sequence = ++backendWrites;
-            const write = host.storage.setItem(SYNC_BACKEND_KEY, nextBackend).then(() => {
+            const superseded = () => new Error('A newer sync backend selection replaced this Off request');
+            const write = runSerializedSyncDocumentOperation(async () => {
+                if (sequence !== backendWrites) throw superseded();
+                let incomplete: SyncEncryptionTransitionKind | null;
+                try {
+                    const status = await host.encryption.getStatus();
+                    incomplete = await host.encryption.getIncompleteTransition();
+                    if (Boolean(status.incompleteTransition) !== Boolean(incomplete)) {
+                        throw new Error('Sync encryption transition state is inconsistent');
+                    }
+                } catch (error) {
+                    if (error instanceof NativeAttachmentCleanupUnconfirmedError) throw error;
+                    logError(error);
+                    p.showSettingsErrorToast(p.tr('settings.syncMobile.error'), p.tr('settings.syncEncryptionErrorTransitionIncomplete'));
+                    throw new SyncSettingsWriteError(redact(error instanceof Error ? error.message : String(error)));
+                }
+                if (sequence !== backendWrites) throw superseded();
+                if (incomplete) {
+                    p.showSettingsWarning(p.tr('common.notice'), p.tr('settings.syncEncryptionErrorTransitionIncomplete'));
+                    try {
+                        await Promise.resolve(logInfo('Sync Off refused during incomplete encryption transition', {
+                            scope: 'sync-settings', force: true, extra: {
+                                releaseCheck: 'v1.3.5/sync-encryption-off-guard', operation: 'select-off', outcome: 'refused',
+                            },
+                        }));
+                    } catch {
+                        // A diagnostic sink never masks the refusal.
+                    }
+                    throw new SyncEncryptionTransitionIncompleteError(incomplete);
+                }
+                offWriteStarted += 1;
+                try {
+                    await host.storage.setItem(SYNC_BACKEND_KEY, nextBackend);
+                } catch (error) {
+                    if (error instanceof NativeAttachmentCleanupUnconfirmedError) throw error;
+                    logError(error);
+                    throw new SyncSettingsWriteError(redact(error instanceof Error ? error.message : String(error)));
+                } finally {
+                    offWriteStarted -= 1;
+                }
+                const stillSelected = sequence === backendWrites;
+                provenSyncBackend = 'off';
+                hasPendingSyncConfiguration = !stillSelected && state.syncBackend !== 'off';
+                if (stillSelected) {
+                    p.resetSyncStatusForBackendSwitch();
+                    set({ syncBackend: 'off' });
+                }
                 host.clearSyncConfigCache();
                 reconcileBackgroundSyncRegistration();
-            }, (error: unknown) => {
-                logError(error);
-                // The store still holds the previous backend: the screen must not show Off,
-                // unless a later backend write has started since.
-                if (sequence === backendWrites) {
-                    provenSyncBackend = previous.proven;
-                    hasPendingSyncConfiguration = previous.pending;
-                    if (state.syncBackend === 'off') set({ syncBackend: previous.syncBackend });
-                }
-                throw new SyncSettingsWriteError(redact(error instanceof Error ? error.message : String(error)));
+                if (!stillSelected) throw superseded();
             });
             // React Native's screen does not wait for the write; a caller that does sees the failure.
             write.catch(() => undefined);
             return write;
-        } else if (nextBackend !== provenSyncBackend) {
+        }
+        set({ syncBackend: nextBackend });
+        if (nextBackend !== provenSyncBackend || offWriteStarted > 0) {
             hasPendingSyncConfiguration = true;
             if (isSyncTargetComplete(nextBackend, cloudProvider)) {
                 return handleSync({
@@ -686,6 +754,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         const isNewSelection = (
             provider !== provenCloudProvider
             || nextBackend !== provenSyncBackend
+            || offWriteStarted > 0
         );
         if (isNewSelection) {
             hasPendingSyncConfiguration = true;
@@ -962,6 +1031,18 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
 
     const handleSync = (options?: SyncSettingsActionOptions): Promise<void> => runSync(host.params(), options);
 
+    const discardSupersededActivationProof = (sequence: number): boolean => {
+        if (sequence === backendWrites) return false;
+        try {
+            void Promise.resolve(logInfo('Sync activation proof superseded by a later backend selection', {
+                scope: 'sync-settings', extra: {
+                    releaseCheck: 'v1.3.5/sync-setup-stale-proof', outcome: 'superseded',
+                },
+            })).catch(() => undefined);
+        } catch { /* A diagnostic sink must not restore a superseded selection. */ }
+        return true;
+    };
+
     /**
      * `p` is the screen as the action that asked for this sync saw it;
      * `insecureWarned` says that action already warned about an insecure URL.
@@ -978,6 +1059,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
         } = state;
         core.addBreadcrumb('sync:manual');
         set({ isSyncing: true });
+        let cleanupUnconfirmed = false;
         let activationCleanupDeferred: 'remote' | 'file' | null = null;
         const showRemoteFenceFeedback = (deferred: 'busy' | 'cleanup') => {
             showSettingsWarning(
@@ -1146,6 +1228,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     && provenCloudProvider !== 'cloudkit'
             );
             if (needsActivationProbe) {
+                const activationSequence = backendWrites;
                 void logInfo('Sync backend selected; running the verification sync to activate it', {
                     scope: 'sync',
                     extra: {
@@ -1172,6 +1255,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     effectiveBackend === 'file' ? effectiveSyncPath || undefined : undefined,
                     { activationProbe: true, manual: true, configOverride }
                 );
+                if (discardSupersededActivationProof(activationSequence)) return;
                 if (probeResult.skipped === 'offline' || core.isLikelyOfflineSyncError(probeResult.error)) {
                     const serverUnreachable = probeResult.skipped === 'offline' && probeResult.offlineCause === 'request';
                     showToast({
@@ -1253,6 +1337,8 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     throw new Error(probeResult.error || 'Sync setup could not be verified');
                 }
                 await commitProvenSyncConfiguration(p, configOverride);
+                // The activation commit advances the selection counter once itself.
+                if (discardSupersededActivationProof(activationSequence + 1)) return;
                 if (activationCleanupDeferred) {
                     if (activationCleanupDeferred === 'file') showFileSyncLockFeedback('cleanup');
                     else showRemoteFenceFeedback('cleanup');
@@ -1387,6 +1473,10 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                 throw new Error(result.error || 'Unknown error');
             }
         } catch (error) {
+            if (error instanceof NativeAttachmentCleanupUnconfirmedError) {
+                cleanupUnconfirmed = true;
+                throw error;
+            }
             const message = String(error);
             if (/temporary Inbox location|re-select a folder in Settings -> (?:Data & Sync|Sync)|Cannot access the selected sync file/i.test(message)) {
                 showSettingsWarning(
@@ -1404,7 +1494,7 @@ export function createSyncSettingsTransport(host: SyncSettingsTransportHost) {
                     : redact(p.getSyncFailureToastMessage(error)),
             );
         } finally {
-            set({ isSyncing: false });
+            if (!cleanupUnconfirmed) set({ isSyncing: false });
         }
     };
 

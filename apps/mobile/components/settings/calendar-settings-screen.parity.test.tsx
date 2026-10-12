@@ -386,9 +386,9 @@ const scenarios: Scenario[] = [
       ['switch', 2],
       ['switch', 3],
       ['press', 'k:settings.calendarShowInAreas', 1],
-      ['press', '☐ Work'],
-      ['press', '☐ Home'],
-      ['press', '☑ Work'],
+      ['press', 'Work'],
+      ['press', 'Home'],
+      ['press', 'Work'],
       ['press', 'k:settings.calendarShowInAreas', 1],
       ['switch', 1],
     ],
@@ -428,7 +428,7 @@ const scenarios: Scenario[] = [
       ['press', 'Team #DB2777'],
       ['press', 'Team k:taskEdit.textDirection.auto'],
       ['press', 'k:settings.calendarShowInAreas', 0],
-      ['press', '☐ Home'],
+      ['press', 'Home'],
       ['press', 'k:settings.calendarShowInAreas', 1],
       ['press', 'k:settings.externalCalendarRemove', 0],
     ],
@@ -724,4 +724,29 @@ describe('React Native Calendar settings screen parity fixture', () => {
     }
     expect(Object.keys(observations)).toEqual(Object.keys(captured));
   }, 180_000);
+
+  it('announces the Area choice state without reading the check glyphs (#1305)', async () => {
+    const scenario = scenarios.find((entry) => entry.name === 'device calendars: turn on, grant, choose calendars and areas')!;
+    await seedStore(scenario);
+    setDevice(scenario.device);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<CalendarSettingsScreen />);
+    });
+    await settle();
+    // Turn device calendars on and pick two, then open the second calendar's Area choice.
+    for (const action of scenario.actions.slice(0, 5)) {
+      await perform(renderer, action);
+      await settle();
+    }
+    const showInAreas = labelText('k:settings.calendarShowInAreas');
+    const toggles = hosts(renderer.root, 'TouchableOpacity').filter((node) => matches(node, showInAreas));
+    expect(toggles.map((node) => node.props.accessibilityState?.expanded)).toEqual([false, true, false]);
+    const options = hosts(renderer.root, 'TouchableOpacity').filter((node) => node.props.accessibilityRole === 'checkbox');
+    expect(options.map((node) => [node.props.accessibilityLabel, node.props.accessibilityState?.checked]))
+      .toEqual([['Work', false], ['Home', false]]);
+    await act(async () => { renderer.unmount(); });
+    stopCalendarPushSync();
+    await flushPendingSave();
+  }, 60_000);
 });

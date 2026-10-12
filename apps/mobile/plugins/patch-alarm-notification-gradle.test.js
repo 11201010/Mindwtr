@@ -49,6 +49,7 @@ const applyAlarmIosColdStartHeaderPatchToSource = transformFor('alarm-ios-cold-s
 const applyAlarmIosUniqueIdentifierPatchToSource = transformFor('alarm-ios-unique-identifier');
 const applyAlarmIosDeletePendingPatchToSource = transformFor('alarm-ios-delete-pending-arg');
 const applyAlarmIosPendingKindPatchToSource = transformFor('alarm-ios-pending-kind');
+const applyAlarmIosReminderThreadPatchToSource = transformFor('alarm-ios-reminder-thread');
 const applyAlarmReminderSlotPatchToSource = transformFor('alarm-reminder-slot');
 const applyAlarmReminderActionsUtilPatchToSource = transformFor('alarm-reminder-actions-util');
 const applyAlarmReminderActionsReceiverPatchToSource = transformFor('alarm-reminder-actions-receiver');
@@ -66,6 +67,147 @@ const patchInstalledPackage = () => {
   const read = (...segments) => fs.readFileSync(path.join(tmpRoot, 'node_modules', 'react-native-alarm-notification', ...segments), 'utf8');
   return { tmpRoot, read };
 };
+
+describe('Android boot recovery', () => {
+  const bootSource = `    private void enableBootReceiver(Context context) {
+        ComponentName receiver = new ComponentName(context, AlarmBootReceiver.class);
+        PackageManager pm = context.getPackageManager();
+        int setting = pm.getComponentEnabledSetting(receiver);
+        if (setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+            pm.setComponentEnabledSetting(receiver, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP);
+        }
+    }
+`;
+  const moduleSource = `    @ReactMethod
+    public void removeAllFiredNotifications() {}`;
+
+  it('converges and refuses changed upstream anchors', () => {
+    for (const [id, source] of [['alarm-boot-recovery-util', bootSource], ['alarm-boot-recovery-module', moduleSource]]) {
+      const transform = transformFor(id);
+      const patched = transform(source);
+      expect(transform(patched)).toBe(patched);
+      expect(() => transform('class UpstreamChanged {}')).toThrow(/anchor missing/);
+    }
+  });
+
+  it('enables manifest-default/disabled receivers and rearms only retained future active rows (compiled, mutation sensitive)', () => {
+    const util = transformFor('alarm-boot-recovery-util')(bootSource);
+    const patchedModule = transformFor('alarm-boot-recovery-module')(moduleSource);
+    const method = patchedModule.slice(0, patchedModule.indexOf('    @ReactMethod\n    public void removeAllFiredNotifications()'))
+      .replaceAll('@ReactMethod', '')
+      .replaceAll('com.facebook.react.bridge.ReadableArray', 'ReadableArray')
+      .replaceAll('com.facebook.react.bridge.UiThreadUtil', 'UiThreadUtil')
+      .replaceAll('android.content.ComponentName', 'ComponentName')
+      .replaceAll('android.content.pm.PackageManager', 'PackageManager')
+      .replaceAll('android.app.AlarmManager', 'AlarmManager')
+      .replaceAll('android.content.Context', 'Context')
+      .replaceAll('android.os.Build', 'Build');
+    const java = (methods, onMain = true) => `import java.util.*;
+class UiThreadUtil {
+  static final Queue<Runnable> work=new ArrayDeque<>();
+  static void runOnUiThread(Runnable runnable) { work.add(runnable); }
+  static void drain() { while (!work.isEmpty()) work.remove().run(); }
+}
+class AlarmBootReceiver {}
+class ComponentName { ComponentName(Context c, Class<?> type) {} }
+class PackageManager {
+  static final int COMPONENT_ENABLED_STATE_DEFAULT=0, COMPONENT_ENABLED_STATE_ENABLED=1, COMPONENT_ENABLED_STATE_DISABLED=2, DONT_KILL_APP=1;
+  int state=0, writes=0;
+  int getComponentEnabledSetting(ComponentName c) { return state; }
+  void setComponentEnabledSetting(ComponentName c, int value, int flags) { state=value; writes++; }
+}
+class Build { static class VERSION { static int SDK_INT=36; } static class VERSION_CODES { static int S=31; } }
+class AlarmManager { boolean canScheduleExactAlarms() { return true; } }
+class Context {
+  static final String ALARM_SERVICE="alarm";
+  final PackageManager pm=new PackageManager();
+  PackageManager getPackageManager() { return pm; }
+  Object getSystemService(String service) { return new AlarmManager(); }
+}
+class AlarmModel {
+  int id, alarmId, active; String type; long fireAt;
+  AlarmModel(int id, int alarmId, int active, String type, long fireAt) { this.id=id;this.alarmId=alarmId;this.active=active;this.type=type;this.fireAt=fireAt; }
+  int getActive() { return active; } String getScheduleType() { return type; }
+}
+class AlarmDatabase {
+  final Map<Integer,AlarmModel> rows=new HashMap<>();
+  AlarmModel getAlarm(int id) { return rows.get(id); }
+}
+class AlarmUtil {
+  final Context context; final AlarmDatabase db=new AlarmDatabase(); final Set<String> pending=new HashSet<>(); final List<Integer> calls=new ArrayList<>();
+  AlarmUtil(Context context) { this.context=context; }
+  AlarmDatabase getAlarmDB() { return db; }
+  Calendar getCalendarFromAlarm(AlarmModel alarm) { Calendar c=Calendar.getInstance();c.setTimeInMillis(alarm.fireAt);return c; }
+  void setAlarm(AlarmModel alarm) {
+    if (alarm.id==5) throw new SecurityException("denied");
+    calls.add(alarm.id);pending.add(alarm.id+":"+alarm.alarmId);setBootReceiver();
+  }
+  void setBootReceiver() { enableBootReceiver(context); }
+${methods}
+}
+class ReadableArray {
+  final double[] values; ReadableArray(double... values) { this.values=values; }
+  int size() { return values.length; } double getDouble(int i) { return values[i]; }
+}
+class WritableMap extends HashMap<String,Object> {
+  void putInt(String field,int value) { put(field,value); }
+  void putBoolean(String field,boolean value) { put(field,value); }
+}
+class Arguments { static WritableMap createMap() { return new WritableMap(); } }
+class Promise {
+  WritableMap value; void resolve(Object result) { value=(WritableMap)result; }
+  void reject(String code,Exception error) { throw new AssertionError(code,error); }
+}
+public class BootRecoveryCheck {
+  final Context mReactContext=new Context(); final AlarmUtil alarmUtil=new AlarmUtil(mReactContext);
+${onMain ? method : method.replace('UiThreadUtil.runOnUiThread(() -> {', '{').replace('        });', '        }')}
+  static void check(boolean condition) { if (!condition) throw new AssertionError(); }
+  public static void main(String[] args) {
+    BootRecoveryCheck module=new BootRecoveryCheck();AlarmUtil util=module.alarmUtil;
+    for (int state : new int[]{0,2,1}) {
+      module.mReactContext.pm.state=state;module.mReactContext.pm.writes=0;util.setBootReceiver();
+      check(module.mReactContext.pm.state==1 && module.mReactContext.pm.writes==(state==1?0:1));
+    }
+    long now=System.currentTimeMillis();
+    util.db.rows.put(1,new AlarmModel(1,101,1,"once",now+3600000));
+    util.db.rows.put(2,new AlarmModel(2,102,1,"once",now-3600000));
+    util.db.rows.put(3,new AlarmModel(3,103,0,"once",now+3600000));
+    util.db.rows.put(4,new AlarmModel(4,104,1,"repeat",now-3600000));
+    util.db.rows.put(5,new AlarmModel(5,105,1,"once",now+3600000));
+    util.db.rows.put(6,new AlarmModel(6,106,1,"once",now+3600000));
+    ReadableArray ids=new ReadableArray(1,1,2,3,4,5,6,99,-1,1.5);
+    Promise first=new Promise();module.rearmAlarms(ids,first);
+    check(first.value==null && util.calls.isEmpty());
+    UiThreadUtil.drain();
+    check(first.value.get("requested").equals(10));
+    check(first.value.get("rearmed").equals(3) && first.value.get("skipped").equals(3) && first.value.get("failed").equals(3));
+    check(first.value.get("bootEnabled").equals(true) && first.value.get("exactAllowed").equals(true));
+    check(util.calls.equals(Arrays.asList(1,4,6)) && util.pending.size()==3);
+    Promise second=new Promise();module.rearmAlarms(ids,second);
+    check(second.value==null && util.calls.size()==3);
+    UiThreadUtil.drain();
+    check(util.pending.size()==3 && util.db.rows.size()==6 && util.db.rows.get(1).alarmId==101);
+  }
+}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-java-boot-'));
+    const run = (source, onMain = true) => {
+      fs.writeFileSync(path.join(dir, 'BootRecoveryCheck.java'), java(source, onMain));
+      const compile = spawnSync('javac', ['BootRecoveryCheck.java'], { cwd: dir, encoding: 'utf8' });
+      expect(compile.status, compile.stderr).toBe(0);
+      return spawnSync('java', ['BootRecoveryCheck'], { cwd: dir, encoding: 'utf8' });
+    };
+    try {
+      const result = run(util);
+      expect(result.status, result.stderr).toBe(0);
+      expect(run(util.replace('setting != PackageManager.COMPONENT_ENABLED_STATE_ENABLED', 'setting == PackageManager.COMPONENT_ENABLED_STATE_DISABLED')).status).not.toBe(0);
+      expect(run(util.replace('fireTime.getTimeInMillis() <= System.currentTimeMillis()', 'false')).status).not.toBe(0);
+      expect(run(util.replace('alarm.getActive() != 1', 'false')).status).not.toBe(0);
+      expect(run(util, false).status).not.toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
 
 it('guards a stale one-shot before native delivery and consumes a fired row', () => {
   const util = transformFor('alarm-stale-once-util')(`class AlarmUtil {
@@ -1253,6 +1395,23 @@ ${helper}
     expect(() => applyAlarmReminderActionsReceiverPatchToSource(receiver)).toThrow(/alarm-reminder-actions-receiver: expected anchor not found/);
   });
 
+  it('threads a task\'s iOS reminders together and collapses each thread to its newest delivery', () => {
+    if (!fs.existsSync(installedAlarmPackage)) return;
+    const { tmpRoot, read } = patchInstalledPackage();
+    try {
+      const module = read('ios', 'RnAlarmNotification.m');
+      // scheduleAlarm and sendNotification take the tag; the repeat re-arm and snooze keep it.
+      expect(module.match(/content\.threadIdentifier = details\[@"tag"\];/g)).toHaveLength(2);
+      expect(module.match(/content\.threadIdentifier = contentInfo\.threadIdentifier;/g)).toHaveLength(2);
+      expect(module).toContain('RCT_EXPORT_METHOD(collapseDeliveredReminderNotifications:(RCTPromiseResolveBlock)resolve');
+      expect(module).toContain('resolve(@(superseded.count));');
+      expect(module).toContain('if (![thread hasPrefix:@"mindwtr-reminder:"]) continue;');
+      expect(applyAlarmIosReminderThreadPatchToSource(module)).toBe(module);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('keeps the Gradle compatibility rewrite in place', () => {
     const input = `apply plugin: 'maven'
 buildscript {
@@ -1322,10 +1481,14 @@ describe('PATCHES registry completeness', () => {
     // original sites: dropping it silently restores the duplicate-reminder leak.
     ['RnAlarmNotification.m', 'applyAlarmIosDeletePendingPatchToSource'],
     ['RnAlarmNotification.m', 'applyAlarmIosPendingKindPatchToSource'],
+    ['RnAlarmNotification.m', 'applyAlarmIosReminderThreadPatchToSource'],
     // Added for #1028: dropping either silently restores the dead-row silent
     // no-op on a notification action tap.
     ['AlarmUtil.java', 'applyAlarmDeadRowUtilPatchToSource'],
     ['AlarmReceiver.java', 'applyAlarmActionDeadRowPatchToSource'],
+    // Reboot recovery restores retained rows without replacing their PendingIntents.
+    ['ANModule.java', 'applyAlarmBootRecoveryModulePatchToSource'],
+    ['AlarmUtil.java', 'applyAlarmBootRecoveryUtilPatchToSource'],
     // Added for #528: dropping it leaves JS unable to see that "Alarms &
     // reminders" is denied, so the settings screens silently stop offering the
     // fix and every reminder stays inexact.
@@ -1353,7 +1516,7 @@ describe('PATCHES registry completeness', () => {
   });
 
   it('every entry declares required/firstMatchOnly explicitly', () => {
-    expect(PATCHES).toHaveLength(29);
+    expect(PATCHES).toHaveLength(32);
     for (const patch of PATCHES) {
       expect(typeof patch.id).toBe('string');
       expect(typeof patch.required).toBe('boolean');

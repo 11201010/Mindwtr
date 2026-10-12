@@ -283,6 +283,7 @@ import { createProjectNotesWriteMethods } from './native-host-contract-project-n
 import { createProjectTagsWriteMethods } from './native-host-contract-project-tags';
 import { createProjectAttachmentWriteMethods, createProjectFileRemoveWriteMethods } from './native-host-contract-project-attachments';
 import { createProjectFileAddWriteMethods } from './native-host-contract-project-file-add';
+import { createProjectAvailabilityMethods } from './native-host-contract-project-availability';
 import { createProjectStatusMethods } from './native-host-contract-project-status';
 import { createTrashProjectRestoreMethods } from './native-host-contract-trash-project-restore';
 import { createProjectDeleteMethods } from './native-host-contract-project-delete';
@@ -309,6 +310,8 @@ import { createTaxonomyMethods } from './native-host-contract-taxonomy';
 import { createGeneralPreferenceMethods } from './native-host-contract-general-preference';
 import { createGtdWorkflowMethods } from './native-host-contract-gtd-workflow';
 import { createAppLockMethods } from './native-host-contract-app-lock';
+import { createNotificationSettingsMethods } from './native-host-contract-notification-settings';
+import { buildNotificationSettingsModel } from './notification-settings-model';
 import { buildNativeGeneralSettingsModel } from './native-host-contract-settings';
 import { createPersonDeleteMethods } from './native-host-contract-person-delete';
 import { createAreaColorMethods } from './native-host-contract-area-color';
@@ -328,9 +331,11 @@ import {
     type NativeFocusControls,
     type NativeFocusControlsInput,
 } from './native-host-contract-focus-controls';
-import { createSettingsMethods } from './native-host-contract-settings';
+import { createSettingsMethods, type NativePersistentCaptureHost } from './native-host-contract-settings';
 import { createSyncSettingsMethods, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createAIMethods, type NativeAIHost } from './native-host-contract-ai';
+import { createAboutMethods, type NativeAboutHost } from './native-host-contract-about';
+export type { NativeAboutHost, NativeAboutNotice, NativeAboutSettings } from './native-host-contract-about';
 export { NATIVE_SYNC_SETTINGS_UNJOURNALED_COMMANDS, type NativeSyncSettingsHost } from './native-host-contract-settings-sync';
 import { createCalendarSettingsMethods, type NativeCalendarHost } from './native-host-contract-settings-calendar';
 export {
@@ -953,9 +958,15 @@ export function createNativeHostContract(options: {
     syncSettings?: NativeSyncSettingsHost;
     calendar?: NativeCalendarHost;
     ai?: NativeAIHost;
+    /** Settings › About, the heartbeat and the store review prompt (native-host-contract-about.ts). */
+    about?: NativeAboutHost;
     /** Core's mobile attachment modules on the host's file bridge (native-host-contract-attachments.ts). */
     attachments?: NativeAttachmentsHost;
+    /** Trusted host platform selects core's existing reminder window; omitted hosts retain Android's cap. */
+    reminderPlatform?: 'android' | 'ios';
     replayTokens?: NativeReplayTokens;
+    /** Android's persistent capture switch in RN's device store (Settings › Notifications). */
+    persistentCapture?: NativePersistentCaptureHost;
 } = {}) {
     // A new host: request IDs an earlier one held in memory are not this one's (its disk receipts stay).
     startNativeRequestSession();
@@ -1756,15 +1767,19 @@ export function createNativeHostContract(options: {
         }),
         ...createSavedSearchWriteMethods({ readiness, save }),
         // Settings: the menu, General and Manage: native-host-contract-settings.ts.
+        // Settings › About, the heartbeat and the store review prompt: native-host-contract-about.ts.
+        ...createAboutMethods({ readiness, t: () => translate, language: () => language, host: () => options.about ?? null }),
         ...createSettingsMethods({
             readiness,
             save,
+            about: () => options.about ?? null,
             t: () => translate,
             language: () => language,
             systemLocale: () => systemLocale,
             dateFormatting,
             dataRevision: () => `${revision()}:${settingsRevision()}`,
             requestIdPattern: CAPTURE_ID_PATTERN,
+            persistentCapture: () => options.persistentCapture ?? null,
         }),
         // Settings › Sync: native-host-contract-settings-sync.ts.
         ...createSyncSettingsMethods({
@@ -1795,7 +1810,8 @@ export function createNativeHostContract(options: {
         // The pending-captures queue and context automation: native-host-contract-capture-ingest.ts.
         ...createCaptureIngestMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN }),
         // Reminder alarms and notification taps: native-host-contract-reminders.ts.
-        ...createReminderMethods({ readiness, save, language: () => language, requestIdPattern: CAPTURE_ID_PATTERN }),
+        ...createReminderMethods({ readiness, save, language: () => language, requestIdPattern: CAPTURE_ID_PATTERN,
+            reminderPlatform: options.reminderPlatform ?? 'android' }),
         // The task editor's and the project screen's attachments: native-host-contract-attachments.ts.
         ...createAttachmentMethods({ readiness, save, t: () => translate, requestIdPattern: CAPTURE_ID_PATTERN,
             isReadOnly: isInArchivedProject, host: () => options.attachments ?? null }),
@@ -1846,6 +1862,8 @@ export function createNativeHostContract(options: {
         ...createProjectFileRemoveWriteMethods({ readiness, save,
             revision: projectMutationRevision, t: () => translate }),
         ...createProjectFileAddWriteMethods({ readiness, save, t: () => translate }),
+        ...createProjectAvailabilityMethods({ readiness, save, revision: projectMutationRevision,
+            host: () => options.attachments ?? null }),
         ...createProjectStatusMethods({ readiness, save,
             revision: projectMutationRevision }),
         ...createTrashProjectRestoreMethods({ readiness, save }),
@@ -1890,6 +1908,8 @@ export function createNativeHostContract(options: {
                 systemLocale: () => systemLocale, dateFormatting,
             }, deviceTheme) }),
         ...createGtdWorkflowMethods({ readiness, save, t: () => translate }),
+        ...createNotificationSettingsMethods({ readiness, save,
+            model: (settings) => buildNotificationSettingsModel({ settings, language, systemLocale, t: translate }) }),
         ...createAppLockMethods({ readiness, save,
             model: (settings) => buildNativeGeneralSettingsModel(settings, {
                 t: () => translate, language: () => language,

@@ -28,9 +28,11 @@ import {
   isPomodoroAlarmScheduleSuperseded,
   isPomodoroAlarmUnchanged,
   isPomodoroNativeAlarm,
+  isReminderOwnerGone,
   planReminderAlarms,
   POMODORO_ALARM_STORAGE_KEY,
   readPomodoroAlarmEntry,
+  readNativeAlarmData,
   readReminderAlarmMap,
   REMINDER_ALARM_MAP_STORAGE_KEY,
   REMINDER_NOTIFICATION_CHANNEL,
@@ -83,6 +85,8 @@ type AlarmNotificationsApi = {
   deleteRepeatingAlarm: (id: AlarmId) => void;
   removeFiredNotification: (id: AlarmId) => void;
   removeAllFiredNotifications: () => void;
+  /** iOS (patched): keeps only the newest delivered notification of each reminder thread. */
+  collapseDeliveredReminderNotifications?: () => Promise<number>;
   getScheduledAlarms?: () => Promise<unknown>;
   requestPermissions?: (permissions: { alert: boolean; badge: boolean; sound: boolean }) => Promise<unknown>;
 };
@@ -105,6 +109,7 @@ const DENIED_RESUME_CLEANUP_RELEASE_CHECK = 'v1.3.4/denied-resume-cleanup';
 const SERIALIZED_RESCHEDULE_RELEASE_CHECK = 'v1.3.4/serialized-reminder-cycles';
 const STALE_REMINDER_GUARD_RELEASE_CHECK = 'v1.3.4/stale-reminder-guard';
 const DELIVERED_REMINDER_RELEASE_CHECK = 'v1.3.4/delivered-reminder-withdrawn';
+const REMINDER_BOOT_RECOVERY_RELEASE_CHECK = 'v1.3.5/reminder-boot-recovery';
 const DELIVERED_REMINDERS_STORAGE_KEY = 'mindwtr:local:delivered-reminders:v1';
 // The platforms cannot tell JS whether a notification is still in the tray, so an
 // entry is forgotten this long after its reminder's time (the native app's bound).
@@ -543,6 +548,57 @@ async function deleteStaleNativeAlarms(api: AlarmNotificationsApi): Promise<void
   }
 }
 
+// Persisted signatures describe library DB rows, not AlarmManager state after reboot.
+async function rearmRetainedNativeAlarms(api: AlarmNotificationsApi): Promise<void> {
+  if (Platform.OS !== 'android' || !loadedAlarmMap) return;
+  const native = NativeModules.RNAlarmNotification as {
+    rearmAlarms?: (ids: number[]) => Promise<{
+      requested: number; rearmed: number; skipped: number; failed: number;
+      bootEnabled: boolean; exactAllowed: boolean;
+    }>;
+  } | undefined;
+  if (typeof native?.rearmAlarms !== 'function') {
+    if (isLoggingEnabled()) logNotificationInfo('Reminder boot recovery unavailable', { releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK, outcome: 'unavailable' });
+    return;
+  }
+  try {
+    if (typeof api.getScheduledAlarms !== 'function') throw new Error('inventory unavailable');
+    const rows = await api.getScheduledAlarms();
+    if (!Array.isArray(rows)) throw new Error('inventory unreadable');
+    const { settings, tasks, projects } = useTaskStore.getState();
+    if (!hasActiveMobileNotificationFeature(settings)) return;
+    const taskMap = new Map(tasks.map((task) => [task.id, task]));
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const ids = new Set(Array.from(alarmMap, ([key, entry]) => (
+      isReminderOwnerGone(key, taskMap, projectMap) ? 0 : entry.id
+    )).filter((id) => Number.isSafeInteger(id) && id > 0));
+    const stale = new Set(findStaleNativeReminderAlarms({ rows, trackedIds: ids, tasks, projects, now: new Date() }).map(({ id }) => id));
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const id = Number(row.id);
+      if (isPomodoroNativeAlarm(row)) {
+        ids.delete(id);
+        continue;
+      }
+      const data = readNativeAlarmData(row.data);
+      if (Number.isSafeInteger(id) && id > 0 && !stale.has(id) && row.scheduleType === 'once'
+        && areTaskRemindersEnabled(settings)
+        && data.kind?.startsWith('task-') && data.alarmKey?.startsWith('task:')
+        && !taskMap.get(data.alarmKey.slice('task:'.length).replace(/:r\d+$/, ''))?.suppressMindwtrReminders
+        && !isReminderOwnerGone(data.alarmKey, taskMap, projectMap)) ids.add(id);
+    }
+    const result = await native.rearmAlarms(Array.from(ids));
+    if (isLoggingEnabled()) logNotificationInfo('Reminder boot recovery complete', {
+      releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK,
+      requested: result.requested, rearmed: result.rearmed, skipped: result.skipped, failed: result.failed,
+      bootEnabled: result.bootEnabled, exactAllowed: result.exactAllowed,
+      outcome: result.failed > 0 || (result.rearmed > 0 && !result.bootEnabled) ? 'incomplete' : 'rearmed',
+    });
+  } catch {
+    if (isLoggingEnabled()) logNotificationWarn('Reminder boot recovery failed', { releaseCheck: REMINDER_BOOT_RECOVERY_RELEASE_CHECK, outcome: 'failed' });
+  }
+}
+
 const getDeliveredNotificationModule = (): DeliveredNotificationModule | undefined => (
   (NativeModules as Record<string, unknown>).RNAlarmNotification as DeliveredNotificationModule | undefined
 );
@@ -643,6 +699,22 @@ async function withdrawDeliveredReminders(
   }
 }
 
+// Android posts every reminder of a task into one notification, which the next reminder
+// replaces. iOS cannot replace a delivered notification from a pending one, so its reminders
+// share the task's thread and each cycle (every app start or foreground among them) removes
+// all but the newest delivered notification of each task.
+async function collapseDeliveredReminderThreads(api: AlarmNotificationsApi): Promise<void> {
+  if (Platform.OS !== 'ios' || typeof api.collapseDeliveredReminderNotifications !== 'function') return;
+  try {
+    const count = await api.collapseDeliveredReminderNotifications();
+    if (typeof count === 'number') logNotificationInfo('Delivered reminder threads collapsed', {
+      releaseCheck: 'v1.3.5/ios-reminder-threads', count,
+    });
+  } catch (error) {
+    logNotificationWarn('Failed to collapse delivered reminders', { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 function scheduleOneShotTopUp(api: AlarmNotificationsApi, delayMs: number | null): void {
   clearOneShotTopUpTimer();
   if (delayMs === null) return;
@@ -718,26 +790,45 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
   }
 
   const { diagnostics, recurring: recurringRequests, oneShot: oneShotRequests } = plan;
+  if (plan.shifted.length > 0) {
+    logNotificationInfo('Minute-shifted reminder alarms kept until they ring', {
+      releaseCheck: 'v1.3.5/reminder-shifted-minute-kept',
+      count: plan.shifted.length,
+    });
+  }
 
-  // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
-  // alarm cap) aborts the cycle. Whatever was created before that point is live in
+  // Alarms of finished tasks are cancelled first, so a full native alarm table has
+  // room for the new ones. A rejected scheduleAlarm (revoked exact-alarm permission,
+  // the per-app pending alarm cap) skips that alarm only: the rest are made and the
+  // top-up is set, even if scheduling throws. Whatever was created is live in
   // AlarmManager, so the map has to reach storage anyway or a restart can never
   // cancel those alarms. saveAlarmMap no-ops on an unchanged map and swallows its
-  // own storage errors, so the extra call is free and cannot mask the original.
+  // own storage errors, so the extra call cannot mask an error.
+  let refusedAlarmCount = 0;
   try {
-    await scheduleReminderAlarms(plan, alarmMap, port);
-    scheduleOneShotTopUp(api, plan.topUpDelayMs);
-
-    await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
+    try {
+      await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
+      refusedAlarmCount = await scheduleReminderAlarms(plan, alarmMap, port);
+    } finally {
+      scheduleOneShotTopUp(api, plan.topUpDelayMs);
+    }
   } finally {
     await saveAlarmMap();
     await rememberExpiredReminders(delivered, plan);
+  }
+  if (refusedAlarmCount > 0) {
+    logNotificationWarn('Reminder cycle finished with refused alarms', {
+      releaseCheck: 'v1.3.5/reminder-cycle-partial',
+      count: refusedAlarmCount,
+    });
   }
   await withdrawDeliveredReminders(api, {
     diagnostics,
     tasks: new Map(tasks.map((task) => [task.id, task])),
     projects: new Map(projects.map((project) => [project.id, project])),
   }, now.getTime());
+  await collapseDeliveredReminderThreads(api);
+  if (options.deleteStale) await rearmRetainedNativeAlarms(api);
   if (!taskRemindersEnabled) {
     const morningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:morning');
     const eveningDigestEnabled = recurringRequests.some((request) => request.key === 'digest:evening');

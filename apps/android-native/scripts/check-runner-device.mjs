@@ -431,6 +431,10 @@ try {
         runAs(`rm -f ${QUEUE}/${ids.audio}.json ${QUEUE}/${ids.pomodoro}.json`);
     }
 
+    // The log since a step began (the device's clock): a long step can roll older lines out of logcat, so counts start at zero.
+    let stepStart = '';
+    const beginStep = () => { stepStart = sh("date +'%m-%d %H:%M:%S.000'"); };
+    const lines = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-T', stepStart, '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
     // (5) A process death between an item's write and its file delete: the next boot's replay stores nothing twice.
     for (const kind of ['capture', 'complete']) {
         const target = kind === 'complete' ? stored(title(7))[0] : null;
@@ -440,6 +444,10 @@ try {
             ? { id, title: title(9), createdAt: iso(Date.now()), source: 'android-capture-intent' }
             : { kind: 'complete', id, taskId: target.id, completedAt: iso(Date.now() - 1000), source: 'android-widget' }));
         setProp('queue_stop', 'delete');
+        // The killed job's own boot replays an empty journal (sent=0); the app can start again by itself (the job's retry, a
+        // widget) and replay before the launch below, so the replay is looked for in every line since the trigger.
+        if (journal().length) fail(`(5 ${kind}) the journal is not empty before the trigger`);
+        beginStep();
         let stoppedAt = 0;
         try {
             // Any CoreWork job boots the host, and the boot drains the queue: a deactivation writes nothing itself.
@@ -462,11 +470,9 @@ try {
             [atStop] = stored(title(7));
             check(atStop.status === 'done' && atStop.rev === target.rev + 1 && lastApplied()[target.id]?.id === id, '(5 complete) Done is stored once and recorded');
         }
-        const replayLines = () => allLogs().split('\n').filter((line) => line.includes('Native Android journal replay sent='));
-        const replays = replayLines().length;
         if (!pid()) device.launch(ACTIVITY);
         await waitUntil('the replay to remove the file', () => !queued().includes(`${id}.json`) && journal().length === 0, 90_000);
-        const replayed = replayLines().slice(replays).find((line) => /sent=[1-9]\d* dropped=[1-9]\d* left=0 owed=none/.test(line));
+        const replayed = lines().split('\n').filter((line) => line.includes('Native Android journal replay sent=')).find((line) => /sent=[1-9]\d* dropped=[1-9]\d* left=0 owed=none/.test(line));
         check(Boolean(replayed), `(5 ${kind}) a boot replayed the drain's entry and dropped it: ${replayed?.split('journal replay ')[1]}`);
         if (kind === 'capture') {
             const rows = stored(title(9));
@@ -481,10 +487,6 @@ try {
     // (6a) A check-off stored and saved whose record write fails (debug fail_kv_set), drained by a CoreWork job while the app
     // shows: owed, and its file is removed anyway, so nothing can apply it again; the job's retry recovers with no tap.
     const replayLine = 'journal replay sent=1 dropped=1 left=0 owed=none';
-    // The log since a step began (the device's clock): a long step can roll older lines out of logcat, so counts start at zero.
-    let stepStart = '';
-    const beginStep = () => { stepStart = sh("date +'%m-%d %H:%M:%S.000'"); };
-    const lines = () => execFileSync(adbBin, ['-s', serial, 'logcat', '-d', '-T', stepStart, '-s', `${TAG}:*`], { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\\/g, '');
     const clearOwedRetry = async () => {
         for (let attempt = 0; attempt < 3; attempt += 1) {
             const nodes = await toTabs();

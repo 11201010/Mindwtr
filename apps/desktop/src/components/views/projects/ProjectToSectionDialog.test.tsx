@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => {
     const command = { section: { title: 'Milestones' }, source: { before: { supportNotes: 'Source notes' } }, destination: { id: 'dest', title: 'Destination' } };
     const preview = { ok: true, sourceTitle: 'Source', destinationTitle: 'Destination', defaultTitle: 'Source', taskCount: 3, completedCount: 1, archivedCount: 1, colorWillBeLost: true };
     const convert = vi.fn();
-    return { command, preview, convert, prepare: vi.fn(() => ({ ok: true, preview, command })), previewCall: vi.fn(() => preview) };
+    const rows = { _allProjects: [], _allSections: [], _allTasks: [] };
+    const previewer = vi.fn(() => preview);
+    return { command, preview, convert, rows, prepare: vi.fn(() => ({ ok: true, preview, command })), previewCall: vi.fn(() => preview),
+        createPreviewer: vi.fn(() => previewer) };
 });
 
 vi.mock('@mindwtr/core', async (importOriginal) => {
@@ -15,8 +18,9 @@ vi.mock('@mindwtr/core', async (importOriginal) => {
     return {
         ...actual,
         previewProjectToSection: mocks.previewCall,
+        createProjectToSectionPreviewer: mocks.createPreviewer,
         prepareProjectToSection: mocks.prepare,
-        useTaskStore: { getState: () => ({ areas: [], convertProjectToSection: mocks.convert }) },
+        useTaskStore: { getState: () => ({ areas: [], convertProjectToSection: mocks.convert, ...mocks.rows }) },
     };
 });
 
@@ -40,6 +44,19 @@ describe('ProjectToSectionDialog', () => {
         expect(screen.getByText('New section: Milestones')).toBeInTheDocument();
         expect(screen.getByText(/Move 3 tasks \(1 done, 1 archived\)/)).toBeInTheDocument();
         expect(mocks.prepare).toHaveBeenCalledWith(expect.anything(), 'source', 'dest', 'Milestones');
+    });
+
+    it('does not rebuild the destination list while the section name is typed', () => {
+        render(<ProjectToSectionDialog source={source} projects={[source, destination]} onCancel={vi.fn()} onSuccess={vi.fn()} t={t} />);
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dest' } });
+        const builds = mocks.createPreviewer.mock.calls.length;
+        const previews = mocks.previewCall.mock.calls.length;
+        expect(builds).toBeGreaterThan(0);
+        const input = screen.getByRole('textbox', { name: 'Section name' });
+        for (const value of ['M', 'Mi', 'Mil', 'Mile']) fireEvent.change(input, { target: { value } });
+        expect(mocks.createPreviewer.mock.calls.length).toBe(builds);
+        expect(mocks.previewCall.mock.calls.length).toBe(previews);
+        expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
     });
 
     it('keeps the frozen command and retry control after the source leaves the live list', async () => {

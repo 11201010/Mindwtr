@@ -1,6 +1,18 @@
 // Split from i18n-translations.ts to make community translation contributions easier.
 export const ptOverrides: Record<string, string> = {
+    'timeline.moveTaskDates': "Mover datas da tarefa",
+    'timeline.moveProjectDates': "Mover datas do projeto",
+    'timeline.resizeStart': "Ajustar data de início",
+    'timeline.resizeDue': "Ajustar prazo",
+    'timeline.datesUpdated': "Datas atualizadas",
+    'timeline.dateEditConflict': "As datas foram alteradas em outro lugar. Tente novamente.",
+    'timeline.dateEditFailed': "Não foi possível atualizar as datas. Verifique o intervalo e tente novamente.",
+    'timeline.dateUndoConflict': "As datas mudaram desde esta edição. A alteração não foi desfeita.",
+    'timeline.dateUndoFailed': "Não foi possível desfazer as alterações de datas. Tente novamente.",
     'task.doneTagOutcomeUnknown': "Não foi possível confirmar a alteração das etiquetas. Reinicie o Mindwtr para recarregar os dados salvos.",
+    "task.copyTaskLink": "Copiar link da tarefa",
+    "task.copyTaskId": "Copiar ID da tarefa",
+    "task.linkNotFound": "Esta tarefa não está nesta biblioteca. Pode ter sido excluída ou ainda não ter sido sincronizada com este dispositivo.",
     'task.doneCompletedAtOutcomeUnknown': "Não foi possível confirmar a alteração da data de conclusão. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.destinationOutcomeUnknown': "Não foi possível confirmar a alteração do destino. Reinicie o Mindwtr para recarregar os dados salvos.",
     'task.projectNextActionOutcomeUnknown': "Não foi possível confirmar a próxima ação. Reinicie o Mindwtr para recarregar os dados salvos.",
@@ -105,7 +117,7 @@ export const ptOverrides: Record<string, string> = {
         'nav.sectionArchive': 'Arquivo',
 
         // Quick Add
-        'quickAdd.help': 'A adição rápida suporta /start:<when>, /due:<when>, /review:<when>, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> ou !Area, @context, #tag, +Project, %Person (ou %"Full Name").',
+        'quickAdd.help': 'A adição rápida suporta /start:<when>, /due:<when>, /review:<when>, /estimate:45m, /note:<text>, /link:<url>, /energy:<level>, /priority:<level>, /next, /* focus, /area:<name> ou !Area, @context, #tag, +Project, %Person (ou %"Full Name").',
         'quickAdd.example': 'Exemplo: Ligue para a mãe /due:tomorrow @phone',
         'quickAdd.inlineHint': 'Tente: Ligue para a mãe /due:tomorrow 5pm @phone #family',
         'quickAdd.syntaxHelp': 'Ajuda da sintaxe de adição rápida',
@@ -315,6 +327,7 @@ export const ptOverrides: Record<string, string> = {
         'markdown.toolbar.code': 'Código em linha',
         'markdown.toolbar.codeBlock': 'Bloco de código',
 
+        "attachments.finishDraftBeforeChanges": "Salve ou descarte este rascunho antes de fazer outras alterações nos anexos.",
         'attachments.title': 'Anexos',
         'attachments.addFile': 'Adicionar arquivo',
         'attachments.addPhoto': 'Adicionar foto',
@@ -1572,6 +1585,10 @@ export const ptOverrides: Record<string, string> = {
         'settings.persistentCaptureDesc': 'Mantenha uma notificação persistente para capturar de qualquer lugar, inclusive na tela de bloqueio.',
         'settings.appSearchLabel': 'Expor à busca do sistema',
         'settings.appSearchDesc': 'Permita que a busca do sistema Android encontre suas tarefas, projetos e áreas ativas pelo título. Nada sai deste dispositivo.',
+        'settings.iosSearchLabel': 'Mostrar tarefas na pesquisa do sistema',
+        'settings.iosSearchDesc': 'Mostrar títulos de tarefas e nomes de projetos na pesquisa do sistema iOS.',
+        'settings.iosSearchPaused': 'Em pausa enquanto o bloqueio da aplicação estiver ativado.',
+        'settings.iosSearchFailed': 'Não foi possível atualizar a pesquisa do sistema. Tente novamente.',
         'captureNotification.title': 'Captura rápida',
         'captureNotification.text': 'Toque para capturar na sua Caixa de entrada',
         'captureNotification.channelName': 'Captura rápida',
