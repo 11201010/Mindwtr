@@ -711,25 +711,41 @@ export const useSyncSettings = ({
         const trimmedUrl = webdavUrl.trim();
         const trimmedPassword = webdavPassword.trim();
         if (trimmedUrl && !validateSyncHttpUrl(trimmedUrl, webdavAllowInsecureHttp)) return;
-        advanceSyncConfigurationGeneration();
+        const mutationGeneration = advanceSyncConfigurationGeneration();
         hasPendingSyncConfiguration.current = true;
         setIsSavingWebDav(true);
         try {
+            if (!trimmedUrl) {
+                const configuration = await SyncService.clearWebDavConfig();
+                setPersistedSyncBackend(configuration.backend);
+                if (syncConfigurationGeneration.current !== mutationGeneration) return;
+                setSyncBackend(configuration.backend);
+                setWebdavUrl('');
+                setWebdavUsername('');
+                setWebdavPassword('');
+                setWebdavHasPassword(false);
+                setWebdavAllowInsecureHttp(false);
+                setSyncError(null);
+                showSaved();
+                return;
+            }
             setWebdavUrl(trimmedUrl);
             setWebdavUsername(webdavUsername.trim());
-            if (!trimmedUrl) {
-                setWebdavHasPassword(false);
-                setWebdavPassword('');
-            } else if (trimmedPassword) {
+            if (trimmedPassword) {
                 setWebdavHasPassword(true);
             }
             setSyncError(null);
+        } catch (error) {
+            const configuration = SyncService.getLastKnownSyncSelection().configuration;
+            if (configuration) setPersistedSyncBackend(configuration.backend);
+            if (syncConfigurationGeneration.current === mutationGeneration) {
+                if (configuration?.backend === 'off') setSyncBackend('off');
+                setSyncError(resolveText('settings.feedback.saveFailed', "Couldn't save this setting. Try again."));
+            }
+            void logError(error, { scope: 'sync', step: 'clearWebDav' });
+            return;
         } finally {
             setIsSavingWebDav(false);
-        }
-        if (!trimmedUrl) {
-            showToast(resolveText('settings.sync.readyToVerify', 'Settings ready. Sync now to verify and save them.'), 'info');
-            return;
         }
         // "Save" used to stop here with a toast asking for Sync now; users read
         // "saved" as durable, left the page, and found the previous backend
@@ -740,7 +756,7 @@ export const useSyncSettings = ({
     }, [
         advanceSyncConfigurationGeneration,
         resolveText,
-        showToast,
+        showSaved,
         validateSyncHttpUrl,
         webdavAllowInsecureHttp,
         webdavPassword,

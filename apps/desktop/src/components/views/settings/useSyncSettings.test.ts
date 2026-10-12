@@ -395,7 +395,7 @@ describe('useSyncSettings cloud token validation', () => {
         expect(showToast).not.toHaveBeenCalled();
     });
 
-    it('uses the active locale for sync setup feedback', async () => {
+    it('durably clears an empty WebDAV URL without running a verification sync', async () => {
         languageMocks.t.mockImplementation((key: string) => (
             key === 'settings.sync.readyToVerify' ? 'Paramètres prêts à vérifier.' : key
         ));
@@ -404,7 +404,8 @@ describe('useSyncSettings cloud token validation', () => {
 
         const { result } = setup();
         await waitFor(() => expect(SyncService.getCloudConfig).toHaveBeenCalled());
-        // An empty WebDAV URL has nothing to verify, so Save keeps the notice.
+        const cleared = { ...dropboxConfigurationSnapshot('cloud'), cloudProvider: 'selfhosted' as const };
+        const clear = vi.spyOn(SyncService, 'clearWebDavConfig').mockResolvedValue(cleared);
         await act(async () => {
             await result.current.syncPageProps.onSetSyncBackend('webdav');
         });
@@ -412,8 +413,55 @@ describe('useSyncSettings cloud token validation', () => {
             await result.current.syncPageProps.onSaveWebDav();
         });
 
-        expect(showToast).toHaveBeenCalledWith('Paramètres prêts à vérifier.', 'info');
+        expect(clear).toHaveBeenCalledTimes(1);
+        expect(result.current.syncPageProps.syncBackend).toBe('cloud');
+        expect(result.current.syncPageProps.webdavHasPassword).toBe(false);
+        expect(showToast).not.toHaveBeenCalledWith('Paramètres prêts à vérifier.', 'info');
         expect(SyncService.performSync).not.toHaveBeenCalled();
+    });
+
+    it('keeps newer WebDAV edits when an older clear finishes', async () => {
+        let finishClear!: (configuration: ReturnType<typeof dropboxConfigurationSnapshot>) => void;
+        vi.spyOn(SyncService, 'clearWebDavConfig').mockImplementation(() => new Promise((resolve) => { finishClear = resolve; }));
+        const showSaved = vi.fn();
+        const { result } = setup(showSaved);
+        await waitFor(() => expect(SyncService.getCloudConfig).toHaveBeenCalled());
+        await stageBackend(result, 'webdav');
+        let save!: Promise<void>;
+        act(() => { save = result.current.syncPageProps.onSaveWebDav(); });
+        act(() => result.current.syncPageProps.onWebdavUrlChange('https://new-dav.example.com'));
+        await act(async () => { finishClear(dropboxConfigurationSnapshot('off')); await save; });
+        expect(result.current.syncPageProps.webdavUrl).toBe('https://new-dav.example.com');
+        expect(result.current.syncPageProps.syncBackend).toBe('webdav');
+        expect(showSaved).not.toHaveBeenCalled();
+    });
+
+    it('still verifies an unsaved cloud draft after clearing unused WebDAV settings', async () => {
+        const cloud = { ...dropboxConfigurationSnapshot('cloud'), cloudProvider: 'selfhosted' as const };
+        vi.spyOn(SyncService, 'clearWebDavConfig').mockResolvedValue(cloud);
+        const { result } = setup();
+        await waitFor(() => expect(SyncService.getCloudConfig).toHaveBeenCalled());
+        act(() => result.current.syncPageProps.onCloudUrlChange('https://new-cloud.example.com'));
+        await stageBackend(result, 'webdav');
+        await act(async () => { await result.current.syncPageProps.onSaveWebDav(); });
+        expect(result.current.syncPageProps.cloudUrl).toBe('https://new-cloud.example.com');
+        await act(async () => { await result.current.syncPageProps.onSyncNow(); });
+        expect(vi.mocked(SyncService.performSync).mock.calls[0]?.[0]).toMatchObject({
+            activationProbe: true, configOverride: { backend: 'cloud', cloud: { url: 'https://new-cloud.example.com' } },
+        });
+    });
+
+    it('keeps the saved WebDAV password indicator when clearing fails', async () => {
+        const previous = { ...dropboxConfigurationSnapshot('off'), webdav: { ...dropboxConfigurationSnapshot('off').webdav, hasPassword: true } };
+        vi.spyOn(SyncService, 'getPersistedSyncConfigurationSnapshot').mockResolvedValue(previous);
+        vi.spyOn(SyncService, 'clearWebDavConfig').mockRejectedValue(new Error('clear failed'));
+        const showSaved = vi.fn();
+        const { result } = setup(showSaved);
+        await waitFor(() => expect(result.current.syncPageProps.webdavHasPassword).toBe(true));
+        await stageBackend(result, 'webdav');
+        await act(async () => { await result.current.syncPageProps.onSaveWebDav(); });
+        expect(result.current.syncPageProps.webdavHasPassword).toBe(true);
+        expect(showSaved).not.toHaveBeenCalled();
     });
 
     it('runs the verification sync when a File Sync folder is saved', async () => {

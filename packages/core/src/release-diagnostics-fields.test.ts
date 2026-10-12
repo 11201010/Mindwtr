@@ -13,6 +13,9 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // inactive-sync-credential: fixed service category only; no endpoint or secret.
+    'service',
+    // webdav-settings-clear reuses backend and outcome below.
     // webdav-setup-probe: fixed posture/outcome categories and an optional validated HTTP status.
     'requireStrongEtag', 'httpStatus',
     // mobile-sync-follow-up: fixed request class, one aggregate comparison; no IDs, values or paths.

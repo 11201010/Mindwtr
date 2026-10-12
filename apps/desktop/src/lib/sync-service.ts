@@ -193,6 +193,7 @@ import {
     WEBDAV_URL_KEY,
     WEBDAV_USERNAME_KEY,
     clearSyncPath,
+    getSyncBackendLocal,
     readCloudConfig,
     readCloudProvider,
     readDropboxAppKey,
@@ -1989,6 +1990,51 @@ export class SyncService {
 
     static async setWebDavConfig(config: { url: string; username?: string; password?: string; allowInsecureHttp?: boolean; allowWeakFingerprint?: boolean; replacePassword?: boolean }): Promise<void> {
         return writeWebDavConfig(config, getSyncConfigDeps());
+    }
+
+    static async clearWebDavConfig(): Promise<PersistedDesktopSyncConfiguration> {
+        return runSyncRestoreExclusive(async () => {
+            await SyncService.recoverDropboxCredentialsBeforeConfigurationMutation();
+            const previousBackend = isTauriRuntimeEnv()
+                ? normalizeSyncBackend(await invokeSyncNative<string>('get_sync_backend'))
+                : getSyncBackendLocal();
+            // A lost write response can still commit; never seed the page with the old credential.
+            SyncService.lastConfigurationSnapshot = null;
+            try {
+                await SyncService.setWebDavConfig({ url: '', username: '', password: '', replacePassword: true });
+                const configuration = isTauriRuntimeEnv()
+                    ? await invokeSyncNative<PersistedDesktopSyncConfiguration>('get_sync_configuration_snapshot', {
+                        requireWebdavPassword: true, requireCloudToken: false,
+                    })
+                    : await SyncService.readPersistedSyncConfiguration({ requireWebdavPassword: true });
+                const expectedBackend = previousBackend === 'webdav' ? 'off' : previousBackend;
+                if (configuration.backend !== expectedBackend || configuration.webdav.url || configuration.webdav.username
+                    || configuration.webdav.passwordAuthority !== 'known' || configuration.webdav.password
+                    || configuration.webdav.hasPassword !== false) {
+                    throw new Error('WebDAV settings could not be confirmed cleared');
+                }
+                SyncService.rememberConfigurationSnapshot(configuration);
+                await SyncService.noteSyncBackendPersisted(configuration.backend);
+                logSyncInfo('WebDAV settings cleared', {
+                    releaseCheck: 'v1.3.5/webdav-settings-clear', backend: configuration.backend, outcome: 'cleared',
+                });
+                return configuration;
+            } catch (error) {
+                // Disabling WebDAV can commit before credential removal fails.
+                try {
+                    const configuration = isTauriRuntimeEnv()
+                        ? await invokeSyncNative<PersistedDesktopSyncConfiguration>('get_sync_configuration_snapshot', {
+                            requireWebdavPassword: false, requireCloudToken: false,
+                        })
+                        : await SyncService.readPersistedSyncConfiguration();
+                    SyncService.rememberConfigurationSnapshot(configuration);
+                    await SyncService.noteSyncBackendPersisted(configuration.backend);
+                } catch (refreshError) {
+                    logSyncWarning('Failed to refresh sync configuration after clearing WebDAV settings', refreshError);
+                }
+                throw error;
+            }
+        });
     }
 
     private static async probeWebDavCompatibility(
