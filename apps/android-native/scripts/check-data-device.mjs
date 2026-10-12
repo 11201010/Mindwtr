@@ -7,10 +7,12 @@
 // merges in itself (titles `d1…<run>`, tag d1test). The test backups are pushed to the phone's Download/mtd1/, the
 // exports land there, and the folder is removed on exit. Steps (design D1 §7):
 //   E3 Merge backup (the system document picker), Undo from its toast, then Restore backup from the E1 file;
-//   E1 Export backup, CSV and TaskNotes through RN's folder picker (Use this folder, Allow); each file is pulled and read;
+//   E1 Export backup, CSV and TaskNotes through RN's folder picker (Use this folder, Allow); each file is pulled and read, the
+//      CSV and TaskNotes files compared byte for byte with core's serializers, and the folder is a persisted grant;
 //   E2 a cancelled folder picker falls back to the share sheet (Back, nothing is picked or sent);
 //   Sync › Recovery snapshots: RN's rows, and Restore with RN's question;
-//   E4 process death at each step of a merge (debug properties backup_stop and journal_stop): it lands at most once, the
+//   E4 process death at each step of a merge (debug properties backup_stop, journal_stop, and commit_stop between the SQL
+//      commit and core's reload, E4c): it lands at most once, the
 //      journal and the operation folder end empty, a commit replayed at start meets its document even with a task that became
 //      due meanwhile (E4a), and a result a death left unshown shows once;
 //   E2b a death in the middle of a folder write: the half file is gone at the next start;
@@ -56,7 +58,7 @@ const PHONE_DIR = '/sdcard/Download/mtd1';
 // The folder picker's starting place (EXTRA_INITIAL_URI takes a document URI, not a tree URI).
 const TREE = 'content://com.android.externalstorage.documents/document/primary%3ADownload%2Fmtd1';
 const DB = 'files/SQLite/mindwtr.db';
-const PROPS = ['backup_stop', 'journal_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
+const PROPS = ['backup_stop', 'journal_stop', 'commit_stop', 'delay_before_ms', 'export_tree', 'language', 'transfer_limit_mb'];
 const work = resolve(app, 'android/build/data-check');
 const { en } = await import(resolve(repo, 'packages/core/src/i18n/locales/en.ts'));
 const run = `${String(Date.now()).slice(-6)}${String(randomInt(1_000_000)).padStart(6, '0')}`;
@@ -245,6 +247,15 @@ const exportFile = async (tag, suffix) => {
     writeFileSync(local, adbRaw('exec-out', 'cat', `${PHONE_DIR}/${name}`));
     return { name, local };
 };
+/** Whether the app holds a persisted URI grant naming [fragment] (`dumpsys activity permissions`, the app's UID block). */
+const persistedGrant = (fragment) => {
+    const uid = /uid:(\d+)/.exec(sh(`pm list packages -U ${PKG}`))?.[1] ?? fail(`no UID for ${PKG}`);
+    const lines = sh('dumpsys activity permissions').split('\n');
+    const start = lines.findIndex((line) => new RegExp(`UID ${uid}\\b`).test(line));
+    if (start < 0) return false;
+    const end = lines.findIndex((line, index) => index > start && /^\s*\* UID /.test(line));
+    return lines.slice(start, end < 0 ? undefined : end).some((line) => line.includes(fragment));
+};
 const replayLines = () => allLogs().split('\n').filter((line) => line.includes('v1.3.5/android-backup-replay'));
 
 
@@ -378,7 +389,16 @@ try {
     const zip = await exportFile('data-transfer-export-tasknotes', '-tasknotes.zip');
     const entries = execFileSync('unzip', ['-Z1', zip.local], { encoding: 'utf8' });
     check(entries.includes(`d1a${run}`), `(E1) ${zip.name} holds a TaskNotes file per task`);
-    console.log(`info - persisted grants naming the test folder: ${sh(`dumpsys activity permissions | grep -c 'mtd1' || true`)}`);
+    // The three exports are core's bytes: the CSV and each TaskNotes file equal core's serializers over the JSON export of the
+    // same library (data-export-expected.ts runs core under bun).
+    const expected = JSON.parse(execFileSync('bun', [resolve(app, 'scripts/data-export-expected.ts'), json.local], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+    check(csvText === expected.csv, `(E1) ${csv.name} is byte for byte core's serializeMindwtrCsv`);
+    const zipPaths = entries.split('\n').filter(Boolean).sort();
+    check(JSON.stringify(zipPaths) === JSON.stringify(expected.tasknotes.map((file) => file.path).sort())
+        && expected.tasknotes.every((file) => execFileSync('unzip', ['-p', zip.local, file.path], { encoding: 'utf8' }) === file.content),
+        `(E1) ${zip.name} holds core's serializeTaskNotesExport files byte for byte (${zipPaths.length})`);
+    // RN's folder grant: Expo takes the picked tree as a persistable grant; so does the native app (design §5).
+    check(persistedGrant('Download%2Fmtd1'), '(E1) the picked folder is a persisted grant of the app, as RN\'s Expo takes it');
 
     // ---- E2: no folder picked: RN's share fallback; nothing is created ----
     setProp('export_tree', '');
@@ -403,6 +423,8 @@ try {
     await confirmQuestion(en['settings.mergeBackup']);
     await toastWith(en['settings.mergeBackup']);
     check(liveTitles('before-restore').includes(`d1c${run}`), '(E3) a second merge added its row');
+    const appLock = (label) => sqlite(pullDb(label), "SELECT json_extract(data, '$.security') AS security FROM settings WHERE id = 1")[0]?.security ?? null;
+    const lockBefore = appLock('lock-before');
     await openData();
     await tap(tagged(await screen(), 'data-transfer-restore'));
     await pickDocument(json.name);
@@ -411,6 +433,7 @@ try {
     nodes = await toastWith(en['settings.backupMobile.restoreComplete']);
     check(Boolean(undoButton(nodes)), '(E3) the restore result shows Undo too (RN\'s 32c840ec9)');
     check(JSON.stringify(liveTitles('restore')) === JSON.stringify([`d1a${run}`, `d1b${run}`]), '(E3) Restore backup gave the exported library: the later row is gone');
+    check(appLock('lock-after') === lockBefore, `(E3) the restore left App Lock as it was (${lockBefore})`);
 
     // ---- Sync › Recovery snapshots: RN's rows and question ----
     nodes = await openRow(en['settings.sync'], onSync, 'Sync');
@@ -474,6 +497,8 @@ try {
     await crash('after-snapshot', { backup_stop: 'after-snapshot' }, fixture(`d1-crash-1-${run}.json`, [task(`d1e${run}`)]), { landed: false });
     await crash('mid-plan', { backup_stop: 'mid-plan' }, fixture(`d1-crash-2-${run}.json`, [task(`d1f${run}`)]), { landed: false });
     await crash('before-commit', { journal_stop: 'before:backupDocumentCommit' }, fixture(`d1-crash-3-${run}.json`, [task(`d1g${run}`)]), { landed: true, expectReplay: true });
+    // E4c: the data and its receipt are committed in SQL; the process dies before core reloads or replies.
+    await crash('after-sql-commit', { commit_stop: 'backupDocumentCommit' }, fixture(`d1-crash-8-${run}.json`, [task(`d1n${run}`)]), { landed: true, expectReplay: true });
     await crash('after-commit', { journal_stop: 'after:backupDocumentCommit' }, fixture(`d1-crash-4-${run}.json`, [task(`d1h${run}`)]), { landed: true, expectReplay: true });
     await crash('after-settle', { backup_stop: 'after-settle' }, fixture(`d1-crash-5-${run}.json`, [task(`d1i${run}`)]), { landed: true });
 

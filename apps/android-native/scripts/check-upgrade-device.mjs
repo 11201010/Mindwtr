@@ -182,6 +182,39 @@ const pushPrivate = (local, remote) => {
     adbRaw('push', local, staged);
     try { runAs(`cp ${staged} ${remote}`); } finally { sh(`rm -f ${staged}`); }
 };
+/** Any app's screen (a system picker in front): uiautomator's nodes, streamed, never written on the phone. */
+const anyNodes = () => [...adbRaw('exec-out', 'uiautomator', 'dump', '/dev/tty').toString('utf8').matchAll(/<node [^>]*>/g)]
+    .map(([node]) => Object.fromEntries([...node.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value])));
+const tapNode = (node) => { const [x1, y1, x2, y2] = box(node); sh(`input tap ${Math.round((x1 + x2) / 2)} ${Math.round((y1 + y2) / 2)}`); };
+/** The system folder picker (ACTION_OPEN_DOCUMENT_TREE): walk [path] from where it opened, Use this folder, then Allow. */
+const pickFolder = async (path) => {
+    for (let wait = 0; wait < 30 && front().includes(`${PKG}/`); wait += 1) await sleep(500);
+    await sleep(1500);
+    let nodes = anyNodes();
+    for (const folder of path) {
+        if (nodes.some((node) => node['resource-id']?.endsWith('breadcrumb_text') && node.text === folder)) continue;
+        const entry = nodes.find((node) => node.text === folder && node['resource-id']?.endsWith('android:id/title'))
+            ?? fail(`the folder picker shows no ${folder} (${nodes.map((node) => node.text).filter(Boolean).slice(0, 12).join(' | ')})`);
+        tapNode(entry);
+        await sleep(1500);
+        nodes = anyNodes();
+    }
+    tapNode(nodes.find((node) => /use this folder/i.test(node.text ?? '') && node.enabled !== 'false') ?? fail('the folder picker shows no Use this folder'));
+    await sleep(1200);
+    const allow = anyNodes().find((node) => /^allow$/i.test(node.text ?? ''));
+    if (allow) tapNode(allow);
+    for (let wait = 0; wait < 30 && !front().includes(`${PKG}/`); wait += 1) await sleep(500);
+};
+/** Whether the app holds a persisted URI grant naming [fragment] (`dumpsys activity permissions`, the app's UID block). */
+const persistedGrant = (fragment) => {
+    const uid = /uid:(\d+)/.exec(sh(`pm list packages -U ${PKG}`))?.[1] ?? fail(`no UID for ${PKG}`);
+    const lines = sh('dumpsys activity permissions').split('\n');
+    const start = lines.findIndex((line) => new RegExp(`UID ${uid}\\b`).test(line));
+    if (start < 0) return false;
+    const end = lines.findIndex((line, index) => index > start && /^\s*\* UID /.test(line));
+    return lines.slice(start, end < 0 ? undefined : end).some((line) => line.includes(fragment));
+};
+
 // RN's own capture queue: one JSON file per item, imported through RN's store at launch.
 const queue = (items) => {
     runAs('mkdir -p files/pending-captures');
@@ -778,6 +811,26 @@ const scenarioRecoverySnapshots = async () => {
     console.log('\n# 10 RN recovery snapshots in the native Recovery snapshots card');
     fresh();
     await seed('10');
+    // RN's folder grant (design §5): RN's Export backup takes the picked folder as a persistable grant (Expo's SAF); the
+    // native upgrade keeps it.
+    const grantDir = `mtu${run}`.slice(0, 16);
+    sh(`mkdir -p /sdcard/Download/${grantDir}`);
+    try {
+        openLink('mindwtr-upgradetest://settings?settingsScreen=data');
+        const exportRow = (current) => current.find((node) => node.text === en['settings.exportBackup']);
+        let rnNodes = await waitFor('RN\'s Settings › Data', (current) => Boolean(exportRow(current)) || current.some((node) => node.text === en['settings.backup']), 60_000);
+        if (!exportRow(rnNodes)) {
+            await tap(rnNodes.find((node) => node.text === en['settings.backup']));
+            rnNodes = await waitFor('RN\'s Backup fold', (current) => Boolean(exportRow(current)), 20_000);
+        }
+        await tap(exportRow(rnNodes));
+        await pickFolder(['Download', grantDir]);
+        await until('RN\'s backup in the picked folder', () => sh(`ls /sdcard/Download/${grantDir}`).includes('mindwtr-backup'), 30_000);
+        check(persistedGrant(`Download%2F${grantDir}`), '(10) before: RN holds the folder its export picked as a persisted grant');
+    } catch (error) {
+        sh(`rm -rf /sdcard/Download/${grantDir}`);
+        throw error;
+    }
     const at = new Date(Date.now() - 3_600_000);
     const name = `data.${at.toISOString().replace(/Z$/, '').replace(/:/g, '-')}.snapshot.json`;
     const kept = [{ id: randomUUID(), title: `91${run}`, status: 'next', tags: [], contexts: [], createdAt: at.toISOString(), updatedAt: at.toISOString(), rev: 1 }];
@@ -822,6 +875,8 @@ const scenarioRecoverySnapshots = async () => {
     const live = rows(pullDatabase('10-post'), "SELECT title FROM tasks WHERE deletedAt IS NULL ORDER BY title").map((r) => r.title);
     check(isDeepStrictEqual(live, kept.map((task) => task.title)), `(10) the restore gave RN's snapshot's library: ${live.join(' ')}`);
     check(runAs('ls files/snapshots').split(/\s+/).includes('data.pending.snapshot.tmp'), '(10) RN\'s pending file stays as RN left it');
+    check(persistedGrant(`Download%2F${grantDir}`), '(10) after: the native app still holds RN\'s folder grant');
+    sh(`rm -rf /sdcard/Download/${grantDir}`);
 };
 
 const scenarioCorruptBackup = async () => {

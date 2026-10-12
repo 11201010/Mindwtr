@@ -87,6 +87,13 @@ class SqliteBridge(databaseFile: File) {
     /** Debug-only fault: set solely by CoreHost's `BuildConfig.DEBUG`-gated hook. */
     @Volatile var failCommits = false
 
+    /**
+     * Debug-only fault (check-data-device.mjs E4c, `debug.mindwtr.native.commit_stop=<method>`): set by CoreHost's
+     * `BuildConfig.DEBUG`-gated hook as that journaled write is sent (and cleared as any other is); the process dies right after
+     * the next COMMIT, before core reloads or replies. A replay never sets it.
+     */
+    @Volatile var stopAfterCommit = false
+
     fun run(sql: String, paramsJson: String) {
         // The core's adapter then runs ROLLBACK, as after a real commit failure.
         if (failCommits && sql == "COMMIT") throw IllegalStateException("Injected commit failure")
@@ -94,6 +101,10 @@ class SqliteBridge(databaseFile: File) {
         bind(statement, JSONArray(paramsJson))
         // A statement that returns no rows still needs one step to execute.
         while (statement.step()) { /* drain: PRAGMA and RETURNING answer with rows */ }
+        if (stopAfterCommit && sql == "COMMIT") {
+            android.util.Log.i(CoreHost.TAG, "Native Android commit stop at=after-commit")
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 
     fun exec(sql: String) {

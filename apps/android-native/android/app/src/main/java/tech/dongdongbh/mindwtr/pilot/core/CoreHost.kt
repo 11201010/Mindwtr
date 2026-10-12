@@ -891,6 +891,7 @@ class CoreHost(
         val stop = if (entry != null) debugFault("journal_stop") else ""
         if (entry != null) {
             checkNotNull(sqlite).failCommits = debugFault("fail_commit") == "1"
+            sqlite?.stopAfterCommit = debugFault("commit_stop") == method
             debugDelay("delay_before_ms")
             journalStop(stop, "before", entry)
         }

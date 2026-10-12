@@ -40,11 +40,10 @@ import java.util.UUID
 
 /** The measured transfer limit (design §4.1): a picked file and the library together, before anything is decoded or parsed. */
 object DataTransferLimits {
-    // Measured on the S23 (pass D1a, result.md; heap growth limit 256 MiB): the Java heap peaked at 100 MiB for a 24 MiB source
-    // (merge, and restore over a 24 MiB library) and 182 MiB for 32 MiB, so 24 MiB is the largest source under half the heap,
-    // and the limit is half of it.
+    // Measured on the S23 (pass D1a, result.md measure2; heap growth limit 256 MiB): a 12 MiB file restored over a 12 MiB
+    // library (24 MiB in all) peaked at 128 MiB Java heap, half the growth limit, and the limit is half of that.
     // ponytail: one fixed limit; a device with a smaller heap gets the same number. Stream the plan through a file if libraries outgrow it.
-    private const val LIMIT_BYTES = 12L * 1024 * 1024
+    internal const val LIMIT_BYTES = 12L * 1024 * 1024
     /** Core's MAX_BACKUP_SOURCE_BYTES: a picked JSON backup alone. */
     const val MAX_BACKUP_SOURCE_BYTES = 128L * 1024 * 1024
 
@@ -209,12 +208,11 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
-            try { admit(runtime, stage.file.length()) } catch (failure: TransferTooLarge) {
+            val text = try { readStaged(stage.file, runtime.databaseBytes()) } catch (failure: TransferTooLarge) {
                 stage.file.delete()
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
-            val text = utf8(stage.file)
             val preview = runtime.backupInspect(text ?: "", stage.metadata.toString(), if (mode == "restore") "json-restore" else "json")
             shell.ui {
                 if (!preview.getBoolean("valid") || text == null) {
@@ -286,7 +284,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val ops = operations
             val requestId = UUID.randomUUID().toString()
             try {
-                admit(runtime, sourceBytes)
+                admitTransfer(sourceBytes, runtime.databaseBytes())
                 val source = text() ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
                 val prepared = runtime.backupPrepare(JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
@@ -354,9 +352,8 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         staging.mkdirs()
         val (name, modified) = details(uri)
         val file = File(staging, UUID.randomUUID().toString())
-        val limit = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
         try {
-            (resolver.openInputStream(uri) ?: throw IOException("The selected file cannot be read")).use { input -> copyBounded(input, file, limit) }
+            (resolver.openInputStream(uri) ?: throw IOException("The selected file cannot be read")).use { input -> copyBounded(input, file, stageLimit()) }
         } catch (failure: Throwable) {
             file.delete()
             throw failure
@@ -377,11 +374,6 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             }
         }
         return name to modified
-    }
-
-    /** The picked file and the library must fit the measured limit together (design §4.1), else RN's too-large text. */
-    private fun admit(runtime: CoreHost, sourceBytes: Long) {
-        if (sourceBytes + runtime.databaseBytes() > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
     }
 
     /**
@@ -475,6 +467,20 @@ internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exis
     }
     return if (kept > 0) "kept" else "deleted"
 }
+
+/** The transfer limit check (design §4.1): the picked file and the library together, before anything is decoded or parsed. */
+internal fun admitTransfer(sourceBytes: Long, libraryBytes: Long) {
+    if (sourceBytes + libraryBytes > DataTransferLimits.MAX_DATA_TRANSFER_BYTES) throw TransferTooLarge()
+}
+
+/** A staged copy's text once admitted with the library ([admitTransfer] first: an oversized copy is never decoded); null: not UTF-8. */
+internal fun readStaged(file: File, libraryBytes: Long): String? {
+    admitTransfer(file.length(), libraryBytes)
+    return utf8(file)
+}
+
+/** The staged copy's own bound: the transfer limit, and core's source limit for a JSON backup. */
+internal fun stageLimit(): Long = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
 
 /** A start's leftover result that did not commit: RN's failure title (a core key) and core's reason. */
 internal class LeftoverFailure(val titleKey: String, val message: String)

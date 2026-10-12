@@ -17,12 +17,26 @@ class DataFilesTest {
     @get:Rule val folder = TemporaryFolder()
 
     @Test fun theCopyCountsItsOwnBytesWhateverTheProviderSaid() {
-        // The provider's SIZE column said 1 byte (RN's 7b7201ab6): the copy counts what it reads and stops past the limit.
+        // The provider's SIZE column said 1 byte (RN's 7b7201ab6): the copy counts what it reads and stops past the production limit.
         val out = File(folder.root, "stage")
-        val refused = runCatching { copyBounded(ByteArrayInputStream(ByteArray(101)), out, 100) }.exceptionOrNull()
+        val limit = stageLimit()
+        assertEquals(DataTransferLimits.LIMIT_BYTES, limit)
+        val refused = runCatching { copyBounded(ByteArrayInputStream(ByteArray((limit + 1).toInt())), out, limit) }.exceptionOrNull()
         assertTrue(refused is TransferTooLarge)
-        copyBounded(ByteArrayInputStream(ByteArray(100)), out, 100)
+        copyBounded(ByteArrayInputStream(ByteArray(100)), out, limit)
         assertEquals(100L, out.length())
+    }
+
+    // D1a review P2-9: the production admission runs before any decode; an oversized copy is refused even when it is not UTF-8.
+    @Test fun aStagedCopyIsAdmittedWithTheLibraryBeforeItIsDecoded() {
+        val file = File(folder.root, "staged")
+        val library = 4L * 1024 * 1024
+        file.writeBytes(ByteArray((DataTransferLimits.LIMIT_BYTES - library + 1).toInt()) { 0xff.toByte() })
+        assertTrue(runCatching { readStaged(file, library) }.exceptionOrNull() is TransferTooLarge)
+        file.writeText("{}")
+        assertEquals("{}", readStaged(file, library))
+        assertTrue(runCatching { admitTransfer(DataTransferLimits.LIMIT_BYTES - library + 1, library) }.exceptionOrNull() is TransferTooLarge)
+        admitTransfer(DataTransferLimits.LIMIT_BYTES - library, library)
     }
 
     // D1a review P2-7: a leftover that did not commit says so, with core's reason, under RN's failure title.
