@@ -3224,6 +3224,8 @@ dependencies = [
  "dunce",
  "fontdb",
  "fs2",
+ "gdkx11",
+ "gtk",
  "hound",
  "imap",
  "keyring",

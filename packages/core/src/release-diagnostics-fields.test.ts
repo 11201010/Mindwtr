@@ -13,6 +13,7 @@ import { sanitizeLogContext } from './log-sanitize';
  * Update this list when the ledger's version section changes.
  */
 const RELEASE_CHECK_FIELD_NAMES = [
+    // linux-quick-add-focus reuses backend and outcome below; no window or input content.
     // inactive-sync-credential: fixed service category only; no endpoint or secret.
     'service',
     // webdav-settings-clear reuses backend and outcome below.

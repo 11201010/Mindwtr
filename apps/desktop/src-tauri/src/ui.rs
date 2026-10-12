@@ -733,6 +733,70 @@ fn quick_add_show_needs_focus_call(os: &str, panel_presented: bool) -> bool {
     !(os == "macos" && panel_presented)
 }
 
+#[cfg(target_os = "linux")]
+fn present_x11_quick_add_window(window: &gtk::ApplicationWindow) -> bool {
+    use gtk::prelude::*;
+
+    window.set_accept_focus(true);
+    window.show();
+    let Some(native) = window
+        .window()
+        .and_then(|native| native.downcast::<gdkx11::X11Window>().ok())
+    else {
+        return false;
+    };
+    // The server timestamp call hangs without property-change events enabled.
+    let gdk_window = native.upcast_ref::<gtk::gdk::Window>();
+    gdk_window.set_events(gdk_window.events() | gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+    let timestamp = gdkx11::functions::x11_get_server_time(&native);
+    window.present_with_time(timestamp);
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn log_quick_add_focus(app: &tauri::AppHandle, backend: &str, outcome: &str) {
+    let message = format!(
+        "Quick add focus extra.releaseCheck=v1.3.6/linux-quick-add-focus backend={backend} outcome={outcome}"
+    );
+    log::info!("{message}");
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::logging::append_native_log_line(&app, &message);
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn focus_quick_add_window(window: &tauri::WebviewWindow) {
+    let target = window.clone();
+    if window
+        .run_on_main_thread(move || {
+            if target
+                .gtk_window()
+                .ok()
+                .is_some_and(|native| present_x11_quick_add_window(&native))
+            {
+                log_quick_add_focus(target.app_handle(), "x11", "requested");
+            } else {
+                let outcome = if target.set_focus().is_ok() {
+                    "requested"
+                } else {
+                    "request-failed"
+                };
+                log_quick_add_focus(target.app_handle(), "fallback", outcome);
+            }
+        })
+        .is_err()
+    {
+        let _ = window.set_focus();
+        log_quick_add_focus(window.app_handle(), "fallback", "dispatch-failed");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn focus_quick_add_window(window: &tauri::WebviewWindow) {
+    let _ = window.set_focus();
+}
+
 pub(crate) fn create_quick_add_window(app: &tauri::AppHandle) -> Result<(), String> {
     if app.get_webview_window(QUICK_ADD_WINDOW_LABEL).is_some() {
         return Ok(());
@@ -762,7 +826,17 @@ pub(crate) fn create_quick_add_window(app: &tauri::AppHandle) -> Result<(), Stri
         .map(|window| {
             crate::allow_webview_clipboard_read(&window);
             crate::install_renderer_recovery(&window);
-            convert_quick_add_window_to_panel(&window)
+            convert_quick_add_window_to_panel(&window);
+            #[cfg(target_os = "linux")]
+            {
+                let app = app.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(focused) = event {
+                        let outcome = if *focused { "focused" } else { "blurred" };
+                        log_quick_add_focus(&app, "native", outcome);
+                    }
+                });
+            }
         })
         .map_err(|error| format!("Failed to create quick add window: {error}"))
 }
@@ -865,7 +939,7 @@ fn show_quick_add_window_for_source(app: &tauri::AppHandle, source: QuickAddRequ
             return;
         }
         if quick_add_show_needs_focus_call(std::env::consts::OS, panel_presented) {
-            let _ = window.set_focus();
+            focus_quick_add_window(&window);
         }
         let payload = QuickAddEventPayload {
             target: QUICK_ADD_TARGET_WINDOW.to_string(),
@@ -895,6 +969,30 @@ pub(crate) fn show_macos_widget_quick_add_window(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires an isolated X11 display; never opens a window in ordinary test runs"]
+    fn x11_quick_add_restores_accept_focus_and_preserves_event_mask() {
+        use gtk::prelude::*;
+
+        gtk::init().expect("test requires an X11 display");
+        let window = gtk::ApplicationWindow::builder()
+            .title("Mindwtr Quick Add activation test")
+            .accept_focus(false)
+            .build();
+        window.realize();
+        let native = window.window().expect("realized test window");
+        let original_events = native.events();
+        assert!(!window.accepts_focus());
+        assert!(present_x11_quick_add_window(&window));
+        assert!(window.accepts_focus());
+        assert!(native.events().contains(original_events));
+        assert!(native
+            .events()
+            .contains(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK));
+        window.close();
+    }
 
     #[test]
     fn parses_gnome_color_scheme_values() {
