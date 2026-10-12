@@ -1,0 +1,15 @@
+<en-US>
+Fix the unwanted Task / Error panel and blue bar on Focus. Copy task links, enter /estimate:45m, and convert checklists into project tasks with Undo. Repeating reminders recover after restart and time-zone changes. Improve Synology WebDAV, encryption setup, attachment recovery and archive retention. Task previews stay above the navigation bar.
+</en-US>
+<de-DE>
+Behebt Aufgabe / Fehler und den blauen Balken in Fokus. Aufgabenlinks kopieren, /estimate:45m eingeben und Checklisten mit Rückgängig in Projektaufgaben umwandeln. Erinnerungen erholen sich nach Neustart und Zeitzonenwechsel. Verbesserungen für Synology-WebDAV, Verschlüsselung, Anhänge und Archivaufbewahrung. Vorschau bleibt über der Navigationsleiste.
+</de-DE>
+<es-ES>
+Corrige Tarea / Error y la barra azul en Enfoque. Copia enlaces, añade /estimate:45m y convierte listas en tareas de proyecto con Deshacer. Los recordatorios se recuperan tras reinicios y cambios de zona horaria. Mejoras en WebDAV de Synology, cifrado, adjuntos y conservación del archivo. La vista previa queda sobre la barra de navegación.
+</es-ES>
+<fr-FR>
+Corrige Tâche / Erreur et la barre bleue dans Focus. Copiez des liens, ajoutez /estimate:45m et transformez une checklist en tâches de projet avec Annuler. Les rappels reprennent après un redémarrage ou changement de fuseau. Améliorations de WebDAV Synology, chiffrement, pièces jointes et archives. Aperçu au-dessus de la barre de navigation.
+</fr-FR>
+<zh-CN>
+修复任务列表中的「任务 / 错误」提示及聚焦页蓝色条。复制任务链接，用 /estimate:45m 输入估算，将清单转换为项目任务并支持撤销。重复提醒替换旧通知，重启和时区变化后恢复。改进 Synology WebDAV、加密设置、附件恢复及归档保留。任务预览不再被导航栏遮挡。
+</zh-CN>

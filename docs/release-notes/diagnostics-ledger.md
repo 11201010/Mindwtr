@@ -32,7 +32,11 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 - **flatpak-portal-once** — desktop `apps/desktop/src-tauri/src/portal_secrets.rs`, #1314. In 1.3.3 the Flatpak build asked the Secret portal on every credential read or write, each with a 30 s timeout, and every config read (including one on the main thread before the window opens) retries the plaintext-secret migration. A portal that never answered stalled startup for minutes and the data load timed out. Now the portal is asked once per launch, before the credential file lock, and that answer is reused; a failure falls back to plaintext until the next launch. Message: `Secret portal asked once for this session`; fields: `releaseCheck`, `outcome` (`answered` or `failed`), `elapsedMs`. Start the Flatpak with an existing Dropbox connection: the log must show this line exactly once per launch, and the data must load. `outcome=failed` with `elapsedMs` near 30000 is the reporter's hanging portal. No credential content, account names, or paths are logged. Retained as a general diagnostic after its issue closed.
 
-## v1.3.5 (add before tagging, trim in the release after)
+## v1.3.6
+
+The task-editor correction is confirmed by the visible disappearance of the error panel and normal task opening/closing; it adds no data writes or new diagnostic marker. Unconfirmed checks from v1.3.5 retain their original tags below.
+
+## v1.3.5 (carried forward to v1.3.6, unconfirmed; keep original tags)
 
 - **`v1.3.5/system-date-format`** — `apps/mobile/app/_layout.tsx` and `apps/mobile/contexts/language-context.tsx`, after configuring date display from the optional iOS short-date preference bridge at startup or after an OS preference changes while backgrounded. Message: `System date format configured`; `outcome=native|locale-fallback`. Enable Diagnostics logging before launching or resuming the app. On iOS with Date format set to System, the tester's log should show `native`, and task dates plus the System preview in Settings must follow the OS short-date order, separators and field widths, including after changing the OS preference and returning to Mindwtr. `native` proves a supported pattern was read and supplied, not that the screen rendered correctly. Older clients or unsupported patterns use `locale-fallback`. Explicit date-format choices still override the native pattern. No locale, pattern, task text, dates or identifiers are logged.
 

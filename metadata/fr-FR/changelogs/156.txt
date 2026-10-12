@@ -1,0 +1,1 @@
+Corrige Tâche / Erreur et la barre bleue dans Focus. Copiez des liens, ajoutez /estimate:45m et transformez une checklist en tâches de projet avec Annuler. Les rappels reprennent après un redémarrage ou changement de fuseau. Améliorations de WebDAV Synology, chiffrement, pièces jointes et archives. Aperçu au-dessus de la barre de navigation.

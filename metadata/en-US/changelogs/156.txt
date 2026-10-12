@@ -1,0 +1,1 @@
+Fix the unwanted Task / Error panel and blue bar on Focus. Copy task links, enter /estimate:45m, and convert checklists into project tasks with Undo. Repeating reminders recover after restart and time-zone changes. Improve Synology WebDAV, encryption setup, attachment recovery and archive retention. Task previews stay above the navigation bar.
