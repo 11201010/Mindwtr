@@ -20,6 +20,7 @@ import {
 import { formatRecoverySnapshotLabel } from './recovery-snapshot-names';
 import { flushPendingSave, useTaskStore } from './store';
 import { markNextLoadAsDocumentReplacement } from './store-settings';
+import { stripSensitiveSettings } from './store-helpers';
 import { validateMergedSyncData } from './sync-normalization';
 import { cloneAppData } from './sync-runtime-utils';
 import type { AppData } from './types';
@@ -255,8 +256,11 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
     try {
         return await runSerializedSyncDocumentWriteOperation(async () => {
             await flush();
-            const current = await adapter.getData();
-            if (!completeDocument(current)) invalid();
+            // A legacy settings.ai.apiKey (an older build saved it) never reaches the plan, the recovery snapshot or the saved
+            // result; the commit's baseline check ignores it the same way (NativeReceiptSqliteAdapter.saveDocumentWithReceipt).
+            const raw = await adapter.getData();
+            if (!completeDocument(raw)) invalid();
+            const current: AppData = { ...raw, settings: stripSensitiveSettings(raw.settings) };
             const expectedCurrent = cloneAppData(current);
             const applied = operation === 'merge' ? applyImportSource('backup-merge', current, parsed!) : null;
             const csvApplied = operation === 'csv' ? applyImportSource('mindwtr-csv', current, csv!) : null;

@@ -328,6 +328,22 @@ describe('native backup commit replayed after process death (pass D1a, gate G-B1
     });
 });
 
+describe('native backup artifacts never hold a legacy AI key (D1a review P2-5)', () => {
+    // An older build saved settings.ai.apiKey in the document; the store strips it on load but the row keeps it until a save.
+    const SENTINEL = 'sk-legacy-sentinel-5f2c9e';
+    it.each(['merge', 'replace'] as const)('%s: the plan, the recovery snapshot and the reply hold no key; the commit is not stale and drops it', async (operation) => {
+        const env = await open();
+        await env.sql.client.run("UPDATE settings SET data = json_set(data, '$.ai', json_object('enabled', 1, 'apiKey', ?)) WHERE id = 1", [SENTINEL]);
+        expect(JSON.stringify(await env.state())).toContain(SENTINEL);
+        const prepared = await prepareNativeBackupDocument(env.adapter, input(undefined, operation));
+        expect(prepared.planJSON).not.toContain(SENTINEL);
+        expect(prepared.recoveryJSON).not.toContain(SENTINEL);
+        const reply = await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        expect(JSON.stringify(reply)).not.toContain(SENTINEL);
+        expect(JSON.stringify(await env.state())).not.toContain(SENTINEL);
+    });
+});
+
 describe('native immutable Mindwtr CSV and ZIP import', () => {
     it.each([
         [1, '1 task was skipped because it was imported earlier and then deleted here; deletions are kept on re-import.'],

@@ -8,6 +8,7 @@ import { deterministicHash128, generateDeterministicUUID } from './uuid';
 import { taskEditValuesEqual } from './json-value-equality';
 import { strToU8 } from 'fflate';
 import { logInfo } from './logger';
+import { stripSensitiveSettings } from './store-helpers';
 
 /**
  * Exact-retry bookkeeping for native host writes, shared by every contract write
@@ -540,7 +541,9 @@ export class NativeReceiptSqliteAdapter extends SqliteAdapter {
             // Prior success cannot authorize another application after its durable proof disappears.
             if (durableReceipts.has(requestId)) throw new Error('Saved document receipt is missing');
             const current = await this.getData();
-            if (!taskEditValuesEqual(current, expectedCurrent)) throw new Error('Stale document receipt baseline');
+            // A legacy settings.ai.apiKey left in the row is not part of the baseline (native-backup-document.ts never plans it).
+            const withoutKey = (document: AppData): AppData => ({ ...document, settings: stripSensitiveSettings(document.settings) });
+            if (!taskEditValuesEqual(withoutKey(current), withoutKey(expectedCurrent))) throw new Error('Stale document receipt baseline');
             if (pendingReceipts.size > 0 || receiptedWritesRunning > 0 || hasPendingDocumentStoreWork()) throw new Error('Document receipt write is busy');
             const context = { requestId, payload, data, replyJson, savedAt: new Date().toISOString() };
             this.documentReceipt = context;
