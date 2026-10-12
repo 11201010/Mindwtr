@@ -791,4 +791,11 @@ export const nlOverrides: Record<string, string> = {
     'shareCard.reviewTitle': "Wekelijkse review",
     'shareCard.reviewBody': "Deze week maakte ik ruimte om na te denken.",
     'shareCard.qrLabel': "Mindwtr downloaden",
+    "starter.processInbox.desc": "Probeer een project met de naam Reparaties in huis: leg «De lekkende kraan controleren» en «Verfkleuren vergelijken» vast als Inbox-taken die bij dat project horen. Verwerk alleen het item waarmee je aan de slag kunt en maak er een volgende actie van. De andere ideeën blijven tot je evaluatie in Inbox of in de projectnotities; ze hoeven niet naar Ooit/Misschien.",
+    "starter.focus.desc": "Volgende acties zijn mogelijkheden waarmee je aan de slag kunt, geen belofte om ze vandaag allemaal af te maken. Geef er een paar een ster voor Today's Focus en gebruik Alleen focus om de andere secties in te klappen; Upcoming is een vooruitblik. Voor projectstappen die in een vaste volgorde moeten gebeuren, toont een sequentieel project normaal gesproken één volgende actie tegelijk. Sterren en deadline- of evaluatiedatums kunnen andere items toch in Focus laten verschijnen.",
+    "starter.quickCapture.desc": "Leg «De keuken schoonmaken» vast in Inbox. Stel in de editor Start Date in op de eerstvolgende dag waarop je dit wilt doen en kies een wekelijkse herhaling op die weekdag. Start Date houdt de taak tot die dag uit de uitvoerbare Focus-lijsten en bij het afronden schuift deze door naar de volgende herhaling; Upcoming kan de taak nog wel als vooruitblik tonen. Gebruik Due Date voor een echte deadline.",
+    "starter.weeklyReview.desc": "Bekijk het project Reparaties in huis en kies het volgende item dat je kunt uitvoeren. Laten rijpen is voor een idee dat je opnieuw wilt overwegen: het blijft in Ooit/Misschien met een evaluatiedatum en komt op die datum terug in Process Inbox als Terug om te verduidelijken. Het wordt niet automatisch een volgende actie. Kijk in Ooit/Misschien of zoek voordat je hetzelfde idee opnieuw vastlegt.",
+    "process.incubate": "Laten rijpen",
+    "process.returningItem": "Terug om te verduidelijken",
+    "agenda.collapseOtherSections": "Alleen focus",
 };
