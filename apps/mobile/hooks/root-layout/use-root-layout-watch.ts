@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
-import { useTaskStore, type AppData, type Language } from '@mindwtr/core';
+import { getNextFutureStartRevealAt, useTaskStore, type AppData, type Language } from '@mindwtr/core';
 
 import {
   activateWatchConnectivity,
@@ -11,7 +11,8 @@ import {
 } from '@/modules/watch-connectivity';
 import { logInfo, logWarn } from '@/lib/app-log';
 import { mobilePomodoroController } from '@/lib/pomodoro-controller';
-import { getFocusWidgetFilter } from '@/lib/focus-widget-filter';
+import { focusWidgetFilterKey, getFocusWidgetFilter } from '@/lib/focus-widget-filter';
+import { getLocalDayKey } from '@/hooks/use-local-day-key';
 import { buildWidgetPayload } from '@/lib/widget-data';
 import { buildWatchApplicationContext, watchPomodoroPublicationKey } from '@/lib/watch-snapshot';
 
@@ -39,6 +40,31 @@ export function useRootLayoutWatch({
     let publishing = false;
     let publishAgain = false;
     let lastContextKey = '';
+    // What the context is built from. The Focus screen re-derives on the same
+    // triggers: its data, the local day, and the next timed start (#995).
+    // Anything else (UI state, sync status) skips the build entirely.
+    let lastInputs: readonly unknown[] | null = null;
+    let nextRevealAt: number | null = null;
+    const readInputs = () => {
+      const store = useTaskStore.getState();
+      return [
+        store.tasks, store.projects, store.sections, store.areas, store.people, store.settings,
+        watchPomodoroPublicationKey(mobilePomodoroController.getSnapshot()),
+        getLocalDayKey(),
+        focusWidgetFilterKey(getFocusWidgetFilter()),
+      ] as const;
+    };
+    const inputsUnchanged = (inputs: readonly unknown[]) => lastInputs !== null
+      && inputs.every((value, index) => value === lastInputs![index])
+      && (nextRevealAt === null || Date.now() < nextRevealAt);
+    const rememberInputs = (inputs: ReturnType<typeof readInputs>) => {
+      lastInputs = inputs;
+      nextRevealAt = getNextFutureStartRevealAt(inputs[0]);
+    };
+    const forgetPublished = () => {
+      lastContextKey = '';
+      lastInputs = null;
+    };
 
     const buildContext = () => {
       const store = useTaskStore.getState();
@@ -88,12 +114,18 @@ export function useRootLayoutWatch({
       try {
         do {
           publishAgain = false;
+          const inputs = readInputs();
+          if (inputsUnchanged(inputs)) continue;
           const context = buildContext();
           const key = JSON.stringify(context, (field, value) => field === 'generatedAt' ? undefined : value);
-          if (key === lastContextKey) continue;
+          if (key === lastContextKey) {
+            rememberInputs(inputs);
+            continue;
+          }
           await updateWatchApplicationContext(context);
           if (!active) return;
           lastContextKey = key;
+          rememberInputs(inputs);
           void logInfo('Watch snapshot published', {
             scope: 'watch',
             extra: {
@@ -127,7 +159,7 @@ export function useRootLayoutWatch({
     const nativeListener = addPendingWatchCaptureListener(() => {
       onPendingCapture();
       // Settlement also emits this edge, after the task save is durable.
-      lastContextKey = '';
+      forgetPublished();
       requestPublish();
     });
     const unsubscribeStore = useTaskStore.subscribe(requestPublish);
@@ -146,7 +178,7 @@ export function useRootLayoutWatch({
         .then(() => {
           if (!active) return;
           activated = true;
-          lastContextKey = '';
+          forgetPublished();
           requestPublish();
         })
         .catch(() => {
