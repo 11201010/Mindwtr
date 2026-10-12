@@ -797,19 +797,20 @@ async function runRescheduleCycle(api: AlarmNotificationsApi, options: { deleteS
     });
   }
 
-  // A rejected scheduleAlarm (revoked exact-alarm permission, the per-app pending
-  // alarm cap) skips that alarm only: the rest are made, alarms of finished tasks
-  // are cancelled and the top-up is set, even if scheduling throws. Whatever was
-  // created is live in AlarmManager, so the map has to reach storage anyway or a
-  // restart can never cancel those alarms. saveAlarmMap no-ops on an unchanged map
-  // and swallows its own storage errors, so the extra call cannot mask an error.
+  // Alarms of finished tasks are cancelled first, so a full native alarm table has
+  // room for the new ones. A rejected scheduleAlarm (revoked exact-alarm permission,
+  // the per-app pending alarm cap) skips that alarm only: the rest are made and the
+  // top-up is set, even if scheduling throws. Whatever was created is live in
+  // AlarmManager, so the map has to reach storage anyway or a restart can never
+  // cancel those alarms. saveAlarmMap no-ops on an unchanged map and swallows its
+  // own storage errors, so the extra call cannot mask an error.
   let refusedAlarmCount = 0;
   try {
     try {
+      await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
       refusedAlarmCount = await scheduleReminderAlarms(plan, alarmMap, port);
     } finally {
       scheduleOneShotTopUp(api, plan.topUpDelayMs);
-      await cancelUnrequestedReminderAlarms(plan, alarmMap, port);
     }
   } finally {
     await saveAlarmMap();

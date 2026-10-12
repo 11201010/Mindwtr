@@ -1764,5 +1764,31 @@ describe('notification-service-local', () => {
         expect.objectContaining({ extra: { releaseCheck: 'v1.3.5/reminder-cycle-partial', count: 1 } }),
       );
     });
+
+    it('frees obsolete alarms before arming a new reminder when the native table is full', async () => {
+      mockStoreState.tasks = [
+        { id: 'task-new', title: 'New', dueDate: new Date(Date.now() + 60 * 1000).toISOString() },
+      ];
+      mockAsyncStorageGetItem.mockImplementation(async (key: string) => (
+        key === 'mindwtr:local:alarms:v1'
+          ? JSON.stringify({ 'task:gone-1': { id: 71, signature: 'deleted task' }, 'task:gone-2': { id: 72, signature: 'deleted task' } })
+          : null
+      ));
+      // The native table holds two alarms and refuses a third.
+      const live = new Set([71, 72]);
+      let nextId = 300;
+      mockAlarmDeleteAlarm.mockImplementation((id: number) => { live.delete(id); });
+      mockAlarmScheduleAlarm.mockReset();
+      mockAlarmScheduleAlarm.mockImplementation(async () => {
+        if (live.size >= 2) throw new Error('Maximum limit of concurrent alarms reached');
+        live.add(nextId);
+        return { id: nextId++ };
+      });
+
+      await startLocalMobileNotifications();
+
+      expect(__localNotificationTestUtils.getAlarmMapSnapshot().get('task:task-new')?.id).toBe(300);
+      expect(Array.from(live)).toEqual([300]);
+    });
   });
 });

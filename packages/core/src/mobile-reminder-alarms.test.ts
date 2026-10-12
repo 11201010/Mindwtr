@@ -111,11 +111,11 @@ describe('mobile reminder alarms', () => {
                     alarms,
                 });
                 try {
+                    await cancelUnrequestedReminderAlarms(plan, alarms, port);
                     if (plan.mode === 'active') {
                         await scheduleReminderAlarms(plan, alarms, port);
                         if (plan.topUpDelayMs !== null) timers.push(plan.topUpDelayMs);
                     }
-                    await cancelUnrequestedReminderAlarms(plan, alarms, port);
                 } catch (caught) {
                     error = caught instanceof Error ? caught.message : String(caught);
                 }

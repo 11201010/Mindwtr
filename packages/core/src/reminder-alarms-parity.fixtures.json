@@ -1,7 +1,7 @@
 {
  "provenance": {
   "command": "cd apps/mobile && MINDWTR_CAPTURE_REMINDER_ALARMS=1 MINDWTR_CAPTURE_REMINDER_ALARMS_COMMIT=$(git rev-parse HEAD) TZ=UTC bunx vitest run lib/notification-service-local.parity.test.ts",
-  "capturedAt": "c57ea0b3aaa79a1276073847af593a5849bf736e",
+  "capturedAt": "9e5d1d1221855231693f3450fb57b5c93a70c6cd",
   "sourceState": "Every file under apps/ and packages/ was at HEAD except the reminder alarm and notification open parity harnesses and their fixtures.",
   "rendering": "lib/notification-service-local.ts run for real under fake timers (Date, setTimeout) with TZ=UTC. The store, the system language and the alarm library are replaced: parseDate is toISOString, scheduleAlarm answers from the cycle's `answers` and then with ids counting up from 100, getScheduledAlarms answers []. Stored language and translations are core's real English. Android starts with notification permission granted; iOS grants through requestPermissions. Each cycle is one startLocalMobileNotifications call (the first starts the service, later ones run a cycle while running) or, for trigger `exact`, one rescheduleLocalAlarmsAsExact call. `calls` records, in order, every alarm library call, AsyncStorage write, setTimeout delay and log line (message and extra)."
  },
@@ -5955,6 +5955,26 @@
       "getScheduledAlarms"
      ],
      [
+      "removeFiredNotification",
+      100
+     ],
+     [
+      "deleteAlarm",
+      100
+     ],
+     [
+      "deleteRepeatingAlarm",
+      100
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "digest:morning",
+       "alarmId": 100
+      }
+     ],
+     [
       "deleteAlarm",
       102
      ],
@@ -6005,26 +6025,6 @@
        "fireAt": "2026-10-02T18:30:00.000Z",
        "retryCount": 0,
        "scheduleType": "repeat"
-      }
-     ],
-     [
-      "removeFiredNotification",
-      100
-     ],
-     [
-      "deleteAlarm",
-      100
-     ],
-     [
-      "deleteRepeatingAlarm",
-      100
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "digest:morning",
-       "alarmId": 100
       }
      ],
      [
@@ -6724,6 +6724,42 @@
       "getScheduledAlarms"
      ],
      [
+      "deleteAlarm",
+      101
+     ],
+     [
+      "deleteRepeatingAlarm",
+      101
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:t-repeat",
+       "alarmId": 101
+      }
+     ],
+     [
+      "removeFiredNotification",
+      104
+     ],
+     [
+      "deleteAlarm",
+      104
+     ],
+     [
+      "deleteRepeatingAlarm",
+      104
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:t-due",
+       "alarmId": 104
+      }
+     ],
+     [
       "removeFiredNotification",
       107
      ],
@@ -6845,42 +6881,6 @@
      [
       "setTimeout",
       605000
-     ],
-     [
-      "deleteAlarm",
-      101
-     ],
-     [
-      "deleteRepeatingAlarm",
-      101
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:t-repeat",
-       "alarmId": 101
-      }
-     ],
-     [
-      "removeFiredNotification",
-      104
-     ],
-     [
-      "deleteAlarm",
-      104
-     ],
-     [
-      "deleteRepeatingAlarm",
-      104
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:t-due",
-       "alarmId": 104
-      }
      ],
      [
       "setItem",
@@ -15917,6 +15917,54 @@
       "getScheduledAlarms"
      ],
      [
+      "deleteAlarm",
+      100
+     ],
+     [
+      "deleteRepeatingAlarm",
+      100
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:m-000",
+       "alarmId": 100
+      }
+     ],
+     [
+      "deleteAlarm",
+      101
+     ],
+     [
+      "deleteRepeatingAlarm",
+      101
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:m-001",
+       "alarmId": 101
+      }
+     ],
+     [
+      "deleteAlarm",
+      102
+     ],
+     [
+      "deleteRepeatingAlarm",
+      102
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:m-002",
+       "alarmId": 102
+      }
+     ],
+     [
       "scheduleAlarm",
       {
        "title": "Minute 200",
@@ -16039,54 +16087,6 @@
      [
       "setTimeout",
       59000
-     ],
-     [
-      "deleteAlarm",
-      100
-     ],
-     [
-      "deleteRepeatingAlarm",
-      100
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:m-000",
-       "alarmId": 100
-      }
-     ],
-     [
-      "deleteAlarm",
-      101
-     ],
-     [
-      "deleteRepeatingAlarm",
-      101
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:m-001",
-       "alarmId": 101
-      }
-     ],
-     [
-      "deleteAlarm",
-      102
-     ],
-     [
-      "deleteRepeatingAlarm",
-      102
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:m-002",
-       "alarmId": 102
-      }
      ],
      [
       "setItem",
@@ -19710,6 +19710,26 @@
       "getScheduledAlarms"
      ],
      [
+      "removeFiredNotification",
+      7
+     ],
+     [
+      "deleteAlarm",
+      7
+     ],
+     [
+      "deleteRepeatingAlarm",
+      7
+     ],
+     [
+      "logInfo",
+      "[Local Notifications] Alarm canceled",
+      {
+       "alarmKey": "task:gone",
+       "alarmId": 7
+      }
+     ],
+     [
       "deleteAlarm",
       8
      ],
@@ -19858,26 +19878,6 @@
      [
       "setTimeout",
       3605000
-     ],
-     [
-      "removeFiredNotification",
-      7
-     ],
-     [
-      "deleteAlarm",
-      7
-     ],
-     [
-      "deleteRepeatingAlarm",
-      7
-     ],
-     [
-      "logInfo",
-      "[Local Notifications] Alarm canceled",
-      {
-       "alarmKey": "task:gone",
-       "alarmId": 7
-      }
      ],
      [
       "setItem",
