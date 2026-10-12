@@ -42,6 +42,7 @@ import { LIST_END_GAP, ToolbarButton, VIEW_FILTER_INPUT } from './list/list-tool
 import { resolveNonDoneTaskSortBy } from '@mindwtr/core';
 import { BoardFiltersPanel } from './board/BoardFiltersPanel';
 import type { DesktopActiveFilterChip } from './list/FilterDisclosure';
+import { beginRendererActivity, recordRendererActivity } from '../../lib/renderer-navigation-diagnostics';
 
 const BOARD_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:board:v1';
 
@@ -228,6 +229,8 @@ export function BoardView() {
 
     const [activeTask, setActiveTask] = React.useState<Task | null>(null);
     const [computeSequential, setComputeSequential] = React.useState(false);
+    const sequentialActivity = React.useRef<ReturnType<typeof beginRendererActivity>>(null);
+    const sequentialPhase = React.useRef<'scheduled' | 'fired' | 'committed'>('scheduled');
     const [searchQuery, setSearchQuery] = React.useState('');
     const boardFilters = useUiStore((state) => state.boardFilters);
     const setBoardFilters = useUiStore((state) => state.setBoardFilters);
@@ -283,8 +286,21 @@ export function BoardView() {
     }, [perf.enabled]);
 
     React.useEffect(() => {
-        const timer = window.setTimeout(() => setComputeSequential(true), 0);
-        return () => window.clearTimeout(timer);
+        const activity = beginRendererActivity('board-sequential');
+        sequentialActivity.current = activity;
+        sequentialPhase.current = 'scheduled';
+        let fired = false;
+        recordRendererActivity(activity, 'scheduled');
+        const timer = window.setTimeout(() => {
+            fired = true;
+            sequentialPhase.current = 'fired';
+            recordRendererActivity(activity, 'fired');
+            setComputeSequential(true);
+        }, 0);
+        return () => {
+            window.clearTimeout(timer);
+            recordRendererActivity(activity, 'cleanup', { outcome: fired ? 'already-fired' : 'cancelled' });
+        };
     }, []);
     const updateCriteria = (next: FilterCriteria) => {
         setBoardFilters({ criteria: next });
@@ -419,6 +435,14 @@ export function BoardView() {
         () => COLUMN_STATUSES.flatMap((status) => getColumnTasks(status)),
         [getColumnTasks],
     );
+    React.useEffect(() => {
+        if (!computeSequential || sequentialPhase.current !== 'fired') return;
+        sequentialPhase.current = 'committed';
+        recordRendererActivity(sequentialActivity.current, 'committed', {
+            filteredCount: filteredTasks.length, visibleCount: visibleTasks.length,
+            sequentialProjectCount: sequentialProjectIds.size, sequentialResultCount: sequentialProjectFirstTasks.size,
+        });
+    }, [computeSequential, filteredTasks, visibleTasks, sequentialProjectIds, sequentialProjectFirstTasks]);
     const [selectedTaskIndex, setSelectedTaskIndex] = React.useState(0);
     useTaskListScope({
         getTasks: () => visibleTasks,

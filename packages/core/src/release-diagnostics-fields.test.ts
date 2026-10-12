@@ -29,6 +29,10 @@ const RELEASE_CHECK_FIELD_NAMES = [
     'rendererRun', 'navigationSequence', 'previousView', 'nextView', 'actualView',
     'taskCountBucket', 'projectCountBucket', 'trashCountBucket', 'historyCountBucket',
     'referenceCountBucket', 'boardCountBucket', 'density', 'showDetails', 'editorOpen', 'documentVisibility',
+    // renderer-view-work: process-local owners and bounded effect aggregates only.
+    'currentNavigationSequence', 'activitySequence', 'activity', 'attachMode', 'callbackCount', 'widthChangeCount',
+    'width', 'measured', 'todayVisible', 'zoom', 'filteredCountBucket', 'visibleCountBucket',
+    'sequentialProjectCountBucket', 'sequentialResultCountBucket',
     // task-link-open reuses releaseCheck and outcome below.
     // task-copy-diagnostics reuses releaseCheck and outcome below; source is the menu/shortcut category.
     'source', 'documentFocused', 'activationSupported', 'activationActive', 'clipboardAvailable', 'errorKind',

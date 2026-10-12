@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeSandboxRuntime, useTaskStore, type Task } from '@mindwtr/core';
 import { setNativeInvokeTransport } from './tauri-invoke';
-import { beginRendererNavigation, commitRendererNavigation } from './renderer-navigation-diagnostics';
+import { beginRendererActivity, beginRendererNavigation, commitRendererNavigation, recordRendererActivity } from './renderer-navigation-diagnostics';
 
 const append = vi.fn((_command: string, _args?: Record<string, unknown>) => {});
 let frames: FrameRequestCallback[];
@@ -30,6 +30,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    vi.restoreAllMocks();
     append.mockClear();
     setNativeInvokeTransport(null);
     Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: undefined });
@@ -37,6 +38,58 @@ afterEach(() => {
 });
 
 describe('renderer navigation diagnostics through the sandbox native log boundary', () => {
+    it('retains activity ownership across navigation and bounds entries while reserving cleanup', () => {
+        const first = beginRendererNavigation('timeline');
+        const activity = beginRendererActivity('timeline-measurement');
+        const secondActivity = beginRendererActivity('timeline-centering');
+        recordRendererActivity(activity, 'initial-start', { attachMode: 'observer' });
+        const next = beginRendererNavigation('board');
+        for (let count = 0; count < 30; count++) recordRendererActivity(activity, 'callback-start', { callbackCount: count });
+        recordRendererActivity(activity, 'cleanup', { callbackCount: 30, widthChangeCount: 2 });
+        recordRendererActivity(activity, 'callback-end');
+        recordRendererActivity(secondActivity, 'centering-start', { measured: true, todayVisible: false });
+        const records = entries().filter((entry) => entry.context.releaseCheck === 'v1.3.6/renderer-view-work');
+        const measurement = records.filter((entry) => entry.context.activity === 'timeline-measurement');
+        expect(measurement).toHaveLength(12);
+        expect(measurement[0].context).toMatchObject({ navigationSequence: String(first.sequence), currentNavigationSequence: String(first.sequence) });
+        expect(measurement.slice(-1)[0]?.context).toMatchObject({ stage: 'cleanup', navigationSequence: String(first.sequence), currentNavigationSequence: String(next.sequence), callbackCount: '30', widthChangeCount: '2' });
+        expect(new Set(records.map((entry) => entry.context.activitySequence)).size).toBe(2);
+        expect(records.every((entry) => entry.context.rendererRun === records[0].context.rendererRun)).toBe(true);
+        expect(JSON.stringify(records)).not.toMatch(/private|1999-01-01|\[redacted\]/);
+    });
+
+    it('does no activity task scans, suppresses opt-out and never activates a disabled lifetime', () => {
+        useTaskStore.setState({ settings: { diagnostics: { loggingEnabled: false } } });
+        const state = useTaskStore.getState();
+        const read = vi.spyOn(useTaskStore, 'getState').mockReturnValue({
+            ...state,
+            get _allTasks(): Task[] { throw new Error('activity diagnostics must not scan'); },
+        });
+        const disabled = beginRendererActivity('board-sequential');
+        recordRendererActivity(disabled, 'scheduled');
+        expect(append).not.toHaveBeenCalled();
+        state.settings.diagnostics!.loggingEnabled = true;
+        recordRendererActivity(disabled, 'fired');
+        expect(append).not.toHaveBeenCalled();
+        const active = beginRendererActivity('board-sequential');
+        recordRendererActivity(active, 'scheduled');
+        expect(entries()).toHaveLength(1);
+        state.settings.diagnostics!.loggingEnabled = false;
+        recordRendererActivity(active, 'cleanup', { outcome: 'cancelled' });
+        state.settings.diagnostics!.loggingEnabled = true;
+        recordRendererActivity(active, 'fired');
+        expect(entries()).toHaveLength(1);
+        read.mockRestore();
+    });
+
+    it('selects only diagnostic fields even when an object contains private extras', () => {
+        const activity = beginRendererActivity('timeline-measurement');
+        const details = { width: 900, title: 'private content', id: 'private-id', url: 'https://private.example', error: 'private error' };
+        recordRendererActivity(activity, 'initial-end', details);
+        expect(entries()[0].context.width).toBe('900');
+        expect(JSON.stringify(entries())).not.toMatch(/private|\[redacted\]/);
+    });
+
     it('correlates requested, committed and frame payloads without exposing content', () => {
         const trace = beginRendererNavigation('board');
         expect(entries().map((entry) => entry.context.stage)).toEqual(['requested']);

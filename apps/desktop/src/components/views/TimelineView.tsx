@@ -42,6 +42,7 @@ import { checkBudget } from '../../config/performanceBudgets';
 import { ListEmptyState } from './list/ListEmptyState';
 import { CalendarOpenTaskModal } from './calendar/CalendarModals';
 import { resolveCalendarLocale } from './calendar-locale';
+import { beginRendererActivity, recordRendererActivity } from '../../lib/renderer-navigation-diagnostics';
 
 const TIMELINE_VIEW_STATE_STORAGE_KEY = 'mindwtr:view:timeline:v1';
 
@@ -583,15 +584,35 @@ export function TimelineView() {
     React.useEffect(() => {
         const scroller = scrollRef.current;
         if (!scroller) return;
-        const measure = () => setViewportWidth(scroller.clientWidth);
-        measure();
+        const activity = beginRendererActivity('timeline-measurement');
+        const attachMode = typeof ResizeObserver === 'function' ? 'observer' : 'window-resize';
+        let callbackCount = 0;
+        let widthChangeCount = 0;
+        let lastWidth: number | undefined;
+        const measure = (initial = false) => {
+            if (activity && !initial) callbackCount++;
+            const sampled = initial || callbackCount <= 3;
+            if (sampled) recordRendererActivity(activity, initial ? 'initial-start' : 'callback-start', { attachMode, callbackCount });
+            const width = scroller.clientWidth;
+            if (activity) {
+                if (lastWidth !== undefined && lastWidth !== width) widthChangeCount++;
+                lastWidth = width;
+            }
+            setViewportWidth(width);
+            if (sampled) recordRendererActivity(activity, initial ? 'initial-end' : 'callback-end', { attachMode, callbackCount, width });
+        };
+        const onResize = () => measure();
+        const cleanup = () => recordRendererActivity(activity, 'cleanup', { attachMode, callbackCount, widthChangeCount });
+        measure(true);
         if (typeof ResizeObserver === 'function') {
-            const observer = new ResizeObserver(measure);
+            const observer = new ResizeObserver(onResize);
             observer.observe(scroller);
-            return () => observer.disconnect();
+            recordRendererActivity(activity, 'attached', { attachMode });
+            return () => { observer.disconnect(); cleanup(); };
         }
-        window.addEventListener('resize', measure);
-        return () => window.removeEventListener('resize', measure);
+        window.addEventListener('resize', onResize);
+        recordRendererActivity(activity, 'attached', { attachMode });
+        return () => { window.removeEventListener('resize', onResize); cleanup(); };
     }, [hasRows]);
 
     const scrollToToday = React.useCallback(() => {
@@ -607,8 +628,11 @@ export function TimelineView() {
     React.useLayoutEffect(() => {
         if (viewportWidth === 0 || centeredZoomRef.current === zoom) return;
         centeredZoomRef.current = zoom;
+        const activity = beginRendererActivity('timeline-centering');
+        recordRendererActivity(activity, 'centering-start', { measured: viewportWidth > 0, todayVisible, zoom });
         scrollToToday();
-    }, [scrollToToday, viewportWidth, zoom]);
+        recordRendererActivity(activity, 'centering-end', { measured: viewportWidth > 0, todayVisible, zoom });
+    }, [scrollToToday, viewportWidth, zoom, todayVisible]);
 
     const showEarlierWindow = React.useCallback(() => {
         if (!range || earlierOmitted === 0) return;
