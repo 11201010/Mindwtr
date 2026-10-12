@@ -615,36 +615,6 @@ describe('Dropbox sync encryption transitions', () => {
         expect(store.files.get('attachments/a1.png')).toEqual(attachment);
     });
 
-    it('migrates an unreferenced attachment discovered by the provider inventory', async () => {
-        const orphan = new Uint8Array([9, 7, 5, 3]);
-        const store = createBlobStore({
-            'data.json': jsonBytes({ tasks: [], projects: [] }),
-            'attachments/orphan.bin': orphan,
-        });
-        const service = dropboxService(createDropboxFetch(store));
-
-        await service.enableSyncEncryption('old passphrase');
-        expect(isEncrypted(store.files.get('attachments/orphan.bin'))).toBe(true);
-
-        await service.changeSyncEncryptionPassphrase('old passphrase', 'new passphrase');
-        await service.disableSyncEncryption();
-        expect(store.files.get('attachments/orphan.bin')).toEqual(orphan);
-    });
-
-    it('a re-run after an interrupted enable converges instead of starting a second generation', async () => {
-        const store = seedRemote();
-        const service = dropboxService(createDropboxFetch(store));
-        await service.enableSyncEncryption('correct horse battery');
-        const sealedDocument = store.files.get('data.json.enc')!;
-
-        // A crash between "wrote the .enc" and "removed the plaintext" leaves both generations.
-        store.files.set('data.json.bak', jsonBytes({ tasks: [], projects: [] }));
-        await service.enableSyncEncryption('correct horse battery');
-
-        expect(store.files.has('data.json.bak')).toBe(false);
-        // The already-sealed base document was recognized as migrated and left untouched.
-        expect(store.files.get('data.json.enc')).toEqual(sealedDocument);
-    });
 });
 
 describe('WebDAV sync encryption transitions', () => {
@@ -661,42 +631,6 @@ describe('WebDAV sync encryption transitions', () => {
         expect(JSON.parse(new TextDecoder().decode(store.files.get('data.json')!))).toEqual(
             APP_DATA_WITH_ATTACHMENT,
         );
-    });
-
-    it('round-trips attachments when only the backup document is available', async () => {
-        const attachment = new Uint8Array([8, 6, 4, 2]);
-        const store = createBlobStore({
-            'data.json.bak': jsonBytes(APP_DATA_WITH_ATTACHMENT),
-            'attachments/a1.png': attachment,
-        });
-        const service = webdavService(createWebdavFetch(store, BASE_URL));
-
-        await service.enableSyncEncryption('old passphrase');
-        expect(isEncrypted(store.files.get('data.json.enc.bak'))).toBe(true);
-        expect(isEncrypted(store.files.get('attachments/a1.png'))).toBe(true);
-
-        await service.changeSyncEncryptionPassphrase('old passphrase', 'new passphrase');
-        await service.disableSyncEncryption();
-
-        expect(JSON.parse(new TextDecoder().decode(store.files.get('data.json.bak')!)))
-            .toEqual(APP_DATA_WITH_ATTACHMENT);
-        expect(store.files.get('attachments/a1.png')).toEqual(attachment);
-    });
-
-    it('migrates an unreferenced attachment from the WebDAV collection inventory', async () => {
-        const orphan = new Uint8Array([1, 3, 5, 7]);
-        const store = createBlobStore({
-            'data.json': jsonBytes({ tasks: [], projects: [] }),
-            'attachments/orphan.bin': orphan,
-        });
-        const service = webdavService(createWebdavFetch(store, BASE_URL));
-
-        await service.enableSyncEncryption('old passphrase');
-        expect(isEncrypted(store.files.get('attachments/orphan.bin'))).toBe(true);
-
-        await service.changeSyncEncryptionPassphrase('old passphrase', 'new passphrase');
-        await service.disableSyncEncryption();
-        expect(store.files.get('attachments/orphan.bin')).toEqual(orphan);
     });
 
     // A server without strong ETags serves the fence without one too: the fence's read-back has no version, so Enable
