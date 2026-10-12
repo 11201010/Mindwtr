@@ -315,14 +315,25 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         Thread { runCatching { operations.clearResult(requestId) } }.start()
     }
 
-    /** After a start: a result record left by a death after its commit shows its toast once (design §4.3). */
+    /**
+     * After a start: a result record left by a death after its commit shows its toast once (design §4.3); one that did not commit
+     * (stale, refused, its files unreadable) shows RN's failure toast with core's reason before it goes.
+     */
     fun leftover() = whenHosted { runtime ->
         runCatching { cleanupInterruptedExport(runtime) }.onFailure { Log.w(CoreHost.TAG, "Interrupted export cleanup failed ${failureForLog(it)}") }
         val ops = operations
         val record = ops.result() ?: return@whenHosted
         val requestId = record.optString("requestId")
         val reply = record.optJSONObject("reply")
-        if (record.optString("outcome") != "committed" || reply == null) { ops.clearResult(requestId); return@whenHosted }
+        if (record.optString("outcome") != "committed" || reply == null) {
+            val failure = leftoverFailure(record)
+            val title = runCatching { runtime.strings(listOf(failure.titleKey)).getJSONObject("strings").getString(failure.titleKey) }.getOrDefault("")
+            shell.ui {
+                shell.showToast(title, failure.message, "error", durationMs = 5_200)
+                Thread { runCatching { ops.clearResult(requestId) } }.start()
+            }
+            return@whenHosted
+        }
         val result = runCatching { runtime.backupResultModel(reply.toString()) }.getOrNull() ?: run { ops.clearResult(requestId); return@whenHosted }
         val undo = record.optString("undoSnapshot").takeIf { it.isNotEmpty() && File(snapshots, it).isFile }
         shell.ui { showResult(requestId, result, undo) }
@@ -463,6 +474,15 @@ internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exis
         if (documentGone(uri, delete, exists)) runCatching { updateExportRecord(record) { it - uri } }.onFailure { kept += 1 } else kept += 1
     }
     return if (kept > 0) "kept" else "deleted"
+}
+
+/** A start's leftover result that did not commit: RN's failure title (a core key) and core's reason. */
+internal class LeftoverFailure(val titleKey: String, val message: String)
+
+internal fun leftoverFailure(record: JSONObject): LeftoverFailure {
+    val titleKey = if (record.optString("operation") == "merge") "settings.mergeBackupFailed" else "settings.backupMobile.restoreFailed"
+    val error = record.optString("error")
+    return LeftoverFailure(titleKey, error.substringAfter(": ").ifEmpty { error.ifEmpty { record.optString("outcome") } })
 }
 
 /** A picked file, or it with the library, over the measured transfer limit (design §4.1). */

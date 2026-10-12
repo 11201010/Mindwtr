@@ -25,6 +25,16 @@ class DataFilesTest {
         assertEquals(100L, out.length())
     }
 
+    // D1a review P2-7: a leftover that did not commit says so, with core's reason, under RN's failure title.
+    @Test fun aLeftoverThatDidNotCommitShowsItsReason() {
+        val stale = leftoverFailure(JSONObject().put("operation", "merge").put("outcome", "stale").put("error", "STALE_REVISION: Local data changed after backup preparation"))
+        assertEquals("settings.mergeBackupFailed", stale.titleKey)
+        assertEquals("Local data changed after backup preparation", stale.message)
+        val unresolved = leftoverFailure(JSONObject().put("operation", "replace").put("outcome", "refused").put("error", "INVALID_INPUT: Backup operation files do not match"))
+        assertEquals("settings.backupMobile.restoreFailed", unresolved.titleKey)
+        assertEquals("Backup operation files do not match", unresolved.message)
+    }
+
     @Test fun invalidUtf8IsRefusedNotReplaced() {
         val file = File(folder.root, "backup.json")
         file.writeBytes(byteArrayOf(0x7b, 0xff.toByte(), 0x7d))

@@ -278,8 +278,10 @@ class CoreHost(
             replay && WriteJournal.malformed(error) -> "unresolved"
             else -> "refused"
         }
+        // A failure keeps core's error text, so a start after a death shows it (DataTransfer.leftover) rather than dropping it.
         ops.writeResult(JSONObject().put("requestId", id).put("operation", operation).put("outcome", outcome)
-            .put("reply", reply ?: JSONObject.NULL).put("undoSnapshot", if (error == null && operation != "restore") args[1] as String else ""))
+            .put("reply", reply ?: JSONObject.NULL).put("undoSnapshot", if (error == null && operation != "restore") args[1] as String else "")
+            .put("error", error ?: ""))
         val stop = debugFault("backup_stop")
         val settled = if (stop == "settle-fail") false else settle(entry, result, replay)
         if (settled) ops.discard(id)
