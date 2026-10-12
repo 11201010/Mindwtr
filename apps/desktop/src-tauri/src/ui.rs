@@ -756,7 +756,7 @@ fn present_x11_quick_add_window(window: &gtk::ApplicationWindow) -> bool {
 #[cfg(target_os = "linux")]
 fn log_quick_add_focus(app: &tauri::AppHandle, backend: &str, outcome: &str) {
     let message = format!(
-        "Quick add focus extra.releaseCheck=v1.3.6/linux-quick-add-focus backend={backend} outcome={outcome}"
+        "Quick add focus extra.releaseCheck=v1.3.5/linux-quick-add-focus backend={backend} outcome={outcome}"
     );
     log::info!("{message}");
     let app = app.clone();

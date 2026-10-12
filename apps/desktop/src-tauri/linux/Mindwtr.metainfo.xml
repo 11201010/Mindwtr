@@ -102,8 +102,8 @@
           <li xml:lang="de">Kopiere Aufgabenlinks, erfasse Zeitschätzungen und wandle Checklisten in Projektaufgaben um.</li>
           <li>Run built-in MCP inside the app and filter Obsidian imports by a required inline tag.</li>
           <li xml:lang="de">Nutze MCP direkt in der App und filtere Obsidian-Importe nach einem erforderlichen Inline-Tag.</li>
-          <li>Fix File Sync attachment copies and MCP connection copying in AppImage builds; protect archive retention and encryption changes.</li>
-          <li xml:lang="de">Korrigiere File-Sync-Anhänge und das Kopieren der MCP-Verbindung in AppImages; schütze Archivaufbewahrung und Verschlüsselungsänderungen.</li>
+          <li>Improve global Quick Add activation, File Sync attachment copies and MCP connection copying in AppImages; protect archive retention and encryption changes.</li>
+          <li xml:lang="de">Verbessere die globale Schnellerfassung, File-Sync-Anhänge und das Kopieren der MCP-Verbindung in AppImages; schütze Archivaufbewahrung und Verschlüsselungsänderungen.</li>
         </ul>
       </description>
     </release>
