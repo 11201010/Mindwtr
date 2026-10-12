@@ -41,7 +41,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
             // Context consumers include memoized task rows and the open Settings preview.
             refreshRegionalFormats((revision) => revision + 1);
             void logInfo('System date format configured', { scope: 'regional-format', extra: {
-                releaseCheck: 'v1.3.6/system-date-format', outcome: systemDateFormat ? 'native' : 'locale-fallback',
+                releaseCheck: 'v1.3.5/system-date-format', outcome: systemDateFormat ? 'native' : 'locale-fallback',
             } });
         });
         return () => subscription.remove();

@@ -652,7 +652,7 @@ function RootLayoutContentInner() {
     });
     if (Platform.OS === 'ios') {
       void logInfo('System date format configured', { scope: 'regional-format', extra: {
-        releaseCheck: 'v1.3.6/system-date-format', outcome: systemDateFormat ? 'native' : 'locale-fallback',
+        releaseCheck: 'v1.3.5/system-date-format', outcome: systemDateFormat ? 'native' : 'locale-fallback',
       } });
     }
   }, [language, settingsCalendarSystem, settingsDateFormat, settingsLanguage, settingsTimeFormat]);
