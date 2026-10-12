@@ -454,12 +454,13 @@ export const restoreLocalDataSnapshot = async (snapshotName: string): Promise<vo
     }
 };
 
-// A folder document whose write a process death cut short looks like a finished backup. Before the document is created its
-// folder and name are listed on disk, then its URI; the entry leaves once the write closed. A start's cleanup (next export
-// or Data screen visit) deletes what an earlier run listed: by URI, or by name when the death came before the URI was known.
-// An entry leaves only once its document is confirmed gone, so a provider that refused the delete keeps it for the next try.
+// A folder document whose write a process death cut short looks like a finished backup. Its URI is listed on disk right after
+// the folder created it, before the first byte, and leaves once the write closed. A start's cleanup (next export or Data screen
+// visit) deletes only a URI an earlier run listed, never a file found by name: a death between the create and the listing
+// leaves one empty document (accepted). An entry leaves only once its document is confirmed gone, so a provider that refused
+// the delete keeps it for the next try.
 const EXPORT_PENDING_FILE_NAME = 'export-pending.json';
-type ExportPendingEntry = { uri?: string; tree?: string; name?: string; owner?: string };
+type ExportPendingEntry = { uri: string; owner?: string };
 // This JS runtime's entries: a cleanup never touches an export still running in it.
 const EXPORT_PENDING_OWNER = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const exportPendingFiles = (): { record: File; pending: File } | null => {
@@ -468,8 +469,7 @@ const exportPendingFiles = (): { record: File; pending: File } | null => {
         ? { record: new File(`${baseUri}/${EXPORT_PENDING_FILE_NAME}`), pending: new File(`${baseUri}/${EXPORT_PENDING_FILE_NAME}.pending`) }
         : null;
 };
-const sameEntry = (left: ExportPendingEntry, right: ExportPendingEntry): boolean =>
-    left.uri === right.uri && left.tree === right.tree && left.name === right.name && left.owner === right.owner;
+const sameEntry = (left: ExportPendingEntry, right: ExportPendingEntry): boolean => left.uri === right.uri && left.owner === right.owner;
 
 // The list, or null when the file is not a whole list. The older form `{ uri }` (one entry) is read too.
 const parseExportPending = (file: File): ExportPendingEntry[] | null => {
@@ -481,11 +481,8 @@ const parseExportPending = (file: File): ExportPendingEntry[] | null => {
         return parsed.pending.flatMap((entry): ExportPendingEntry[] => {
             if (typeof entry === 'string') return [{ uri: entry }];
             if (!entry || typeof entry !== 'object') return [];
-            const { uri, tree, name, owner } = entry as Record<string, unknown>;
-            const text = (value: unknown) => (typeof value === 'string' ? value : undefined);
-            return typeof uri === 'string' || (typeof tree === 'string' && typeof name === 'string')
-                ? [{ uri: text(uri), tree: text(tree), name: text(name), owner: text(owner) }]
-                : [];
+            const { uri, owner } = entry as Record<string, unknown>;
+            return typeof uri === 'string' ? [{ uri, owner: typeof owner === 'string' ? owner : undefined }] : [];
         });
     } catch {
         return null;
@@ -512,12 +509,6 @@ const updateExportPending = (change: (pending: ExportPendingEntry[]) => ExportPe
     files.pending.move(files.record);
 };
 
-// The folder's document named [name], or null when it has none.
-const findExportDocument = async (tree: string, name: string): Promise<string | null> => {
-    const children = await StorageAccessFramework.readDirectoryAsync(tree);
-    return children.find((uri) => decodeURIComponent(uri).endsWith(`/${name}`)) ?? null;
-};
-
 // Deleted, then confirmed gone: Expo's delete can resolve although the provider kept the file.
 const deleteExportDocument = async (uri: string): Promise<boolean> => {
     await StorageAccessFramework.deleteAsync(uri, { idempotent: true });
@@ -529,9 +520,8 @@ export const cleanupInterruptedBackupExport = async (): Promise<void> => {
     const listed = readExportPending().filter((entry) => entry.owner !== EXPORT_PENDING_OWNER);
     for (const entry of listed) {
         try {
-            const uri = entry.uri ?? (entry.tree && entry.name ? await findExportDocument(entry.tree, entry.name) : null);
-            if (uri && uri.startsWith('content://') && !(await deleteExportDocument(uri))) continue;
-            if (uri) {
+            if (entry.uri.startsWith('content://')) {
+                if (!(await deleteExportDocument(entry.uri))) continue;
                 void logInfo('Interrupted backup export removed', { scope: 'transfer', extra: { operation: 'exportBackup', releaseCheck: 'v1.3.5/mobile-export-cleanup' } });
             }
             updateExportPending((pending) => pending.filter((item) => !sameEntry(item, entry)));
@@ -579,17 +569,15 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                 const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
                 const directoryUri = permissions.directoryUri;
                 if (permissions.granted && directoryUri) {
-                    // Listed before the document exists: a list that cannot be written stops the export before anything is created.
-                    const intent: ExportPendingEntry = { tree: directoryUri, name: snapshotName, owner: EXPORT_PENDING_OWNER };
-                    updateExportPending((pending) => [...pending, intent]);
                     const fileUri = await StorageAccessFramework.createFileAsync(
                         directoryUri,
                         snapshotName,
                         mimeType
                     );
                     createdFileUri = fileUri;
+                    // Listed before the first byte; a list that cannot take it fails the export, and the document goes below.
                     const created: ExportPendingEntry = { uri: fileUri, owner: EXPORT_PENDING_OWNER };
-                    updateExportPending((pending) => [...pending.filter((entry) => !sameEntry(entry, intent)), created]);
+                    updateExportPending((pending) => [...pending, created]);
                     if (base64Content !== null) {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, base64Content, {
                             encoding: FileSystem.EncodingType.Base64,
@@ -620,8 +608,7 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                     try {
                         const removed = createdFileUri;
                         if (await deleteExportDocument(removed)) {
-                            updateExportPending((pending) => pending.filter((entry) => entry.owner !== EXPORT_PENDING_OWNER
-                                || (entry.uri !== removed && entry.name !== snapshotName)));
+                            updateExportPending((pending) => pending.filter((entry) => entry.owner !== EXPORT_PENDING_OWNER || entry.uri !== removed));
                         }
                     } catch (cleanupError) {
                         void logError(cleanupError, { scope: 'transfer', extra: { operation: 'exportBackup' } });

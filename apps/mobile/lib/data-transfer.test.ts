@@ -284,19 +284,38 @@ describe('mobile data transfer', () => {
   const listedUris = () => (JSON.parse(fileSystemMocks.fileContents.get(RECORD) ?? '{"pending":[]}').pending as (string | { uri?: string; name?: string })[])
     .map((entry) => (typeof entry === 'string' ? entry : entry.uri ?? `name:${entry.name}`));
 
-  it('lists the document before it is created and while it is written, and clears it once the write finishes', async () => {
+  it('lists the document by its URI before the first byte and clears it once the write finishes', async () => {
     Platform.OS = 'android';
     const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3AMindwtr%20Backup.json';
     fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
-    let listedAtCreate: string[] = [];
-    fileSystemMocks.createSafFileAsync.mockImplementationOnce(async (_tree: string, name: string) => { listedAtCreate = listedUris(); expect(listedAtCreate).toEqual([`name:${name}`]); return fileUri; });
+    let listedAtCreate: string[] = ['unread'];
+    fileSystemMocks.createSafFileAsync.mockImplementationOnce(async () => { listedAtCreate = listedUris(); return fileUri; });
     let listedDuringWrite: string[] = [];
     fileSystemMocks.writeSafFileAsync.mockImplementationOnce(async () => { listedDuringWrite = listedUris(); });
 
     await exportCurrentDataBackup(emptyData);
 
-    expect(listedAtCreate).toHaveLength(1);
+    expect(listedAtCreate).toEqual([]);
     expect(listedDuringWrite).toEqual([fileUri]);
+    expect(listedUris()).toEqual([]);
+  });
+
+  // D1a review 3 (P1): cleanup deletes only a recorded URI. An export that died before its document existed (or a provider
+  // that renamed it) never costs an older backup that shares the name.
+  it('an older backup with the same name survives an export that died before its document existed', async () => {
+    Platform.OS = 'android';
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
+    let name = '';
+    fileSystemMocks.createSafFileAsync.mockImplementationOnce(async (_tree: string, requested: string) => { name = requested; throw new Error('process died'); });
+    await exportCurrentDataBackup(emptyData);
+
+    const older = `content://com.android.externalstorage.documents/tree/primary%3ADownload/document/primary%3ADownload%2F${encodeURIComponent(name)}`;
+    fileSystemMocks.readSafDirectoryAsync.mockResolvedValue([older]);
+    vi.resetModules();
+    const nextStart = await import('./data-transfer');
+    await nextStart.cleanupInterruptedBackupExport();
+
+    expect(fileSystemMocks.deleteSafFileAsync).not.toHaveBeenCalled();
     expect(listedUris()).toEqual([]);
   });
 
@@ -346,39 +365,19 @@ describe('mobile data transfer', () => {
     expect(sharingMocks.shareAsync).toHaveBeenCalledOnce();
   });
 
-  // D1a review 2 (#4): the list cannot be written before the document exists: nothing is created.
-  it('creates no document when its entry cannot be listed first', async () => {
-    Platform.OS = 'android';
-    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
-    fileSystemMocks.writeError = new Error('disk full');
-
-    await exportCurrentDataBackup(emptyData);
-
-    expect(fileSystemMocks.createSafFileAsync).not.toHaveBeenCalled();
-    expect(sharingMocks.shareAsync).toHaveBeenCalledOnce();
-  });
-
-  // D1a review 2 (#4): created, then the list cannot take its URI and the provider refuses the delete: the entry by name
-  // stays, and the next start finds the document by its name and deletes it.
-  it('a document whose URI never reached the list is found by name at the next start', async () => {
+  // D1a review 3: created, then its URI cannot be listed: the document goes at once. A provider that also refuses that delete
+  // leaves one empty document nobody owns (accepted: no cleanup by name).
+  it('a document whose URI cannot be listed is deleted at once and never looked up by name later', async () => {
     Platform.OS = 'android';
     const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3ALost.json';
     fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
     fileSystemMocks.createSafFileAsync.mockImplementationOnce(async () => { fileSystemMocks.writeError = new Error('disk full'); return fileUri; });
-    fileSystemMocks.deleteSafFileAsync.mockRejectedValueOnce(new Error('provider refused'));
 
     await exportCurrentDataBackup(emptyData);
     fileSystemMocks.writeError = null;
-    expect(listedUris()).toHaveLength(1);
-    expect(listedUris()[0]).toMatch(/^name:mindwtr-backup-/u);
 
-    const name = listedUris()[0].slice('name:'.length);
-    const found = `content://com.android.externalstorage.documents/tree/primary%3ADownload/document/primary%3ADownload%2F${encodeURIComponent(name)}`;
-    fileSystemMocks.readSafDirectoryAsync.mockResolvedValue([found]);
-    vi.resetModules();
-    const nextStart = await import('./data-transfer');
-    await nextStart.cleanupInterruptedBackupExport();
-    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenLastCalledWith(found, { idempotent: true });
+    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenCalledWith(fileUri, { idempotent: true });
+    expect(fileSystemMocks.writeSafFileAsync).not.toHaveBeenCalled();
     expect(listedUris()).toEqual([]);
   });
 
