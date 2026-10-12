@@ -10,6 +10,7 @@ import { sectionToSqliteRow } from './section-sync-schema';
 import {
     collectFocusEligibilityTasks,
     resolveFocusStarAction,
+    resolveTaskFocusUpdate,
     type FocusStarAction,
 } from './focus-star';
 import type { AppData, Area, Project, Section, Task, TaskStatus } from './types';
@@ -30,7 +31,6 @@ import {
     getNextDataChangeAt,
     getNextProjectOrder,
     getTaskOrder,
-    isTaskCountedAsFocused,
     matchesDuplicateSource,
     isRestorableProjectArchiveSection,
     nextRevision,
@@ -2143,18 +2143,15 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             set({ error: preparedUpdates.error });
             return actionFail(preparedUpdates.error);
         }
-        const isPromotingTaskFocus = preparedUpdates.updates.isFocusedToday === true && existingTask.isFocusedToday !== true;
         const focusNow = new Date();
-        const isFillingFocusSlot = !isTaskCountedAsFocused(existingTask, focusNow)
-            && isTaskCountedAsFocused({ ...existingTask, ...preparedUpdates.updates }, focusNow);
-        if (isFillingFocusSlot) {
-            const focusTaskLimit = normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit);
-            const focusedCount = currentState.getFocusedCount();
-            if (focusedCount >= focusTaskLimit) {
-                const message = `Focus limit of ${focusTaskLimit} reached`;
-                set({ error: message });
-                return actionFail(message);
-            }
+        const focusDecision = resolveTaskFocusUpdate(existingTask, { ...existingTask, ...preparedUpdates.updates }, {
+            focusedCount: currentState.getFocusedCount(),
+            focusTaskLimit: normalizeFocusTaskLimit(currentState.settings.gtd?.focusTaskLimit),
+            now: focusNow,
+        });
+        if (focusDecision.outcome === 'refused-limit') {
+            set({ error: focusDecision.message });
+            return actionFail(focusDecision.message);
         }
         const prepareMs = Date.now() - updateStartedAt;
         let snapshot: AppData | null = null;
@@ -2300,7 +2297,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
             }
             logTaskProjectReactivationSaved(incrementalPersistence.reactivatedProjectIds.length);
         }
-        if (isPromotingTaskFocus && incrementalPersistence.task?.isFocusedToday
+        if (focusDecision.outcome === 'queued' && incrementalPersistence.task?.isFocusedToday
             && isTaskFutureFocusCandidate(incrementalPersistence.task)) {
             logInfo('Scheduled Focus queued', {
                 scope: 'store',
@@ -2308,7 +2305,7 @@ export const createTaskActions = ({ set, get, getStorage, debouncedSave, flushPe
                 context: { releaseCheck: 'v1.3.3/scheduled-focus-queue', operation: 'update' },
             });
         }
-        if (isFillingFocusSlot && isTaskFutureFocusCandidate(existingTask, focusNow)) {
+        if (focusDecision.outcome === 'focused' && isTaskFutureFocusCandidate(existingTask, focusNow)) {
             logInfo('Queued Focus activated', {
                 scope: 'store', category: 'storage',
                 context: { releaseCheck: 'v1.3.3/editor-focus-star' },
