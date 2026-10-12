@@ -468,7 +468,7 @@ jobs:
           rm -rf "$OUT_DIR"
           mkdir -p "$OUT_DIR"
           awk -v out="$OUT_DIR" '
-            /^<[^>]+>$/ {
+            /^<[^/>]+>$/ {
               tag=$0
               gsub(/[<>]/, "", tag)
               file=out "/whatsnew-" tag

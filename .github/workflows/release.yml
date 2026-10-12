@@ -37,6 +37,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_msstore:
+        description: 'Publish Windows Store packages; clear when reusing an accepted submission'
+        required: false
+        type: boolean
+        default: true
       run_android:
         description: 'Run Android release job'
         required: false
@@ -263,10 +268,10 @@ jobs:
   # Only a run that reaches a store is checked: a recovery dispatch that rebuilds
   # package channels must not be refused by its own tag's open rollout. The Play
   # publish is gated by run_android (android-foss never reaches Play) and the
-  # Microsoft submission by run_windows.
+  # Microsoft submission by run_windows and run_msstore.
   rollout-preflight:
     needs: validate
-    if: ${{ always() && needs.validate.result == 'success' && needs.validate.outputs.rollout_mode == 'staged' && github.repository == 'dongdongbh/Mindwtr' && (github.event_name != 'workflow_dispatch' || inputs.run_android || inputs.run_windows) }}
+    if: ${{ always() && needs.validate.result == 'success' && needs.validate.outputs.rollout_mode == 'staged' && github.repository == 'dongdongbh/Mindwtr' && (github.event_name != 'workflow_dispatch' || inputs.run_android || (inputs.run_windows && inputs.run_msstore)) }}
     runs-on: ubuntu-latest
     name: Store Rollout Preflight
     timeout-minutes: 10
@@ -297,7 +302,7 @@ jobs:
       - name: Refuse a stable release while a production rollout is open
         env:
           CHECK_PLAY: ${{ github.event_name != 'workflow_dispatch' || inputs.run_android }}
-          CHECK_MSSTORE: ${{ github.event_name != 'workflow_dispatch' || inputs.run_windows }}
+          CHECK_MSSTORE: ${{ github.event_name != 'workflow_dispatch' || (inputs.run_windows && inputs.run_msstore) }}
           GOOGLE_PLAY_ACCESS_TOKEN: ${{ steps.play_auth.outputs.access_token }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
@@ -372,8 +377,8 @@ jobs:
       actions: read
     with:
       tag: ${{ needs.validate.outputs.tag }}
-      run_msstore_flight: ${{ vars.MSSTORE_FLIGHT_ID != '' }}
-      run_msstore: true
+      run_msstore_flight: ${{ vars.MSSTORE_FLIGHT_ID != '' && (github.event_name != 'workflow_dispatch' || inputs.run_msstore) }}
+      run_msstore: ${{ github.event_name != 'workflow_dispatch' || inputs.run_msstore }}
       rollout_mode: ${{ needs.validate.outputs.rollout_mode }}
       rollout_percentage: ${{ fromJSON(needs.validate.outputs.rollout_percentage) }}
     secrets: inherit

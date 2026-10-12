@@ -616,13 +616,14 @@ test("Android release centralizes Google Play edit transactions", () => {
   );
 });
 
-test("Google Play release notes extract the current version through the publication step", () => {
+test.each([false, true])("Google Play release notes extract the current version with blank separators=%p", (blankSeparators) => {
   const workflow = parse(readFileSync(".github/workflows/release-android.yml", "utf8"));
   const step = workflow.jobs.publish.steps.find(
     (entry) => entry.name === "Prepare Google Play release notes",
   );
   const version = JSON.parse(readFileSync("apps/mobile/app.json", "utf8")).expo.version;
-  const notes = readFileSync(`docs/release-notes/google-play/${version}.txt`, "utf8");
+  const sourceNotes = readFileSync(`docs/release-notes/google-play/${version}.txt`, "utf8");
+  const notes = blankSeparators ? sourceNotes.replace(/<\/[^>]+>\n/g, "$&\n") : sourceNotes;
   const dir = mkdtempSync(join(tmpdir(), "play-release-notes-"));
   try {
     mkdirSync(join(dir, "docs/release-notes/google-play"), { recursive: true });

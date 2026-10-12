@@ -18,7 +18,8 @@ test('stable policy is validated before publishing and forwarded to every produc
     expect(stable.jobs[job].with.rollout_mode).toBe('${{ needs.validate.outputs.rollout_mode }}');
     expect(stable.jobs[job].with.rollout_percentage).toBe('${{ fromJSON(needs.validate.outputs.rollout_percentage) }}');
   }
-  expect(stable.jobs.windows.with.run_msstore).toBe(true);
+  expect(inputs.run_msstore.default).toBe(true);
+  expect(stable.jobs.windows.with.run_msstore).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.run_msstore }}");
   for (const job of ['ios-appstore', 'macos-appstore']) {
     expect(stable.jobs[job].with.phased_release).toBe("${{ needs.validate.outputs.rollout_mode == 'staged' }}");
   }
@@ -50,7 +51,8 @@ test('an open production rollout fails the stable release before any build job',
     [{ run_linux: true, run_macos: true }, false],
     [{ run_update_packages: true }, false],
     [{ run_android: true }, true],
-    [{ run_windows: true }, true],
+    [{ run_windows: true, run_msstore: true }, true],
+    [{ run_windows: true, run_msstore: false }, false],
   ]) {
     expect(selected({ event_name: 'workflow_dispatch', repository }, dispatched, needs)).toBe(expected);
   }
@@ -58,6 +60,7 @@ test('an open production rollout fails the stable release before any build job',
   const check = preflight.steps.at(-1);
   expect(check.env.CHECK_PLAY).toContain('inputs.run_android');
   expect(check.env.CHECK_MSSTORE).toContain('inputs.run_windows');
+  expect(check.env.CHECK_MSSTORE).toContain('inputs.run_msstore');
   expect(check.run).toContain('if [ "${CHECK_PLAY:-}" != "true" ]');
   expect(check.run).toContain('if [ "${CHECK_MSSTORE:-}" != "true" ]');
   expect(check.run).toContain('--action status');
@@ -78,6 +81,31 @@ test('an open production rollout fails the stable release before any build job',
     expect(stable.jobs[job].if).toContain(
       "(needs['rollout-preflight'].result == 'success' || needs['rollout-preflight'].result == 'skipped')",
     );
+  }
+});
+
+test('Windows artifact recovery can leave an accepted Store submission and flight intact', () => {
+  const stable = workflow('release');
+  const evaluate = (expression, event_name, run_msstore) => new Function(
+    'github', 'inputs', 'vars',
+    `return Boolean(${expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '')})`,
+  )({ event_name }, { run_windows: true, run_msstore }, { MSSTORE_FLIGHT_ID: 'existing-flight' });
+  for (const [event, selected, expected] of [
+    ['push', false, true],
+    ['workflow_dispatch', true, true],
+    ['workflow_dispatch', false, false],
+  ]) {
+    expect(evaluate(stable.jobs.windows.with.run_msstore, event, selected)).toBe(expected);
+    expect(evaluate(stable.jobs.windows.with.run_msstore_flight, event, selected)).toBe(expected);
+    const preflight = stable.jobs['rollout-preflight'].steps.at(-1);
+    expect(evaluate(preflight.env.CHECK_MSSTORE, event, selected)).toBe(expected);
+  }
+  const windows = workflow('release-windows').jobs.standalone.steps;
+  const resolve = windows.find((step) => step.id === 'version');
+  expect(resolve.env.RUN_MSSTORE).toBe('${{ inputs.run_msstore }}');
+  expect(resolve.run).toContain("-or $env:RUN_MSSTORE -eq 'true'");
+  for (const name of ['Check Microsoft Store submission status', 'Publish to Microsoft Store (metadata + package)']) {
+    expect(windows.find((step) => step.name === name).if).toContain("steps.version.outputs.store_stable == 'true'");
   }
 });
 
