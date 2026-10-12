@@ -616,6 +616,36 @@ test("Android release centralizes Google Play edit transactions", () => {
   );
 });
 
+test("Google Play release notes extract the current version through the publication step", () => {
+  const workflow = parse(readFileSync(".github/workflows/release-android.yml", "utf8"));
+  const step = workflow.jobs.publish.steps.find(
+    (entry) => entry.name === "Prepare Google Play release notes",
+  );
+  const version = JSON.parse(readFileSync("apps/mobile/app.json", "utf8")).expo.version;
+  const notes = readFileSync(`docs/release-notes/google-play/${version}.txt`, "utf8");
+  const dir = mkdtempSync(join(tmpdir(), "play-release-notes-"));
+  try {
+    mkdirSync(join(dir, "docs/release-notes/google-play"), { recursive: true });
+    writeFileSync(join(dir, `docs/release-notes/google-play/${version}.txt`), notes);
+    execFileSync("bash", ["-c", step.run.replace("${{ needs.preflight.outputs.version }}", version)], {
+      cwd: dir,
+      stdio: "pipe",
+    });
+    const output = join(dir, "apps/mobile/build/play-release-notes");
+    const locales = ["de-DE", "en-US", "es-ES", "fr-FR", "zh-CN"];
+    expect(readdirSync(output).sort()).toEqual(locales.map((locale) => `whatsnew-${locale}`));
+    for (const locale of locales) {
+      const source = notes.match(new RegExp(`<${locale}>\\n([\\s\\S]*?)\\n</${locale}>`))[1].trim();
+      const extracted = readFileSync(join(output, `whatsnew-${locale}`), "utf8").trim();
+      expect(extracted).toBe(source);
+      expect(extracted.length).toBeGreaterThan(0);
+      expect(extracted.length).toBeLessThanOrEqual(500);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Android Play tracks share the standard AAB and versionCode", () => {
   const text = readFileSync(".github/workflows/release-android.yml", "utf8");
   const workflow = parse(text);
