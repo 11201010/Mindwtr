@@ -220,13 +220,18 @@ test('rollout workflow schedules one automatic stage per day and retains explici
   }
 });
 
-test('automatic rollout keeps a stable release at 5% until it is 24 hours old', () => {
+test('automatic rollout waits for the newest stable release and its first 24 hours', () => {
   const gate = workflow('rollout').jobs['promotion-gate'].steps.find((step) => step.id === 'age');
   const directory = mkdtempSync(join(tmpdir(), 'mindwtr-rollout-age-'));
   try {
-    writeFileSync(join(directory, 'gh'), '#!/bin/sh\nprintf "%s\\n" "$MOCK_PUBLISHED_AT"\n', { mode: 0o755 });
-    for (const [hours, ready] of [[23, false], [25, true]]) {
-      const outputPath = join(directory, `${hours}.txt`);
+    writeFileSync(join(directory, 'gh'), `#!/bin/sh
+case "$2" in
+  */git/matching-refs/tags/v) printf '%s\\n' "$MOCK_STABLE_TAGS" ;;
+  *) if [ "$4" = .tag_name ]; then printf 'v1.3.5\\n'; else printf '%s\\n' "$MOCK_PUBLISHED_AT"; fi ;;
+esac
+`, { mode: 0o755 });
+    for (const [hours, tags, ready] of [[23, 'v1.3.5', false], [25, 'v1.3.5', true], [25, 'v1.3.10\nv1.3.9\nv1.3.5', false]]) {
+      const outputPath = join(directory, `${hours}-${ready}.txt`);
       const result = spawnSync('bash', ['-e', '-c', gate.run], {
         encoding: 'utf8',
         env: {
@@ -236,10 +241,12 @@ test('automatic rollout keeps a stable release at 5% until it is 24 hours old', 
           GITHUB_REPOSITORY: 'dongdongbh/Mindwtr',
           GITHUB_OUTPUT: outputPath,
           MOCK_PUBLISHED_AT: new Date(Date.now() - hours * 60 * 60 * 1000).toISOString(),
+          MOCK_STABLE_TAGS: tags,
         },
       });
       expect(result.status).toBe(0);
       expect(readFileSync(outputPath, 'utf8')).toContain(`ready=${ready}\n`);
+      if (tags.includes('v1.3.10')) expect(result.stdout).toContain('Stable tag v1.3.10 has not published');
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });

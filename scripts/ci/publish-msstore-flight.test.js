@@ -162,7 +162,7 @@ test('RC defaults enable only the flight; stable refreshes the configured tester
   expect(enabled({ event_name: 'push' }, {})).toBe(true);
   expect(enabled({ event_name: 'workflow_dispatch' }, { run_msstore_flight: true })).toBe(true);
   expect(enabled({ event_name: 'workflow_dispatch' }, { run_msstore_flight: false })).toBe(false);
-  expect(stable.jobs.windows.with.run_msstore_flight).toBe("${{ vars.MSSTORE_FLIGHT_ID != '' }}");
+  expect(stable.jobs.windows.with.run_msstore_flight).toBe("${{ vars.MSSTORE_FLIGHT_ID != '' && (github.event_name != 'workflow_dispatch' || inputs.run_msstore) }}");
   for (const trigger of ['workflow_call', 'workflow_dispatch']) expect(windows.on[trigger].inputs.run_msstore_flight.default).toBe(false);
   const steps = windows.jobs.standalone.steps;
   const install = steps.find(step => step.name === 'Install dependencies').run;
