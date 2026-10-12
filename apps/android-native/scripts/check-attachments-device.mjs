@@ -411,7 +411,8 @@ try {
     check(!viewer.includes(PKG), `(3) Open handed the PDF to another app (${viewer.replace(/.*u0 /, '').split(' ')[0]})`);
     await backToApp();
 
-    // (4) Remove the link, Save: soft-deleted.
+    // (4) Remove the link, Save: soft-deleted. The link is the third row, below the fold once the editor is long.
+    await reveal((current) => withDescription(current, linkRow(names.link)), 'link row', false);
     nodes = await screen();
     const linkTitle = withDescription(nodes, linkRow(names.link)) ?? fail('no link row');
     const [, lt, , lb] = box(linkTitle);
