@@ -7,6 +7,7 @@ import {
     type FocusDateLookup,
 } from './task-utils';
 import { formatFocusTaskLimitText } from './focus-utils';
+import { isTaskCountedAsFocused } from './store-helpers';
 import { tFallback } from './i18n';
 import { isTaskActionable } from './task-status';
 import { taskDraftToUpdatePatch, type TaskDraft } from './task-draft';
@@ -193,6 +194,33 @@ export function resolveTaskFocusCreation(
         isFocusedToday: true,
         outcome: 'focused',
     };
+}
+
+export type TaskFocusUpdateDecision =
+    | { outcome: 'unchanged' | 'focused' | 'queued' }
+    | { outcome: 'refused-limit'; message: string };
+
+/**
+ * Decide whether a normalized task update may take a Focus slot. Any write
+ * that makes the task newly count as Focus takes one, refused at the cap: a
+ * new star, and also clearing or moving the future start of a queued star. A
+ * new star on a later-day start is queued and takes no slot. Writers keep
+ * their own count source, error shape, and logs.
+ */
+export function resolveTaskFocusUpdate(
+    before: Task,
+    after: Task,
+    context: { focusedCount: number; focusTaskLimit: number; now: Date },
+): TaskFocusUpdateDecision {
+    if (!isTaskCountedAsFocused(before, context.now) && isTaskCountedAsFocused(after, context.now)) {
+        return context.focusedCount >= context.focusTaskLimit
+            ? { outcome: 'refused-limit', message: `Focus limit of ${context.focusTaskLimit} reached` }
+            : { outcome: 'focused' };
+    }
+    return before.isFocusedToday !== true && after.isFocusedToday === true
+        && isTaskFutureFocusCandidate(after, context.now)
+        ? { outcome: 'queued' }
+        : { outcome: 'unchanged' };
 }
 
 /** Quick-add capture star: no task exists yet, only the cap applies. */

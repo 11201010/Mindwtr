@@ -7,6 +7,7 @@ import {
     resolveFocusStarAction,
     resolveTaskEditorFocusStar,
     resolveTaskFocusCreation,
+    resolveTaskFocusUpdate,
     type FocusStarContext,
 } from './focus-star';
 
@@ -221,5 +222,40 @@ describe('resolveTaskFocusCreation', () => {
                 outcome: 'focused',
             });
         }
+    });
+});
+
+describe('resolveTaskFocusUpdate', () => {
+    const now = new Date();
+    const update = (before: Partial<Task>, after: Partial<Task>, focusedCount: number, focusTaskLimit = 3) =>
+        resolveTaskFocusUpdate(makeTask(before), makeTask({ ...before, ...after }), { focusedCount, focusTaskLimit, now });
+
+    it('admits a new star below the cap and refuses it at the configured cap', () => {
+        expect(update({}, { isFocusedToday: true }, 2)).toEqual({ outcome: 'focused' });
+        expect(update({}, { isFocusedToday: true }, 3)).toEqual({ outcome: 'refused-limit', message: 'Focus limit of 3 reached' });
+        expect(update({}, { isFocusedToday: true }, 5, 5)).toEqual({ outcome: 'refused-limit', message: 'Focus limit of 5 reached' });
+        expect(update({ status: 'inbox' }, { status: 'next', isFocusedToday: true }, 0, 1)).toEqual({ outcome: 'focused' });
+    });
+
+    it('leaves existing stars, removed stars, and uncounted statuses alone at the cap', () => {
+        expect(update({ isFocusedToday: true }, { title: 'Edited' }, 3)).toEqual({ outcome: 'unchanged' });
+        expect(update({ isFocusedToday: true }, { isFocusedToday: false }, 3)).toEqual({ outcome: 'unchanged' });
+        for (const status of ['done', 'reference', 'archived'] as const) {
+            expect(update({ status }, { isFocusedToday: true }, 3)).toEqual({ outcome: 'unchanged' });
+        }
+        expect(update({ deletedAt: '2026-01-01T00:00:00.000Z' }, { isFocusedToday: true }, 3)).toEqual({ outcome: 'unchanged' });
+    });
+
+    it('queues a later-day star and takes a slot when a queued star becomes current', () => {
+        expect(update({ startTime: '2099-01-01' }, { isFocusedToday: true }, 3)).toEqual({ outcome: 'queued' });
+        expect(update({ startTime: '2099-01-01', isFocusedToday: true }, { startTime: undefined }, 1, 1))
+            .toEqual({ outcome: 'refused-limit', message: 'Focus limit of 1 reached' });
+        expect(update({ startTime: '2099-01-01', isFocusedToday: true }, { startTime: undefined }, 0, 1))
+            .toEqual({ outcome: 'focused' });
+    });
+
+    it('counts a review-due waiting star like any other star', () => {
+        expect(update({ status: 'waiting', reviewAt: '2020-01-01' }, { isFocusedToday: true }, 2)).toEqual({ outcome: 'focused' });
+        expect(update({ status: 'waiting', reviewAt: '2020-01-01' }, { isFocusedToday: true }, 3).outcome).toBe('refused-limit');
     });
 });
