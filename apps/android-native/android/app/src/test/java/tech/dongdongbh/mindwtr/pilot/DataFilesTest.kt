@@ -70,40 +70,36 @@ class DataFilesTest {
     }
 
     private val record get() = File(folder.root, "export-pending.json")
-    private fun listed() = if (record.isFile) JSONObject(record.readText()).getJSONArray("pending").let { list -> List(list.length()) { list.getString(it) } } else emptyList()
+    private val tree = "content://tree/primary%3ADownload"
+    private fun listed() = if (record.isFile) JSONObject(record.readText()).getJSONArray("pending").let { list ->
+        List(list.length()) { list.getJSONObject(it).let { entry -> entry.optString("uri").ifEmpty { "name:" + entry.optString("name") } } }
+    } else emptyList()
+    /** The production writer with this test's folder: [create] makes the document, the rest as given. */
+    private fun export(name: String, create: () -> String, write: (String) -> Unit = {}, delete: (String) -> Boolean = { true }, exists: (String) -> Boolean? = { true }) =
+        writeExportDocument(record, tree, name, create, write, delete, exists)
+    /** A later process's start: it cleans what this one listed. */
+    private fun nextStart(delete: (String) -> Boolean = { true }, exists: (String) -> Boolean? = { true }, find: (String, String) -> String? = { _, _ -> null }) =
+        cleanupExportRecord(record, delete, exists, find, owner = "next-start")
+
+    @Test fun theDocumentIsListedBeforeItExistsAndWhileItIsWritten() {
+        export("b.json", create = { assertEquals(listOf("name:b.json"), listed()); "content://doc/1" }, write = { assertEquals(listOf("content://doc/1"), listed()) })
+        assertTrue(listed().isEmpty())
+        assertNull(nextStart(delete = { error("nothing to clean") }))
+    }
 
     @Test fun aFailedFolderWriteDeletesTheDocumentItCreated() {
         val deleted = mutableListOf<String>()
-        val failure = runCatching {
-            writeExportDocument(record, create = { "content://doc/1" }, write = { assertEquals(listOf("content://doc/1"), listed()); throw IOException("provider") },
-                delete = { deleted += it; true }, exists = { true })
-        }.exceptionOrNull()
+        val failure = runCatching { export("b.json", create = { "content://doc/1" }, write = { throw IOException("provider") }, delete = { deleted += it; true }) }.exceptionOrNull()
         assertTrue(failure is IOException)
         assertEquals(listOf("content://doc/1"), deleted)
         assertTrue(listed().isEmpty())
-    }
-
-    @Test fun aRefusedCreateLeavesNothingToDelete() {
-        val deleted = mutableListOf<String>()
-        assertTrue(runCatching { writeExportDocument(record, create = { throw IOException("refused") }, write = {}, delete = { deleted += it; true }, exists = { true }) }.isFailure)
-        assertTrue(deleted.isEmpty())
-        assertFalse(record.exists())
-    }
-
-    @Test fun aCompletedWriteLeavesNothingListed() {
-        writeExportDocument(record, create = { "content://doc/2" }, write = {}, delete = { error("not deleted") }, exists = { true })
-        assertFalse(record.exists())
-        assertNull(cleanupExportRecord(record, delete = { error("nothing to clean") }, exists = { true }))
     }
 
     // D1a review P1-3: a finished document whose URI cannot leave the list is deleted now and the export fails; no later start
     // deletes a backup this export reported as written.
     @Test fun aFinishedWriteWhoseRecordCannotChangeFailsInsteadOfLeavingATrap() {
         val deleted = mutableListOf<String>()
-        val failure = runCatching {
-            writeExportDocument(record, create = { "content://doc/5" }, write = { folder.root.setWritable(false) },
-                delete = { deleted += it; true }, exists = { true })
-        }.exceptionOrNull()
+        val failure = runCatching { export("b.json", create = { "content://doc/5" }, write = { folder.root.setWritable(false) }, delete = { deleted += it; true }) }.exceptionOrNull()
         folder.root.setWritable(true)
         assertTrue(failure is IOException)
         assertEquals(listOf("content://doc/5"), deleted)
@@ -112,34 +108,99 @@ class DataFilesTest {
     // D1a review P2-9: the record a death leaves is the production writer's own, taken at the moment of the death.
     @Test fun aDeathMidWriteIsCleanedAtTheNextStart() {
         val atDeath = File(folder.root, "at-death.json")
-        writeExportDocument(record, create = { "content://doc/3" }, write = { record.copyTo(atDeath) }, delete = { error("not deleted") }, exists = { true })
+        export("b.json", create = { "content://doc/3" }, write = { record.copyTo(atDeath) })
+        atDeath.copyTo(record, overwrite = true)
         val deleted = mutableListOf<String>()
-        assertEquals("deleted", cleanupExportRecord(atDeath, delete = { deleted += it; true }, exists = { true }))
+        assertEquals("deleted", nextStart(delete = { deleted += it; true }))
         assertEquals(listOf("content://doc/3"), deleted)
-        assertFalse(atDeath.exists())
+        assertTrue(listed().isEmpty())
+    }
+
+    // D1a review 2: the record an older build wrote, `{ uri }`, keeps its cleanup.
+    @Test fun theOlderOneDocumentRecordIsCleaned() {
+        record.writeText("{\"uri\":\"content://doc/old\"}")
+        val deleted = mutableListOf<String>()
+        assertEquals("deleted", nextStart(delete = { deleted += it; true }))
+        assertEquals(listOf("content://doc/old"), deleted)
+        assertTrue(listed().isEmpty())
     }
 
     // D1a review P2-4: a provider that refused or cannot say keeps the entry, through a later export, until the document is gone.
     @Test fun anEntryLeavesOnlyOnceItsDocumentIsGone() {
-        writeExportDocument(record, create = { "content://doc/half" }, write = { record.copyTo(File(folder.root, "keep.json")) }, delete = { true }, exists = { true })
-        File(folder.root, "keep.json").copyTo(record, overwrite = true)
-        assertEquals("kept", cleanupExportRecord(record, delete = { throw SecurityException("provider gone") }, exists = { null }))
-        assertEquals("kept", cleanupExportRecord(record, delete = { false }, exists = { true }))
-        writeExportDocument(record, create = { "content://doc/next" }, write = {}, delete = { true }, exists = { true })
+        val atDeath = File(folder.root, "at-death.json")
+        export("half.json", create = { "content://doc/half" }, write = { record.copyTo(atDeath) })
+        atDeath.copyTo(record, overwrite = true)
+        assertEquals("kept", nextStart(delete = { throw SecurityException("provider gone") }, exists = { null }))
+        assertEquals("kept", nextStart(delete = { false }, exists = { true }))
+        export("next.json", create = { "content://doc/next" })
         assertEquals(listOf("content://doc/half"), listed())
-        assertEquals("deleted", cleanupExportRecord(record, delete = { false }, exists = { false }))
+        assertEquals("deleted", nextStart(delete = { false }, exists = { false }))
         assertTrue(listed().isEmpty())
     }
 
-    // D1a review P2-4: the record cannot be written before the first byte; the created document goes at once.
-    @Test fun aRecordThatCannotBeWrittenDeletesTheNewDocument() {
-        val deleted = mutableListOf<String>()
+    // D1a review 2 (#4): the list cannot be written before the document exists, so nothing is created.
+    @Test fun noDocumentIsCreatedWhenItsEntryCannotBeListed() {
+        folder.root.setWritable(false)
+        val failure = runCatching { export("b.json", create = { error("never created") }) }.exceptionOrNull()
+        folder.root.setWritable(true)
+        assertTrue(failure is IOException)
+    }
+
+    // D1a review 2 (#4): created, then its URI cannot be listed and the provider refuses the delete: the entry by name stays, and
+    // the next start finds the document by its name and deletes it.
+    @Test fun aDocumentWhoseUriNeverReachedTheListIsFoundByName() {
         val failure = runCatching {
-            writeExportDocument(record, create = { folder.root.setWritable(false); "content://doc/6" }, write = { error("never written") },
-                delete = { deleted += it; true }, exists = { true })
+            export("lost.json", create = { folder.root.setWritable(false); "content://doc/lost" }, delete = { false }, exists = { true })
         }.exceptionOrNull()
         folder.root.setWritable(true)
         assertTrue(failure is IOException)
-        assertEquals(listOf("content://doc/6"), deleted)
+        assertEquals(listOf("name:lost.json"), listed())
+        val deleted = mutableListOf<String>()
+        assertEquals("deleted", nextStart(delete = { deleted += it; true }, find = { folderUri, name -> assertEquals(tree, folderUri); if (name == "lost.json") "content://doc/lost" else null }))
+        assertEquals(listOf("content://doc/lost"), deleted)
+        assertTrue(listed().isEmpty())
+    }
+
+    // An entry by name whose document was never created leaves at once; one whose folder cannot be listed stays.
+    @Test fun aNameEntryLeavesOnlyWhenTheFolderSaysSo() {
+        record.writeText(JSONObject().put("pending", org.json.JSONArray().put(JSONObject().put("tree", tree).put("name", "x.json"))).toString())
+        assertEquals("kept", nextStart(find = { _, _ -> throw IOException("cannot list") }))
+        assertEquals("deleted", nextStart(find = { _, _ -> null }))
+        assertTrue(listed().isEmpty())
+    }
+
+    // D1a review 2: a start's cleanup that read an empty list never writes over an export listed meanwhile.
+    @Test fun anEmptyCleanupLeavesAnExportListedMeanwhile() {
+        record.writeText("{\"pending\":[]}")
+        val writing = java.util.concurrent.CountDownLatch(1)
+        val export = Thread { export("busy.json", create = { "content://doc/busy" }, write = { writing.await(2, java.util.concurrent.TimeUnit.SECONDS) }) }
+        exportCleanupPause = {
+            export.start()
+            val deadline = System.currentTimeMillis() + 2_000
+            while (listed() != listOf("content://doc/busy") && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        }
+        try {
+            assertNull(nextStart())
+            assertEquals(listOf("content://doc/busy"), listed())
+        } finally {
+            exportCleanupPause = {}
+            writing.countDown()
+            export.join(2_000)
+        }
+    }
+
+    // This process's own entries belong to an export still running here: its start's cleanup leaves them.
+    @Test fun aCleanupNeverTouchesThisProcesssRunningExport() {
+        val writing = java.util.concurrent.CountDownLatch(1)
+        val listedNow = java.util.concurrent.CountDownLatch(1)
+        val export = Thread { export("busy.json", create = { "content://doc/busy" }, write = { listedNow.countDown(); writing.await(2, java.util.concurrent.TimeUnit.SECONDS) }) }.apply { start() }
+        try {
+            assertTrue(listedNow.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertNull(cleanupExportRecord(record, delete = { error("must not delete") }, exists = { true }, find = { _, _ -> null }))
+            assertEquals(listOf("content://doc/busy"), listed())
+        } finally {
+            writing.countDown()
+            export.join(2_000)
+        }
     }
 }

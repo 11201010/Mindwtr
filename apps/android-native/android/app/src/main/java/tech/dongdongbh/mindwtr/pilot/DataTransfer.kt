@@ -71,6 +71,16 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     private fun documentExists(uri: String): Boolean? = try {
         resolver.query(Uri.parse(uri), arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use { it.moveToFirst() }
     } catch (_: java.io.FileNotFoundException) { false } catch (_: Exception) { null }
+    /** The picked folder's document named [name], or null when it has none; throws when the folder cannot be listed. */
+    private fun findDocument(tree: String, name: String): String? {
+        val treeUri = Uri.parse(tree)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+        val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+        (resolver.query(children, columns, null, null, null) ?: throw IOException("The folder cannot be listed")).use { row ->
+            while (row.moveToNext()) if (row.getString(1) == name) return DocumentsContract.buildDocumentUriUsingTree(treeUri, row.getString(0)).toString()
+        }
+        return null
+    }
     val operations get() = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), snapshots, maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES)
 
     /** RN's backupAction: the running action ("export", "export:csv", "export:tasknotes", "restore", "merge", "snapshot:<name>"). */
@@ -151,7 +161,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     private fun writeToFolder(tree: Uri, name: String, mime: String, bytes: ByteArray) {
         runCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        writeExportDocument(exportPending,
+        writeExportDocument(exportPending, tree.toString(), name,
             create = { (DocumentsContract.createDocument(resolver, parent, mime, name) ?: throw IOException("The folder refused the new file")).toString() },
             write = { uri ->
                 if (debugProperty("backup_stop") == "mid-export") {
@@ -344,7 +354,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */
     private fun cleanupInterruptedExport(runtime: CoreHost) {
-        val outcome = cleanupExportRecord(exportPending, ::deleteDocument, ::documentExists) ?: return
+        val outcome = cleanupExportRecord(exportPending, ::deleteDocument, ::documentExists, ::findDocument) ?: return
         runtime.logLine("Native Android interrupted export removed releaseCheck=v1.3.5/android-export-cleanup", JSONObject().put("releaseCheck", "v1.3.5/android-export-cleanup").put("outcome", outcome))
     }
 
@@ -413,25 +423,46 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 }
 
 /**
- * The folder documents whose write has not closed (RN's export-pending.json): `{ "pending": [uri…] }`, replaced through a synced
- * pending file and a rename. A URI is listed before the document's first byte and leaves once its write closed, or once a
- * cleanup found the document gone. Each change reads and writes under one lock, so a start's cleanup and an export never drop
- * each other's entries.
+ * The folder documents whose write has not closed (RN's export-pending.json): `{ "pending": [entry…] }`, an entry `{ uri }` or,
+ * before the document exists, `{ tree, name }`, each with the process that listed it. The list is replaced through a synced
+ * pending file and a rename; each change reads and writes under one lock, so a start's cleanup and an export never drop each
+ * other's entries. The older one-document record `{ uri }` is read too.
  */
 private object ExportRecordLock
 
-private fun exportPendingUris(record: File): List<String> = runCatching {
-    val list = JSONObject(record.readText()).getJSONArray("pending")
-    List(list.length()) { list.getString(it) }
+internal data class ExportEntry(val uri: String? = null, val tree: String? = null, val name: String? = null, val owner: String? = null) {
+    fun json(): JSONObject = JSONObject().apply { uri?.let { put("uri", it) }; tree?.let { put("tree", it) }; name?.let { put("name", it) }; owner?.let { put("owner", it) } }
+}
+
+/** This process's entries: a start's cleanup never touches an export still running in it. */
+internal val EXPORT_OWNER: String = UUID.randomUUID().toString()
+
+/** A test seam: runs in [cleanupExportRecord] after it read the list. */
+@Volatile internal var exportCleanupPause: () -> Unit = {}
+
+private fun exportEntries(record: File): List<ExportEntry> = runCatching {
+    val parsed = JSONObject(record.readText())
+    if (parsed.has("uri")) return@runCatching listOf(ExportEntry(uri = parsed.getString("uri")))
+    val list = parsed.getJSONArray("pending")
+    List(list.length()) { index ->
+        when (val entry = list.get(index)) {
+            is String -> ExportEntry(uri = entry)
+            is JSONObject -> ExportEntry(entry.optString("uri").ifEmpty { null }, entry.optString("tree").ifEmpty { null },
+                entry.optString("name").ifEmpty { null }, entry.optString("owner").ifEmpty { null })
+            else -> null
+        }
+    }.filterNotNull().filter { it.uri != null || (it.tree != null && it.name != null) }
 }.getOrDefault(emptyList())
 
 /** [record]'s list after [change]; throws when it cannot be written (the caller then treats its write as failed). */
-private fun updateExportRecord(record: File, change: (List<String>) -> List<String>) {
+private fun updateExportRecord(record: File, change: (List<ExportEntry>) -> List<ExportEntry>) {
     synchronized(ExportRecordLock) {
-        val next = change(if (record.isFile) exportPendingUris(record) else emptyList())
-        if (next.isEmpty() && (!record.exists() || record.delete())) return
+        val next = change(if (record.isFile) exportEntries(record) else emptyList())
         val pending = File(record.parentFile, record.name + ".pending")
-        FileOutputStream(pending).use { out -> out.write(JSONObject().put("pending", org.json.JSONArray(next)).toString().toByteArray()); out.fd.sync() }
+        FileOutputStream(pending).use { out ->
+            out.write(JSONObject().put("pending", org.json.JSONArray(next.map { it.json() })).toString().toByteArray())
+            out.fd.sync()
+        }
         if (!pending.renameTo(record)) { pending.delete(); throw IOException("Cannot save the export record") }
     }
 }
@@ -441,33 +472,45 @@ private fun documentGone(uri: String, delete: (String) -> Boolean, exists: (Stri
     runCatching { delete(uri) }.getOrDefault(false) || runCatching { exists(uri) }.getOrNull() == false
 
 /**
- * RN's folder write with its guards: the created document's URI is listed (synced) in [record] before the first byte; a failed
- * write deletes the document (RN's 206366cce) before the failure goes on; a document whose URI cannot leave the list after its
- * write is deleted too and the export fails, so no later start deletes a backup this one reported as written. A URI leaves the
- * list only once its document is gone.
+ * RN's folder write with its guards. The folder and [name] are listed (synced) in [record] before the document exists, so a
+ * list that cannot be written stops the export before anything is created; then the document's URI before its first byte.
+ * A failed write deletes the document (RN's 206366cce) before the failure goes on; a document whose URI cannot leave the list
+ * after its write is deleted too and the export fails, so no later start deletes a backup this one reported as written. An
+ * entry leaves the list only once its document is gone; one left behind is the next start's to clean (by URI, or by name).
  */
-internal fun writeExportDocument(record: File, create: () -> String, write: (String) -> Unit, delete: (String) -> Boolean, exists: (String) -> Boolean?) {
+internal fun writeExportDocument(record: File, tree: String, name: String, create: () -> String, write: (String) -> Unit,
+                                 delete: (String) -> Boolean, exists: (String) -> Boolean?, owner: String = EXPORT_OWNER) {
+    val intent = ExportEntry(tree = tree, name = name, owner = owner)
+    updateExportRecord(record) { it + intent }
     val created = create()
+    val listed = ExportEntry(uri = created, owner = owner)
     try {
-        updateExportRecord(record) { it + created }
+        updateExportRecord(record) { it - intent + listed }
         write(created)
-        updateExportRecord(record) { it - created }
+        updateExportRecord(record) { it - listed }
     } catch (failure: Throwable) {
-        if (documentGone(created, delete, exists)) runCatching { updateExportRecord(record) { it - created } }
+        if (documentGone(created, delete, exists)) runCatching { updateExportRecord(record) { it - intent - listed } }
         throw failure
     }
 }
 
 /**
- * At start: each listed document (a death mid-write) is deleted, and leaves the list once it is gone; one the provider refused
- * stays for the next start. "deleted", "kept" (some stay), or null (nothing listed).
+ * At start: each document an earlier process listed (a death mid-export) is deleted (found by name when its URI was never
+ * listed), and its entry leaves once it is gone; one the provider refused stays for the next start. An empty list is left as
+ * it is: an export may list its document meanwhile. "deleted", "kept" (some stay), or null (nothing listed).
  */
-internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exists: (String) -> Boolean?): String? {
-    val listed = if (record.isFile) exportPendingUris(record) else emptyList()
-    if (listed.isEmpty()) { if (record.exists()) runCatching { updateExportRecord(record) { emptyList() } }; return null }
+internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exists: (String) -> Boolean?,
+                                 find: (tree: String, name: String) -> String?, owner: String = EXPORT_OWNER): String? {
+    val listed = synchronized(ExportRecordLock) { if (record.isFile) exportEntries(record) else emptyList() }.filter { it.owner != owner }
+    exportCleanupPause()
+    if (listed.isEmpty()) return null
     var kept = 0
-    for (uri in listed) {
-        if (documentGone(uri, delete, exists)) runCatching { updateExportRecord(record) { it - uri } }.onFailure { kept += 1 } else kept += 1
+    for (entry in listed) {
+        val gone = try {
+            val uri = entry.uri ?: find(entry.tree!!, entry.name!!)
+            uri == null || documentGone(uri, delete, exists)
+        } catch (_: Exception) { false }
+        if (gone) runCatching { updateExportRecord(record) { it - entry } }.onFailure { kept += 1 } else kept += 1
     }
     return if (kept > 0) "kept" else "deleted"
 }
