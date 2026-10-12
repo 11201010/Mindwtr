@@ -1,11 +1,18 @@
 import React from 'react';
 import { Platform, Text, TextInput, View } from 'react-native';
-import { act, create } from 'react-test-renderer';
+import { act, create as createRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useTaskStore } from '@mindwtr/core';
 
 import { TaskEditContentField } from './TaskEditContentField';
+
+const renderedTrees: ReturnType<typeof createRenderer>[] = [];
+const create = (...args: Parameters<typeof createRenderer>) => {
+  const tree = createRenderer(...args);
+  renderedTrees.push(tree);
+  return tree;
+};
 
 const mockFindNodeHandle = vi.hoisted(() => vi.fn(() => 314));
 const logInfoMock = vi.hoisted(() => vi.fn(() => Promise.resolve(null)));
@@ -256,13 +263,24 @@ const createChecklistState = (checklist = [{ id: 'check-1', title: 'Item 1', isC
 
 describe('TaskEditContentField', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     logInfoMock.mockReset();
     logInfoMock.mockResolvedValue(null);
   });
 
   afterEach(() => {
-    useTaskStore.setState({ settings: {} });
-    vi.unstubAllGlobals();
+    try {
+      // Flush delayed caret restoration before Vitest closes the worker console RPC.
+      act(() => {
+        vi.runOnlyPendingTimers();
+        for (const tree of renderedTrees.splice(0)) tree.unmount();
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      useTaskStore.setState({ settings: {} });
+    }
   });
 
   it('exposes checklist state and uses semantic colors for a completed item', () => {
