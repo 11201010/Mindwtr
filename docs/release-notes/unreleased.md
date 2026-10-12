@@ -35,7 +35,7 @@ Changes collected since the latest stable release.
 
 - A repeating reminder replaces the task's earlier notification instead of adding a new one each time, on Android, iOS, and desktop. On Android, Snooze and Done work while the app is in the background, and Done stops the task's next repeat. (#1346, #1348)
 - Android sets reminders again after the phone restarts. (#1360)
-- Mobile reminders are more reliable. A task added while the app starts gets its reminder. Two reminders moved into the same minute both stay set. One refused alarm no longer stops the others. Repeating reminders are set again after a time zone change.
+- Mobile reminders are more reliable. A task added while the app starts gets its reminder. Two reminders set for the same minute both ring. One refused alarm no longer stops the others. Repeating reminders are set again after a time zone change.
 - On iOS, date pickers show a month calendar instead of a spinning wheel.
 - On iOS, removing Mindwtr's device calendar finishes after an interrupted attempt instead of staying stuck.
 - External calendar feeds larger than 20 MB are refused instead of loading without a limit.
@@ -53,7 +53,7 @@ Changes collected since the latest stable release.
 ### Sync, encryption, and privacy
 
 - Archive retention now waits until this device has synced in the current session. It also waits while the selected sync backend is disconnected. An old archived copy can no longer remove a task that another device restored or edited.
-- Desktop sync uploads attachment files only from Mindwtr's attachment folders, including the older shared attachment folder. On Windows and macOS, folder names are compared without regard to letter case.
+- Desktop sync uploads attachment files only from Mindwtr's attachment folders, so a shared sync folder cannot make it upload other files from the computer.
 - Desktop refuses to start a WebDAV encryption change on a server without strong ETags, with a clear message, before anything changes. Desktop encryption now runs through the same engine as mobile.
 - Mobile sync encryption setup is safer. Dropbox setup checks the new Dropbox folder for encrypted data, not the saved location. Switching to a clean folder works when the current folder is partly encrypted. A setup check that finishes after you chose Off no longer turns sync back on. Off is refused while an encryption change is unfinished, so the location stays saved for Retry. After Recheck, a location that another device encrypted is found and unlocked instead of blocked again.
 - Mobile attachment sync recovers in more cases. A partly encrypted folder seen once no longer delays attachment sync for every other location. Sync finishes an attachment download left from an earlier run, even when nothing else changed. A device with many removed attachments finishes cleanup and goes back to skipping unchanged data.
