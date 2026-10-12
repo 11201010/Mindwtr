@@ -30,7 +30,8 @@ if [ ! -x "${sdkmanager_bin}" ]; then
         archive_path="${temp_dir}/commandlinetools.zip"
         trap 'rm -rf "${temp_dir}"' EXIT
 
-        curl -fsSL "${archive_url}" -o "${archive_path}"
+        curl --http1.1 -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 30 --max-time 300 "${archive_url}" -o "${archive_path}"
         unzip -q -o "${archive_path}" -d "${temp_dir}"
 
         rm -rf "${cmdline_tools_dir}"
