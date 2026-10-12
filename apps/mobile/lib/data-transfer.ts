@@ -454,27 +454,59 @@ export const restoreLocalDataSnapshot = async (snapshotName: string): Promise<vo
     }
 };
 
-// A folder document whose write a process death cut short looks like a finished backup. Its URI is on disk before the first
-// byte and goes once the write closed; a record left over deletes that document at the next export or Data screen visit.
+// A folder document whose write a process death cut short looks like a finished backup. Its URI is listed on disk before the
+// first byte and leaves the list once the write closed; a URI still listed at the next export or Data screen visit is deleted.
+// An entry leaves only once its document is gone, so a provider that refused the delete keeps it for the next cleanup.
 const EXPORT_PENDING_FILE_NAME = 'export-pending.json';
 const exportPendingFile = (): File | null => {
     const baseUri = String(Paths.document?.uri ?? FileSystem.documentDirectory ?? '').trim().replace(/\/$/u, '');
     return baseUri ? new File(`${baseUri}/${EXPORT_PENDING_FILE_NAME}`) : null;
 };
 
+const readExportPending = (record: File): string[] => {
+    if (!record.exists) return [];
+    try {
+        const { pending } = JSON.parse(record.textSync()) as { pending?: unknown };
+        return Array.isArray(pending) ? pending.filter((uri): uri is string => typeof uri === 'string') : [];
+    } catch {
+        return [];
+    }
+};
+
+// Read and write with no await between them, so a cleanup and an export never drop each other's entries. Throws when the
+// list cannot be written: the caller then treats its write as failed.
+const updateExportPending = (change: (pending: string[]) => string[]): void => {
+    const record = exportPendingFile();
+    if (!record) return;
+    const next = change(readExportPending(record));
+    if (next.length === 0) {
+        if (!record.exists) return;
+        try {
+            record.delete();
+            return;
+        } catch {
+            // An empty list below says the same.
+        }
+    }
+    if (!record.exists) record.create({ intermediates: true, overwrite: true });
+    record.write(JSON.stringify({ pending: next }));
+};
+
 export const cleanupInterruptedBackupExport = async (): Promise<void> => {
     const record = exportPendingFile();
     if (!record?.exists) return;
-    try {
-        const { uri } = JSON.parse(await record.text()) as { uri?: unknown };
-        if (typeof uri === 'string' && uri.startsWith('content://') && StorageAccessFramework) {
-            await StorageAccessFramework.deleteAsync(uri, { idempotent: true });
-            void logInfo('Interrupted backup export removed', { scope: 'transfer', extra: { operation: 'exportBackup', releaseCheck: 'v1.3.5/mobile-export-cleanup' } });
+    for (const uri of readExportPending(record)) {
+        try {
+            if (uri.startsWith('content://') && StorageAccessFramework) {
+                await StorageAccessFramework.deleteAsync(uri, { idempotent: true });
+                void logInfo('Interrupted backup export removed', { scope: 'transfer', extra: { operation: 'exportBackup', releaseCheck: 'v1.3.5/mobile-export-cleanup' } });
+            }
+            updateExportPending((pending) => pending.filter((entry) => entry !== uri));
+        } catch (error) {
+            // The entry stays: the next cleanup tries again.
+            void logError(error, { scope: 'transfer', extra: { operation: 'exportBackup' } });
         }
-    } catch (error) {
-        void logError(error, { scope: 'transfer', extra: { operation: 'exportBackup' } });
     }
-    try { record.delete(); } catch { /* the next cleanup tries again */ }
 };
 
 // One export path for both formats: the SAF/sharing dance below is identical,
@@ -520,9 +552,7 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                         mimeType
                     );
                     createdFileUri = fileUri;
-                    const pendingRecord = exportPendingFile();
-                    pendingRecord?.create({ intermediates: true, overwrite: true });
-                    pendingRecord?.write(JSON.stringify({ uri: fileUri }));
+                    updateExportPending((pending) => [...pending, fileUri]);
                     if (base64Content !== null) {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, base64Content, {
                             encoding: FileSystem.EncodingType.Base64,
@@ -530,12 +560,8 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                     } else {
                         await StorageAccessFramework.writeAsStringAsync(fileUri, jsonContent);
                     }
-                    try {
-                        pendingRecord?.delete();
-                    } catch (recordError) {
-                        // ponytail: a record that cannot be deleted makes the next cleanup remove this finished file too.
-                        void logError(recordError, { scope: 'transfer', extra: { operation: 'exportBackup' } });
-                    }
+                    // A list that cannot be updated fails the export: its document goes below, never later by surprise.
+                    updateExportPending((pending) => pending.filter((entry) => entry !== fileUri));
                     void logInfo('Backup export complete', {
                         scope: 'transfer',
                         extra: {
@@ -555,7 +581,8 @@ export const exportCurrentDataBackup = async (data: AppData, format: 'json' | 'c
                 if (createdFileUri) {
                     try {
                         await StorageAccessFramework.deleteAsync(createdFileUri, { idempotent: true });
-                        exportPendingFile()?.delete();
+                        const removed = createdFileUri;
+                        updateExportPending((pending) => pending.filter((entry) => entry !== removed));
                     } catch (cleanupError) {
                         void logError(cleanupError, { scope: 'transfer', extra: { operation: 'exportBackup' } });
                     }

@@ -40,6 +40,7 @@ const fileSystemMocks = vi.hoisted(() => ({
   fileReads: [] as string[],
   fileSizes: new Map<string, number>(),
   writeError: null as Error | null,
+  deleteError: null as Error | null,
   getInfoAsync: vi.fn(),
   readAsStringAsync: vi.fn(),
   writeAsStringAsync: vi.fn(),
@@ -118,7 +119,7 @@ vi.mock('expo-file-system', () => ({
 
     get exists() { return fileSystemMocks.fileContents.has(this.uri); }
     create() { fileSystemMocks.fileContents.set(this.uri, ''); }
-    delete() { fileSystemMocks.fileContents.delete(this.uri); }
+    delete() { if (fileSystemMocks.deleteError) throw fileSystemMocks.deleteError; fileSystemMocks.fileContents.delete(this.uri); }
     move(destination: { uri: string }) {
       const contents = fileSystemMocks.fileContents.get(this.uri) ?? '';
       fileSystemMocks.fileContents.delete(this.uri);
@@ -131,6 +132,7 @@ vi.mock('expo-file-system', () => ({
       fileSystemMocks.fileContents.set(this.uri, text);
     }
     async text() { fileSystemMocks.fileReads.push(this.uri); return fileSystemMocks.fileContents.get(this.uri) ?? '{}'; }
+    textSync() { return fileSystemMocks.fileContents.get(this.uri) ?? '{}'; }
     async bytes() { return new Uint8Array(); }
     get size() { return fileSystemMocks.fileSizes.get(this.uri) ?? (fileSystemMocks.fileContents.get(this.uri) ?? '').length; }
   },
@@ -183,6 +185,7 @@ describe('mobile data transfer', () => {
     fileSystemMocks.fileSizes.clear();
     fileSystemMocks.fileWrites = [];
     fileSystemMocks.writeError = null;
+    fileSystemMocks.deleteError = null;
     fileSystemMocks.readAsStringAsync.mockResolvedValue('');
     fileSystemMocks.getInfoAsync.mockResolvedValue({ exists: true, size: 1 });
     fileSystemMocks.writeAsStringAsync.mockResolvedValue(undefined);
@@ -281,13 +284,13 @@ describe('mobile data transfer', () => {
 
     await exportCurrentDataBackup(emptyData);
 
-    expect(JSON.parse(recordDuringWrite ?? '{}')).toEqual({ uri: fileUri });
+    expect(JSON.parse(recordDuringWrite ?? '{}')).toEqual({ pending: [fileUri] });
     expect(fileSystemMocks.fileContents.has('file://document/export-pending.json')).toBe(false);
   });
 
   it('deletes a folder document a process death left half written, then its record', async () => {
     const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
-    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ uri: fileUri }));
+    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ pending: [fileUri] }));
 
     await cleanupInterruptedBackupExport();
 
@@ -298,11 +301,48 @@ describe('mobile data transfer', () => {
   it('cleans an interrupted folder write before the next export', async () => {
     Platform.OS = 'android';
     const half = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
-    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ uri: half }));
+    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ pending: [half] }));
 
     await exportCurrentDataBackup(emptyData);
 
     expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenCalledWith(half, { idempotent: true });
+  });
+
+  // D1a review P1-3: a record that cannot be deleted after a finished write must not let the next cleanup delete that backup.
+  it('a finished folder write stays when its record cannot be deleted', async () => {
+    Platform.OS = 'android';
+    const fileUri = 'content://com.android.providers.downloads.documents/document/downloads%3AFinished.json';
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
+    fileSystemMocks.createSafFileAsync.mockResolvedValue(fileUri);
+    fileSystemMocks.writeSafFileAsync.mockImplementationOnce(async () => { fileSystemMocks.deleteError = new Error('record busy'); });
+
+    await exportCurrentDataBackup(emptyData);
+    fileSystemMocks.deleteError = null;
+    await cleanupInterruptedBackupExport();
+
+    expect(fileSystemMocks.deleteSafFileAsync).not.toHaveBeenCalledWith(fileUri, expect.anything());
+    expect(sharingMocks.shareAsync).not.toHaveBeenCalled();
+  });
+
+  // D1a review P2-4: a cleanup the provider refused keeps its entry, and a later export never replaces it.
+  it('keeps an interrupted write the provider could not delete, through the next export, until a cleanup succeeds', async () => {
+    Platform.OS = 'android';
+    const half = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
+    const next = 'content://com.android.providers.downloads.documents/document/downloads%3ANext.json';
+    fileSystemMocks.fileContents.set('file://document/export-pending.json', JSON.stringify({ pending: [half] }));
+    fileSystemMocks.deleteSafFileAsync.mockRejectedValueOnce(new Error('provider unavailable'));
+    await cleanupInterruptedBackupExport();
+    expect(JSON.parse(fileSystemMocks.fileContents.get('file://document/export-pending.json') ?? '{}')).toEqual({ pending: [half] });
+
+    fileSystemMocks.deleteSafFileAsync.mockRejectedValueOnce(new Error('provider unavailable'));
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
+    fileSystemMocks.createSafFileAsync.mockResolvedValue(next);
+    await exportCurrentDataBackup(emptyData);
+    expect(JSON.parse(fileSystemMocks.fileContents.get('file://document/export-pending.json') ?? '{}')).toEqual({ pending: [half] });
+
+    await cleanupInterruptedBackupExport();
+    expect(fileSystemMocks.deleteSafFileAsync).toHaveBeenLastCalledWith(half, { idempotent: true });
+    expect(fileSystemMocks.fileContents.has('file://document/export-pending.json')).toBe(false);
   });
 
   it('leaves nothing to remove when the folder permission is refused', async () => {
