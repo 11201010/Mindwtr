@@ -119,11 +119,15 @@ describe('WeeklyReviewGuideModal', () => {
     });
 
     it('honors calendar toggles and disabled sources when loading the calendar step', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 9, 11, 23, 30));
         const visibleRange = { start: new Date(), end: new Date() };
         const calendars = ['visible', 'feed', 'feed#category', 'macos:work', 'disabled'].map((id) => ({
             id, name: id, url: '', enabled: id !== 'disabled',
         }));
         const start = new Date();
+        // Keep the fixture on one calendar day even when CI runs near midnight.
+        start.setHours(12, 0, 0, 0);
         const end = new Date(start.getTime() + 60 * 60 * 1000);
         const events = calendars.map((calendar) => ({
             id: `${calendar.id}-event`, sourceId: calendar.id, title: `${calendar.id} appointment`,
