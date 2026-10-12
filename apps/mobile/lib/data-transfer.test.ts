@@ -505,6 +505,18 @@ describe('mobile data transfer', () => {
     }
   });
 
+  // D1a review 2 (P1): App Lock is this device's own (core 13c807f07); a restore keeps the enabled lock, whatever the file says.
+  it('a snapshot restore keeps this device\'s enabled App Lock', async () => {
+    const snapshotName = 'data.2026-08-08T12-00-00.000.snapshot.json';
+    fileSystemMocks.fileContents.set(`file://document/snapshots/${snapshotName}`, JSON.stringify({ ...emptyData, settings: { security: { mobileAppLockEnabled: false } } }));
+    storageMocks.getData.mockResolvedValue({ ...emptyData, settings: { security: { mobileAppLockEnabled: true } } });
+
+    await restoreLocalDataSnapshot(snapshotName);
+
+    const saved = storageMocks.saveData.mock.calls.at(-1)?.[0] as AppData;
+    expect(saved.settings.security).toEqual({ mobileAppLockEnabled: true });
+  });
+
   it('does not write a recovery snapshot from a stale local read', async () => {
     storageMocks.getData.mockImplementation(async () => {
       storeStateRef.current = {
