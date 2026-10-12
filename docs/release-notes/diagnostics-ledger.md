@@ -32,9 +32,7 @@ Convention: a release-specific line carries `extra.releaseCheck = "<version>/<sl
 
 - **flatpak-portal-once** — desktop `apps/desktop/src-tauri/src/portal_secrets.rs`, #1314. In 1.3.3 the Flatpak build asked the Secret portal on every credential read or write, each with a 30 s timeout, and every config read (including one on the main thread before the window opens) retries the plaintext-secret migration. A portal that never answered stalled startup for minutes and the data load timed out. Now the portal is asked once per launch, before the credential file lock, and that answer is reused; a failure falls back to plaintext until the next launch. Message: `Secret portal asked once for this session`; fields: `releaseCheck`, `outcome` (`answered` or `failed`), `elapsedMs`. Start the Flatpak with an existing Dropbox connection: the log must show this line exactly once per launch, and the data must load. `outcome=failed` with `elapsedMs` near 30000 is the reporter's hanging portal. No credential content, account names, or paths are logged. Retained as a general diagnostic after its issue closed.
 
-## v1.3.6
-
-The task-editor correction is confirmed by the visible disappearance of the error panel and normal task opening/closing; it adds no data writes or new diagnostic marker. Unconfirmed checks from v1.3.5 retain their original tags below.
+The v1.3.6 task-editor correction is confirmed by the visible disappearance of the error panel and normal task opening/closing; it adds no data writes or new diagnostic marker. Unconfirmed checks from v1.3.5 retain their original tags below.
 
 ## v1.3.5 (carried forward to v1.3.6, unconfirmed; keep original tags)
 
