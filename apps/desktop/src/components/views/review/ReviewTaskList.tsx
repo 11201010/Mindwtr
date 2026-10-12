@@ -9,6 +9,7 @@ type ReviewTaskListProps = {
     selectionMode: boolean;
     multiSelectedIds: Set<string>;
     highlightTaskId?: string | null;
+    highlightTaskAt?: number | null;
     onToggleSelect: (taskId: string, options?: RangeSelectionOptions) => void;
     emptyMessage?: string;
     t: (key: string) => string;
@@ -20,6 +21,7 @@ export function ReviewTaskList({
     selectionMode,
     multiSelectedIds,
     highlightTaskId,
+    highlightTaskAt,
     onToggleSelect,
     emptyMessage,
     t,
@@ -57,7 +59,7 @@ export function ReviewTaskList({
         }
         const timeout = window.setTimeout(scrollToHighlightedTask, 0);
         return () => window.clearTimeout(timeout);
-    }, [highlightTaskId, tasks, shouldVirtualize, rowVirtualizer]);
+    }, [highlightTaskAt, highlightTaskId, tasks, shouldVirtualize, rowVirtualizer]);
 
     if (tasks.length === 0) {
         return (
