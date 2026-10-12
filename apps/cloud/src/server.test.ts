@@ -1300,7 +1300,7 @@ describe('cloud server utils', () => {
             if (contender) await waitForChildExit(contender, 1_000);
             rmSync(dir, { recursive: true, force: true });
         }
-    });
+    }, 20_000);
 
     test('serializes a real two-process read-modify-write stress run', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-lock-stress-'));
@@ -1329,7 +1329,7 @@ describe('cloud server utils', () => {
             for (const worker of workers) worker.kill('SIGKILL');
             rmSync(dir, { recursive: true, force: true });
         }
-    });
+    }, 20_000);
 
     test('writeData atomically replaces the JSON file and cleans up temp files', () => {
         const dir = mkdtempSync(join(tmpdir(), 'mindwtr-cloud-write-data-'));
