@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { isArchiveRetentionDays, useTaskStore } from '@mindwtr/core';
 import { logError } from '@/lib/app-log';
-import { getMobileSyncConfigurationStatus } from '@/lib/sync-service';
+import { getMobileSelectedSyncBackend } from '@/lib/sync-service';
 
 export function useRootLayoutArchiveRetention(canonicalDataReady: boolean, disabled: boolean) {
     const days = useTaskStore((state) => {
@@ -17,10 +17,10 @@ export function useRootLayoutArchiveRetention(canonicalDataReady: boolean, disab
             if (running || AppState.currentState === 'background' || AppState.currentState === 'inactive'
                 || state.isLoading || state.error || state.editLockCount > 0) return;
             running = true;
-            // Any selected backend counts, even with missing or disconnected credentials: a purge made
-            // before this device syncs again would beat another device's restore. An unreadable
-            // configuration also counts as configured: waiting is the safe side (R-2).
-            void getMobileSyncConfigurationStatus().then((status) => status.backend !== 'off', () => true)
+            // Any selected backend counts, even with missing or disconnected credentials or a CloudKit
+            // choice this build cannot run: a purge made before this device syncs again would beat
+            // another device's restore. An unreadable configuration also counts: waiting is safe (R-2).
+            void getMobileSelectedSyncBackend().then((backend) => backend !== 'off', () => true)
                 .then((syncConfigured) => useTaskStore.getState().runArchiveRetention({ syncConfigured }))
                 .then((result) => {
                     if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app' });

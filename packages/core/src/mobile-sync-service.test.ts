@@ -255,6 +255,9 @@ describe('mobile sync service behind fake ports', () => {
     // CloudKit is iOS only: a host without it reads the stored backend as off.
     const cloudkit = createMobileSyncService(createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'cloudkit' } }).host);
     await expect(cloudkit.getMobileSyncConfigurationStatus()).resolves.toEqual({ backend: 'off', configured: false });
+    // The selection itself survives that check: archive retention must still wait for a sync (R-2).
+    await expect(cloudkit.getMobileSelectedSyncBackend()).resolves.toBe('cloudkit');
+    await expect(off.getMobileSelectedSyncBackend()).resolves.toBe('off');
   });
 
   it('runs a WebDAV cycle under the mindwtr-mobile fence and publishes the status', async () => {

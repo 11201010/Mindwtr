@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
     days: 0, loading: false, error: null as string | null, editLockCount: 0,
     run: vi.fn(async (_options: { syncConfigured: boolean }) => ({ success: true })),
-    syncStatus: vi.fn(async (): Promise<{ backend: string; configured: boolean; cloudProvider?: string }> => ({ backend: 'off', configured: false })),
+    selectedBackend: vi.fn(async (): Promise<string> => 'off'),
 }));
 vi.mock('@mindwtr/core', () => ({
     isArchiveRetentionDays: (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 36500,
@@ -16,7 +16,7 @@ vi.mock('@mindwtr/core', () => ({
     ),
 }));
 vi.mock('@/lib/app-log', () => ({ logError: vi.fn(async () => undefined) }));
-vi.mock('@/lib/sync-service', () => ({ getMobileSyncConfigurationStatus: harness.syncStatus }));
+vi.mock('@/lib/sync-service', () => ({ getMobileSelectedSyncBackend: harness.selectedBackend }));
 
 import { useRootLayoutArchiveRetention } from './use-root-layout-archive-retention';
 
@@ -31,7 +31,7 @@ describe('useRootLayoutArchiveRetention', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         harness.days = 0; harness.loading = false; harness.error = null; harness.editLockCount = 0; harness.run.mockClear();
-        harness.syncStatus.mockReset(); harness.syncStatus.mockResolvedValue({ backend: 'off', configured: false });
+        harness.selectedBackend.mockReset(); harness.selectedBackend.mockResolvedValue('off');
         Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
     });
     afterEach(() => {
@@ -71,7 +71,17 @@ describe('useRootLayoutArchiveRetention', () => {
     it('keeps waiting while the selected Dropbox backend is disconnected', async () => {
         vi.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: vi.fn() }));
         harness.days = 30;
-        harness.syncStatus.mockResolvedValue({ backend: 'cloud', cloudProvider: 'dropbox', configured: false });
+        harness.selectedBackend.mockResolvedValue('cloud');
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(<Probe ready disabled={false} />); });
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        await act(async () => tree.unmount());
+    });
+
+    it('keeps waiting for a selected CloudKit backend this build cannot run', async () => {
+        vi.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: vi.fn() }));
+        harness.days = 30;
+        harness.selectedBackend.mockResolvedValue('cloudkit');
         let tree!: renderer.ReactTestRenderer;
         await act(async () => { tree = renderer.create(<Probe ready disabled={false} />); });
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
@@ -85,15 +95,15 @@ describe('useRootLayoutArchiveRetention', () => {
             return { remove: vi.fn() };
         });
         harness.days = 30;
-        harness.syncStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+        harness.selectedBackend.mockResolvedValue('webdav');
         let tree!: renderer.ReactTestRenderer;
         await act(async () => { tree = renderer.create(<Probe ready disabled={false} />); });
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
-        harness.syncStatus.mockResolvedValue({ backend: 'off', configured: false });
+        harness.selectedBackend.mockResolvedValue('off');
         await act(async () => { listener?.('active'); });
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: false });
         // An unreadable sync configuration must not count as "sync is off".
-        harness.syncStatus.mockRejectedValue(new Error('config unavailable'));
+        harness.selectedBackend.mockRejectedValue(new Error('config unavailable'));
         await act(async () => { listener?.('active'); });
         expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
         expect(harness.run).toHaveBeenCalledTimes(3);

@@ -807,6 +807,14 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   const getSupportedBackend = (rawBackend: string | null): SyncBackend =>
     coerceSupportedBackend(resolveBackend(rawBackend), cloudKit.isAvailable());
 
+  /** The backend the user selected, before this host's capability check: a saved CloudKit choice stays
+   *  cloudkit when the bridge is missing. Archive retention waits for a sync while any backend is selected. */
+  async function getMobileSelectedSyncBackend(): Promise<SyncBackend> {
+    if (fatalCleanupError) throw fatalCleanupError;
+    if (core.isSandboxMode()) return 'off';
+    return resolveBackend((await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null);
+  }
+
   async function getMobileSyncConfigurationStatus(): Promise<{ backend: SyncBackend; configured: boolean; cloudProvider?: CloudProvider }> {
     if (fatalCleanupError) throw fatalCleanupError;
     if (core.isSandboxMode()) return { backend: 'off', configured: false };
@@ -2645,6 +2653,7 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   return {
     performMobileSync,
     getMobileSyncConfigurationStatus,
+    getMobileSelectedSyncBackend,
     getMobileSyncActivityState,
     subscribeMobileSyncActivityState,
     waitForMobileSyncIdle,
