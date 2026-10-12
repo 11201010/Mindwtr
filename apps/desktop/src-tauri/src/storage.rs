@@ -4622,7 +4622,13 @@ fn read_task_mutation_data(
     if scope.include_focus_context
         && (scope.task_id.is_none()
             || target.as_ref().is_some_and(|task| {
-                task.get("isFocusedToday").and_then(Value::as_bool) != Some(true)
+                task.as_object().is_some_and(|task| {
+                    !crate::local_api::local_api_task_is_counted_as_focused(
+                        task,
+                        now,
+                        &crate::local_query::local_wall,
+                    )
+                })
             }))
     {
         stats.statements += 1;

@@ -9,10 +9,7 @@
         "createdAt": "2026-10-01T00:00:00Z",
         "updatedAt": "2026-10-01T00:00:00Z"
     },
-    "knownRustDivergences": [
-        "clearing a queued start takes a slot and is refused at the cap",
-        "moving a queued start to the local today is refused at the cap"
-    ],
+    "knownRustDivergences": [],
     "cases": [
         {
             "name": "new star below the cap is admitted",

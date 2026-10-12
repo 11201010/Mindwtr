@@ -1190,13 +1190,7 @@ pub(crate) fn execute_operation(
         LocalOperation::PatchTask { id, body } => {
             let _guard = access.lock_write(write_lock)?;
             let is_triage = body.contains_key("status");
-            let scope = TaskMutationReadScope::patch(
-                &id,
-                body.get("projectId").and_then(Value::as_str),
-                body.get("sectionId").and_then(Value::as_str),
-                body.get("areaId").and_then(Value::as_str),
-                body.get("isFocusedToday").and_then(Value::as_bool) == Some(true),
-            );
+            let scope = task_patch_read_scope(&id, &body);
             let operation = LocalOperation::PatchTask {
                 id: id.clone(),
                 body,
@@ -2842,6 +2836,30 @@ fn reject_actionable_task_in_archived_project(
     Ok(())
 }
 
+fn task_patch_read_scope(task_id: &str, patch: &Map<String, Value>) -> TaskMutationReadScope {
+    TaskMutationReadScope::patch(
+        task_id,
+        patch.get("projectId").and_then(Value::as_str),
+        patch.get("sectionId").and_then(Value::as_str),
+        patch.get("areaId").and_then(Value::as_str),
+        patch.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
+            || [
+                "startTime",
+                "relativeStartOffset",
+                "status",
+                "dueDate",
+                "reviewAt",
+                "recurrence",
+                "projectId",
+                "sectionId",
+                "order",
+                "orderNum",
+            ]
+            .iter()
+            .any(|field| patch.contains_key(*field)),
+    )
+}
+
 pub(crate) fn patch_task_in_data(
     data: &mut Value,
     task_id: &str,
@@ -2867,6 +2885,7 @@ fn patch_task_in_data_at(
     let live_containers = LiveContainers::from_data(data);
     let current = find_task(data, task_id).ok_or("Task not found")?;
     let mut candidate = current.as_object().ok_or("Task is invalid")?.clone();
+    let was_counted = local_api_task_is_counted_as_focused(&candidate, now, local_wall);
     let star_turning_on = patch.get("isFocusedToday").and_then(Value::as_bool) == Some(true)
         && candidate.get("isFocusedToday").and_then(Value::as_bool) != Some(true);
     apply_task_patch_with_containers(&mut candidate, patch, &device_id, &live_containers)?;
@@ -2896,10 +2915,10 @@ fn patch_task_in_data_at(
         if queued && !patch.contains_key("focusOrder") {
             candidate.remove("focusOrder");
         }
+    }
+    if !was_counted && local_api_task_is_counted_as_focused(&candidate, now, local_wall) {
         let n = local_api_focus_task_limit(data);
-        if local_api_task_is_counted_as_focused(&candidate, now, local_wall)
-            && local_api_focused_task_count(data, now, local_wall) >= n
-        {
+        if local_api_focused_task_count(data, now, local_wall) >= n {
             log::warn!("Local API refused a Focus star over the limit extra.releaseCheck=v1.3.5/local-api-patch-focus-limit limit={n}");
             return Err(format!("Focus limit of {n} reached"));
         }
@@ -3906,7 +3925,7 @@ fn local_api_focus_task_limit(data: &Value) -> usize {
         .unwrap_or(3)
 }
 
-fn local_api_task_is_counted_as_focused(
+pub(crate) fn local_api_task_is_counted_as_focused(
     task: &Map<String, Value>,
     now: OffsetDateTime,
     local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
@@ -5475,6 +5494,59 @@ mod tests {
             assert_eq!(response.status, 409);
             assert_eq!(response.body["error"], "Focus limit of 3 reached");
             assert_eq!(read_sqlite_data(&conn).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn local_api_patch_focus_queued_start_refuses_atomically_with_scoped_count() {
+        use crate::storage::{
+            local_operation_test_commit, local_operation_test_seed, read_sqlite_data,
+        };
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut data = empty_local_api_data();
+        data["settings"] = json!({"deviceId": "device-a", "gtd": {"focusTaskLimit": 3}});
+        data["tasks"] = json!([
+            {"id": "focus-1", "title": "Focus", "status": "next", "isFocusedToday": true},
+            {"id": "focus-2", "title": "Focus", "status": "next", "isFocusedToday": true},
+            {"id": "focus-3", "title": "Focus", "status": "next", "isFocusedToday": true},
+            {"id": "queued", "title": "Queued", "status": "next", "isFocusedToday": true,
+             "startTime": "9999-12-31", "rev": 1}
+        ]);
+        local_operation_test_seed(&mut conn, &data).unwrap();
+        let before = read_sqlite_data(&conn).unwrap();
+        let now = OffsetDateTime::now_utc();
+        let today = crate::local_query::local_wall(now)
+            .map(|wall| wall.date())
+            .unwrap_or_else(|| now.date())
+            .to_string();
+        for patch in [json!({"startTime": null}), json!({"startTime": today})] {
+            let request = ApiRequest {
+                method: "PATCH".into(),
+                path: "/tasks/queued".into(),
+                query: HashMap::new(),
+                headers: HashMap::new(),
+                body: serde_json::to_vec(&patch).unwrap(),
+            };
+            let rest = operation_from_api_request(&request).unwrap().unwrap();
+            let mut input = patch.as_object().unwrap().clone();
+            input.insert("id".into(), json!("queued"));
+            let mcp = crate::mcp_tools::operation("mindwtr_update_task", &input).unwrap();
+            assert_eq!(rest, mcp);
+            for operation in [rest, mcp] {
+                let result = local_operation_test_commit(
+                    &conn,
+                    task_patch_read_scope("queued", patch.as_object().unwrap()),
+                    |data| {
+                        assert_eq!(
+                            data[TASK_MUTATION_FOCUSED_COUNT_KEY], 3,
+                            "queued PATCH must load the global Focus count"
+                        );
+                        mutate_task_operation(data, &operation)
+                    },
+                );
+                assert_eq!(result, Err("Focus limit of 3 reached".into()));
+                assert_eq!(read_sqlite_data(&conn).unwrap(), before);
+            }
         }
     }
 
