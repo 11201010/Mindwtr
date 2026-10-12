@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, ChevronDown, ChevronRight, Pencil, Check, X, ExternalLink } from 'lucide-react';
 import { buildPersonSearchQuery, DEFAULT_AREA_COLOR, formatI18nTemplate, getPersonNameKey, getPersonTaskCounts, sortViewSectionDefinitions, translateWithFallback, useTaskStore, type Area, type Person, type ViewSectionDefinition,
-    baseTextCollator, buildSomedaySectionsSettingsUpdate, isManageAreaNameTaken, orderSomedaySections, removeSomedaySection, renameSomedaySection,
+    baseTextCollator, buildSomedaySectionsSettingsUpdate, isManageAreaNameTaken, isSafePersonReferenceLink, orderSomedaySections, removeSomedaySection, renameSomedaySection,
 } from '@mindwtr/core';
 import { AreaColorPicker } from '../projects/AreaColorPicker';
 import { reportError } from '../../../lib/report-error';
@@ -19,19 +19,6 @@ type SettingsManagePageProps = {
     t: Labels;
     translate: (key: string) => string;
     requestConfirmation: (options: ConfirmationRequestOptions) => Promise<boolean>;
-};
-
-const SAFE_PERSON_REFERENCE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'obsidian:']);
-
-const isSafePersonReferenceLink = (value: string | undefined): value is string => {
-    const trimmed = value?.trim();
-    if (!trimmed) return false;
-    try {
-        const url = new URL(trimmed);
-        return SAFE_PERSON_REFERENCE_PROTOCOLS.has(url.protocol);
-    } catch {
-        return false;
-    }
 };
 
 // ---------------------------------------------------------------------------

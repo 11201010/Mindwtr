@@ -6,8 +6,8 @@ import {
     getCalendarDayOfMonth,
     getCalendarMonthIndex,
     getShortWeekdayLabels,
-    getTaskCalendarOccurrenceDate,
     getCalendarMonthItemTitle,
+    getProjectedRecurrenceDisplayLabel,
     hasTimeComponent,
     isProjectedRecurringTask,
     orderCalendarDayItemsForLimitedSlots,
@@ -51,7 +51,6 @@ import {
 import { useDesktopCalendarController } from './calendar/useDesktopCalendarController';
 import { getWorkspaceCache } from '../../lib/workspace-cache';
 
-const PROJECTED_RECURRENCE_LABEL_DATE_FORMAT = 'MMM d';
 const ALL_DAY_COLLAPSED_ROWS = 4;
 const CALENDAR_PLANNING_PANEL_COLLAPSED_KEY ='mindwtr.calendar.planningPanelCollapsed';
 
@@ -64,14 +63,6 @@ const readPlanningPanelCollapsedPreference = (): boolean => {
         return true;
     }
 };
-
-function getProjectedRecurrenceDisplayLabel(task: Task, projectedLabel: string): string {
-    const occurrenceDateLabel = safeFormatDate(
-        getTaskCalendarOccurrenceDate(task),
-        PROJECTED_RECURRENCE_LABEL_DATE_FORMAT
-    );
-    return occurrenceDateLabel ? `${projectedLabel} · ${occurrenceDateLabel}` : projectedLabel;
-}
 
 export function CalendarView() {
     const timelineScrollRef = useRef<HTMLDivElement | null>(null);
@@ -661,7 +652,7 @@ export function CalendarView() {
                                         const completed = item.kind === 'completed';
                                         const projected = isProjectedRecurringTask(task);
                                         const projectedLabel = projected
-                                            ? getProjectedRecurrenceDisplayLabel(task, resolveText('calendar.projectedRecurrence', 'Projected'))
+                                            ? getProjectedRecurrenceDisplayLabel(task, resolveText('calendar.projectedRecurrence', 'Projected'), safeFormatDate)
                                             : '';
                                         const content = (
                                             <>
@@ -809,7 +800,7 @@ export function CalendarView() {
                                             const completed = item.kind === 'completed';
                                             const projected = isProjectedRecurringTask(item.task);
                                             const projectedLabel = projected
-                                                ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'))
+                                                ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'), safeFormatDate)
                                                 : '';
                                             return (
                                                 <button
@@ -959,7 +950,7 @@ export function CalendarView() {
                                                 }
                                                 const projected = isProjectedRecurringTask(item.task);
                                                 const projectedLabel = projected
-                                                    ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'))
+                                                    ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'), safeFormatDate)
                                                     : '';
                                                 // Timed blocks read like macOS Calendar: a wash of the task's
                                                 // identity color behind theme-colored text, with the color
@@ -1073,7 +1064,7 @@ export function CalendarView() {
                                                 const completed = item.kind === 'completed';
                                                 const projected = isProjectedRecurringTask(item.task);
                                                 const projectedLabel = projected
-                                                    ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'))
+                                                    ? getProjectedRecurrenceDisplayLabel(item.task, resolveText('calendar.projectedRecurrence', 'Projected'), safeFormatDate)
                                                     : '';
                                                 return (
                                                     <button
