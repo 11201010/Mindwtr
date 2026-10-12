@@ -106,4 +106,24 @@ class BackupOperationsTest {
         File(snapshots, name).delete()
         assertTrue(refused { ops().publish(b, "merge", "{\"plan\":1}", name, recovery = TASKS) })
     }
+
+    // D1a review P2-6: A's clear checked its record, then B's operation wrote its own; A's delete must not take B's.
+    @Test fun clearingOneResultNeverDeletesANewerOneWrittenMeanwhile() {
+        ops().writeResult(JSONObject().put("requestId", a).put("outcome", "committed"))
+        val checked = java.util.concurrent.CountDownLatch(1)
+        val resume = java.util.concurrent.CountDownLatch(1)
+        BackupOperations.clearPause = { checked.countDown(); resume.await(2, java.util.concurrent.TimeUnit.SECONDS) }
+        try {
+            val clearing = Thread { ops().clearResult(a) }.apply { start() }
+            assertTrue(checked.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val writing = Thread { ops().writeResult(JSONObject().put("requestId", b).put("outcome", "committed")) }.apply { start() }
+            writing.join(300)
+            resume.countDown()
+            clearing.join(2_000)
+            writing.join(2_000)
+        } finally {
+            BackupOperations.clearPause = {}
+        }
+        assertEquals(b, ops().result()?.getString("requestId"))
+    }
 }

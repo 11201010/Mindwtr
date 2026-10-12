@@ -39,6 +39,11 @@ class BackupOperations(
         private const val MAX_RESULT_BYTES = 128 * 1024
         private val UUID = Regex("^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 
+        /** One result record writer or clearer at a time in the process, whichever instance it goes through. */
+        private val RESULT_LOCK = Any()
+        /** A test seam: runs inside [clearResult] between its check and its delete. */
+        @Volatile internal var clearPause: () -> Unit = {}
+
         fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     }
 
@@ -130,7 +135,7 @@ class BackupOperations(
     }
 
     /** The result record (`{ requestId, operation, outcome, reply, undoSnapshot }`), replacing the last one; synced. */
-    fun writeResult(record: JSONObject) {
+    fun writeResult(record: JSONObject): Unit = synchronized(RESULT_LOCK) {
         root.mkdirs()
         val bytes = record.toString().toByteArray()
         check(bytes.size <= MAX_RESULT_BYTES) { "Backup result too large" }
@@ -142,11 +147,14 @@ class BackupOperations(
     fun result(): JSONObject? = File(root, RESULT).takeIf { it.isFile && it.length() <= MAX_RESULT_BYTES }
         ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
 
-    /** The result of [requestId] was shown: its record goes (a newer operation's record stays). */
+    /** The result of [requestId] was shown: its record goes (a newer operation's record stays, even one written meanwhile). */
     fun clearResult(requestId: String) {
-        if (result()?.optString("requestId") != requestId) return
-        File(root, RESULT).delete()
-        runCatching { syncDirectory(root) }
+        synchronized(RESULT_LOCK) {
+            if (result()?.optString("requestId") != requestId) return
+            clearPause()
+            File(root, RESULT).delete()
+            runCatching { syncDirectory(root) }
+        }
     }
 
     private fun writeSynced(dir: File, name: String, bytes: ByteArray) {
