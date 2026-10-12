@@ -1,10 +1,9 @@
 import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { AREA_FILTER_NONE, projectMatchesAreaFilterSelection } from '@mindwtr/core';
-import type { Area, AreaFilterSelection, Project } from '@mindwtr/core';
+import type { Area, Project } from '@mindwtr/core';
 
-import { DeferredProjectsSection, selectDeferredProjects } from './deferred-projects-section';
+import { DeferredProjectsSection } from './deferred-projects-section';
 
 vi.mock('lucide-react-native', () => ({
   Folder: () => null,
@@ -37,67 +36,6 @@ const makeProject = (id: string, overrides: Partial<Project> = {}): Project => (
 
 const homeArea = { id: 'area-home', name: 'Home', order: 0 } as Area;
 const areaById = new Map<string, Area>([[homeArea.id, homeArea]]);
-
-// The predicate someday-view and waiting-view each carried, copied verbatim from
-// before the extraction. Comparing against this — rather than iterating the new
-// helper — is what catches the new one quietly accepting a different set.
-const legacySelectDeferredProjects = (
-  projects: Project[],
-  status: 'someday' | 'waiting',
-  resolvedAreaFilter: AreaFilterSelection,
-) => [...projects]
-  .filter((project) => (
-    !project.deletedAt
-    && project.status === status
-    && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
-  ))
-  .sort((a, b) => {
-    const aOrder = Number.isFinite(a.order) ? (a.order as number) : Number.POSITIVE_INFINITY;
-    const bOrder = Number.isFinite(b.order) ? (b.order as number) : Number.POSITIVE_INFINITY;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    return a.title.localeCompare(b.title);
-  });
-
-const candidates: Project[] = [
-  makeProject('someday-late', { order: 9, title: 'Zulu' }),
-  makeProject('someday-early', { order: 1 }),
-  makeProject('someday-unordered', { order: Number.NaN as unknown as number, title: 'Alpha' }),
-  makeProject('someday-unordered-2', { order: Number.NaN as unknown as number, title: 'Bravo' }),
-  makeProject('someday-deleted', { order: 0, deletedAt: '2026-07-01T00:00:00.000Z' }),
-  makeProject('someday-home', { order: 2, areaId: homeArea.id }),
-  makeProject('waiting-1', { status: 'waiting', order: 3 }),
-  makeProject('waiting-home', { status: 'waiting', order: 1, areaId: homeArea.id }),
-  makeProject('waiting-deleted', { status: 'waiting', order: 0, deletedAt: '2026-07-01T00:00:00.000Z' }),
-  makeProject('active-1', { status: 'active', order: 0 }),
-  makeProject('archived-1', { status: 'archived', order: 0 }),
-];
-
-describe('selectDeferredProjects', () => {
-  const filters: AreaFilterSelection[] = [
-    { included: [], excluded: [] },
-    { included: [AREA_FILTER_NONE], excluded: [] },
-    { included: [homeArea.id], excluded: [] },
-    { included: [], excluded: [homeArea.id] },
-  ];
-
-  it.each(['someday', 'waiting'] as const)('matches the old per-screen predicate for %s', (status) => {
-    for (const filter of filters) {
-      expect(selectDeferredProjects(candidates, status, filter, areaById).map((p) => p.id))
-        .toEqual(legacySelectDeferredProjects(candidates, status, filter).map((p) => p.id));
-    }
-  });
-
-  it('orders by order then title, with unordered projects last', () => {
-    const ids = selectDeferredProjects(candidates, 'someday', { included: [], excluded: [] }, areaById).map((p) => p.id);
-    expect(ids).toEqual([
-      'someday-early',
-      'someday-home',
-      'someday-late',
-      'someday-unordered',
-      'someday-unordered-2',
-    ]);
-  });
-});
 
 describe('DeferredProjectsSection', () => {
   const render = (

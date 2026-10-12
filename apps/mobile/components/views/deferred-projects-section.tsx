@@ -2,35 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ChevronDown, ChevronRight, Folder } from 'lucide-react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { projectMatchesAreaFilterSelection, tFallback } from '@mindwtr/core';
-import type { Area, AreaFilterSelection, Project } from '@mindwtr/core';
+import { tFallback } from '@mindwtr/core';
+import type { Area, Project } from '@mindwtr/core';
 
 import type { ThemeColors } from '@/hooks/use-theme-colors';
-
-/**
- * Projects parked in the same bucket as the screen's tasks. Someday and Waiting
- * are the two GTD buckets a whole project can sit in, and both screens listed
- * them with the same swipe-to-reactivate row — down to the stylesheet.
- */
-export function selectDeferredProjects(
-  projects: Project[],
-  status: 'someday' | 'waiting',
-  resolvedAreaFilter: AreaFilterSelection,
-  areaById: Map<string, Area>,
-): Project[] {
-  return [...projects]
-    .filter((project) => (
-      !project.deletedAt
-      && project.status === status
-      && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
-    ))
-    .sort((a, b) => {
-      const aOrder = Number.isFinite(a.order) ? (a.order as number) : Number.POSITIVE_INFINITY;
-      const bOrder = Number.isFinite(b.order) ? (b.order as number) : Number.POSITIVE_INFINITY;
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return a.title.localeCompare(b.title);
-    });
-}
 
 export interface DeferredProjectsSectionProps {
   projects: Project[];

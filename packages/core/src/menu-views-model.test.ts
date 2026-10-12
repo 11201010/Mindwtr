@@ -8,7 +8,8 @@ import {
     seedMenuViewsStore,
 } from './menu-views-model.replay';
 import { applyListFilterEdit, EMPTY_LIST_FILTER_STATE, resolveListFilterState } from './list-filter-state';
-import { buildSomedayFilterOptions, buildSomedayViewModel, buildWaitingViewModel, getSomedayGroupSectionId } from './menu-views-model';
+import { buildSomedayFilterOptions, buildSomedayViewModel, buildWaitingViewModel, getSomedayGroupSectionId, selectDeferredProjects } from './menu-views-model';
+import { AREA_FILTER_NONE, projectMatchesAreaFilterSelection, type AreaFilterSelection } from './area-filter';
 import { buildMoreMenuModel, resolveMobileQuickAccessView } from './more-menu-model';
 import { createNativeHostContract } from './native-host-contract';
 import {
@@ -22,7 +23,7 @@ import {
     renameSomedaySection,
 } from './someday-sections-model';
 import { resetForTests } from './store';
-import type { AppSettings, Project, Task, ViewSectionDefinition } from './types';
+import type { AppSettings, Area, Project, Task, ViewSectionDefinition } from './types';
 
 const fixture = loadMenuViewsFixture();
 
@@ -282,5 +283,81 @@ describe('list view models', () => {
         expect(planSomedaySectionMove({ ids: ['s'], tasks: [moved], destination: 'x', pending }))
             .toEqual({ updates: [], previous: [{ id: 's', sectionId: 'old' }], resumed: true });
         expect(planSomedaySectionMove({ ids: ['s'], tasks: [task], destination: 'x' }).previous).toEqual([{ id: 's', sectionId: undefined }]);
+    });
+});
+
+describe('selectDeferredProjects', () => {
+    const makeProject = (id: string, overrides: Partial<Project> = {}): Project => ({
+        id,
+        title: `Project ${id}`,
+        status: 'someday',
+        color: '#2563eb',
+        order: 0,
+        tagIds: [],
+        createdAt: '2026-06-01T00:00:00.000Z',
+        updatedAt: '2026-06-01T00:00:00.000Z',
+        ...overrides,
+    } as Project);
+
+    const homeArea = { id: 'area-home', name: 'Home', order: 0 } as Area;
+    const areaById = new Map<string, Area>([[homeArea.id, homeArea]]);
+
+    // The predicate React Native's Someday and Waiting screens each carried before the
+    // extraction. Comparing against it, rather than iterating the helper, catches the
+    // helper quietly accepting a different set.
+    const legacySelectDeferredProjects = (
+        projects: Project[],
+        status: 'someday' | 'waiting',
+        resolvedAreaFilter: AreaFilterSelection,
+    ) => [...projects]
+        .filter((project) => (
+            !project.deletedAt
+            && project.status === status
+            && projectMatchesAreaFilterSelection(project, resolvedAreaFilter, areaById)
+        ))
+        .sort((a, b) => {
+            const aOrder = Number.isFinite(a.order) ? (a.order as number) : Number.POSITIVE_INFINITY;
+            const bOrder = Number.isFinite(b.order) ? (b.order as number) : Number.POSITIVE_INFINITY;
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return a.title.localeCompare(b.title);
+        });
+
+    const candidates: Project[] = [
+        makeProject('someday-late', { order: 9, title: 'Zulu' }),
+        makeProject('someday-early', { order: 1 }),
+        makeProject('someday-unordered', { order: Number.NaN as unknown as number, title: 'Alpha' }),
+        makeProject('someday-unordered-2', { order: Number.NaN as unknown as number, title: 'Bravo' }),
+        makeProject('someday-deleted', { order: 0, deletedAt: '2026-07-01T00:00:00.000Z' }),
+        makeProject('someday-home', { order: 2, areaId: homeArea.id }),
+        makeProject('waiting-1', { status: 'waiting', order: 3 }),
+        makeProject('waiting-home', { status: 'waiting', order: 1, areaId: homeArea.id }),
+        makeProject('waiting-deleted', { status: 'waiting', order: 0, deletedAt: '2026-07-01T00:00:00.000Z' }),
+        makeProject('active-1', { status: 'active', order: 0 }),
+        makeProject('archived-1', { status: 'archived', order: 0 }),
+    ];
+
+    const filters: AreaFilterSelection[] = [
+        { included: [], excluded: [] },
+        { included: [AREA_FILTER_NONE], excluded: [] },
+        { included: [homeArea.id], excluded: [] },
+        { included: [], excluded: [homeArea.id] },
+    ];
+
+    it.each(['someday', 'waiting'] as const)('matches the old per-screen predicate for %s', (status) => {
+        for (const filter of filters) {
+            expect(selectDeferredProjects(candidates, status, filter, areaById).map((p) => p.id))
+                .toEqual(legacySelectDeferredProjects(candidates, status, filter).map((p) => p.id));
+        }
+    });
+
+    it('orders by order then title, with unordered projects last', () => {
+        const ids = selectDeferredProjects(candidates, 'someday', { included: [], excluded: [] }, areaById).map((p) => p.id);
+        expect(ids).toEqual([
+            'someday-early',
+            'someday-home',
+            'someday-late',
+            'someday-unordered',
+            'someday-unordered-2',
+        ]);
     });
 });

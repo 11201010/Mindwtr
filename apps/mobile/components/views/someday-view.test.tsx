@@ -150,7 +150,6 @@ vi.mock('../use-task-list-selection', () => ({
 vi.mock('./deferred-projects-section', () => ({
   DeferredProjectsSection: () => null,
   DeferredProjectRow: (props: any) => React.createElement('DeferredProjectRow', props),
-  selectDeferredProjects: () => [],
 }));
 
 const makeTask = (id: string, overrides: Partial<Task> = {}): Task => ({

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DropboxAuthTokens } from './dropbox-auth';
+import type { DropboxAuthTokens } from './dropbox-auth-tokens';
 import {
     commitProvenMobileSyncConfiguration,
     MobileSyncConfigurationTransactionError,
     type MobileSyncConfigurationTransactionDependencies,
-} from './sync-configuration-transaction';
+} from './mobile-sync-configuration-transaction';
 import {
     CLOUD_ALLOW_INSECURE_HTTP_KEY,
     CLOUD_PROVIDER_KEY,
@@ -19,7 +19,7 @@ import {
     WEBDAV_PASSWORD_KEY,
     WEBDAV_URL_KEY,
     WEBDAV_USERNAME_KEY,
-} from './sync-constants';
+} from './sync-storage-keys';
 
 const CONFIG_KEYS = [
     SYNC_BACKEND_KEY,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFocusPools, deriveFocusTaskLists, type FocusPools } from './focus-sections';
+import { buildFocusPools, buildFocusTaskSections, deriveFocusTaskLists, type FocusPools } from './focus-sections';
 import { shouldShowTaskForStart } from './task-utils';
 import { computeTodayFocusTasks } from './focus-widget-selection';
 import type { Project, Section, Task } from './types';
@@ -240,5 +240,23 @@ describe('computeTodayFocusTasks parity with the screen derivation', () => {
         expect(ids(widget.focusTasks)).toEqual(['first']);
         // The screen still shows both under its Review Due heading.
         expect(ids(screenLists(pool).reviewDue).sort()).toEqual(['first', 'third']);
+    });
+});
+
+describe('buildFocusTaskSections', () => {
+    const task = (id: string) => ({ id, title: id } as unknown as Task);
+    const translate = (key: string) => ({ 'agenda.todaysFocus': 'Starred', 'focus.schedule': 'Today', 'agenda.reviewDue': 'Review', 'focus.nextActions': 'Next', 'agenda.upcoming': 'Soon' } as Record<string, string>)[key];
+
+    it('keeps the Focus screen order and only shows the optional sections when they have tasks', () => {
+        const full = buildFocusTaskSections({
+            focusedTasks: [task('f')], schedule: [task('s')], reviewDue: [], nextActions: [task('n')], upcoming: [task('u')],
+        }, translate);
+        expect(full.map((section) => [section.key, section.title, section.items.length])).toEqual([
+            ['focus', 'Starred', 1], ['schedule', 'Today', 1], ['next', 'Next', 1], ['reviewDue', 'Review', 0], ['upcoming', 'Soon', 1],
+        ]);
+
+        const sparse = buildFocusTaskSections({ focusedTasks: [], schedule: [], reviewDue: [], nextActions: [], upcoming: [] }, () => undefined);
+        expect(sparse.map((section) => section.key)).toEqual(['schedule', 'next', 'reviewDue']);
+        expect(sparse.map((section) => section.title)).toEqual(['Today', 'Next actions', 'Review Due']);
     });
 });
