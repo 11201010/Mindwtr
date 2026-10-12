@@ -22,6 +22,7 @@ import {
     type SyncEncryptionTransitionLogKind,
     type SyncEncryptionTransitionOutcome,
     acquireSyncRemoteMutationFence,
+    assertWebdavStrongEtagSupport,
     createDropboxSyncRemoteMutationFencePort,
     createWebdavSyncRemoteMutationFencePort,
     DEFAULT_TIMEOUT_MS,
@@ -47,7 +48,9 @@ import {
     SYNC_ENCRYPTION_KEYED_STATES,
     SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS,
     SyncCryptoUnsupportedError,
+    SyncEncryptionBackendIncompatibleError,
     SyncEncryptionRemotePlaintextError,
+    SyncEncryptionRemoteVersionUnavailableError,
     SyncEncryptionTerminalError,
     uploadDropboxFileVersioned,
     webdavDeleteFileVersioned,
@@ -920,10 +923,25 @@ export function createWebdavRemotePort(config: WebdavRemotePortConfig): Transiti
     const listAttachmentKeys = () => listWebdavAttachmentKeys(config.baseUrl, config.options);
     let referencedAttachmentKeys: string[] = [];
     return {
-        acquireRemoteMutationFence: () => acquireSyncRemoteMutationFence(
-            createWebdavSyncRemoteMutationFencePort(urlFor('data.json'), config.options),
-            TRANSITION_FENCE_OPTIONS,
-        ),
+        acquireRemoteMutationFence: async () => {
+            // Same proof as core's WebDAV port (ab7ae85c2): a server without strong ETags could never read the fence
+            // back, so refuse it before the fence file is written instead of failing as "fence lost".
+            try {
+                await assertWebdavStrongEtagSupport(urlFor('data.json'), config.options);
+            } catch (error) {
+                if (!(error instanceof SyncEncryptionRemoteVersionUnavailableError)) throw error;
+                void logWarn('WebDAV server refused for an encryption transition: no strong ETags', {
+                    scope: 'sync',
+                    extra: { releaseCheck: 'v1.3.5/desktop-encryption-strong-etag' },
+                    force: true,
+                });
+                throw new SyncEncryptionBackendIncompatibleError(error);
+            }
+            return acquireSyncRemoteMutationFence(
+                createWebdavSyncRemoteMutationFencePort(urlFor('data.json'), config.options),
+                TRANSITION_FENCE_OPTIONS,
+            );
+        },
         list: () => listRemoteEntries(listAttachmentKeys, referencedAttachmentKeys),
         captureInventory: async (recoveryPassphrase) => {
             const inventory = await captureRemoteInventory(read, listAttachmentKeys, recoveryPassphrase);

@@ -13,6 +13,7 @@ import {
     deriveSyncKeyMaterial,
     encryptSyncArtifact,
     inspectSyncArtifact,
+    SyncEncryptionBackendIncompatibleError,
     SyncEncryptionRemoteVersionUnavailableError,
     SyncEncryptionTerminalError,
     SyncRemoteMutationFenceBusyError,
@@ -268,6 +269,7 @@ const createWebdavFetch = (
     store: ReturnType<typeof createBlobStore>,
     baseUrl: string,
     etagMode: 'strong' | 'weak' | 'missing' = 'strong',
+    fenceEtagMode: 'strong' | 'same' = 'strong',
 ) =>
     (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const url = String(input);
@@ -288,7 +290,9 @@ const createWebdavFetch = (
         if (method === 'GET') {
             const bytes = store.files.get(key);
             if (!bytes) return new Response(null, { status: 404, headers: { date: SERVER_DATE } });
-            const effectiveEtagMode = key === '.mindwtr-sync-fence-v1.json' ? 'strong' : etagMode;
+            const effectiveEtagMode = key === '.mindwtr-sync-fence-v1.json' && fenceEtagMode === 'strong'
+                ? 'strong'
+                : etagMode;
             return new Response(bytes.slice() as unknown as BodyInit, {
                 status: 200,
                 headers: effectiveEtagMode === 'missing'
@@ -419,7 +423,9 @@ describe('WebDAV authoritative attachment inventory', () => {
         const artifactWrites = fetcher.mock.calls.filter(([input, init]) => {
             const method = (init?.method ?? 'GET').toUpperCase();
             return ['PUT', 'DELETE'].includes(method)
-                && !String(input).endsWith('/.mindwtr-sync-fence-v1.json');
+                && !String(input).endsWith('/.mindwtr-sync-fence-v1.json')
+                // The strong-ETag capability probe writes and removes its own unique file before the fence.
+                && !String(input).includes('.mindwtr-etag-probe-');
         });
         expect(artifactWrites).toEqual([]);
         expect(store.files).toEqual(baseline);
@@ -1054,6 +1060,38 @@ describe('WebDAV sync encryption transitions (config-override / web path)', () =
 
             expect(store.files).toEqual(snapshot);
             expect(native.state).toEqual({ state: 'off' });
+        },
+    );
+
+    // A server without strong ETags serves the fence without one too: the fence's read-back has no version, so Enable
+    // failed as "fence lost" after writing the fence. Core's port runs the strong-ETag proof first (ab7ae85c2).
+    it.each(['missing', 'weak'] as const)(
+        'refuses a server with %s ETags before writing the transition fence',
+        async (etagMode) => {
+            const baseUrl = 'https://dav.example/sync';
+            const store = seedRemote();
+            const snapshot = new Map([...store.files].map(([name, bytes]) => [name, bytes.slice()]));
+            const serve = createWebdavFetch(store, baseUrl, etagMode, 'same');
+            const fetcher = vi.fn(serve);
+            appLog.logWarn.mockClear();
+
+            const refused = await runEnableOverRemote(
+                'correct horse battery',
+                createWebdavRemotePort({ baseUrl, options: { fetcher: fetcher as unknown as typeof fetch } }),
+            ).then(() => null, (error: unknown) => error);
+
+            expect(refused).toBeInstanceOf(SyncEncryptionBackendIncompatibleError);
+            expect(String((refused as Error).message)).toMatch(/^SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE: /);
+            expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/.mindwtr-sync-fence-v1.json'))).toBe(false);
+            expect(fetcher.mock.calls.every(([, init]) => ['GET', 'PROPFIND'].includes(init?.method ?? 'GET'))).toBe(true);
+            expect(store.files).toEqual(snapshot);
+            expect(native.state).toEqual({ state: 'off' });
+            expect(appLog.logWarn).toHaveBeenCalledWith(
+                'WebDAV server refused for an encryption transition: no strong ETags',
+                expect.objectContaining({
+                    extra: expect.objectContaining({ releaseCheck: 'v1.3.5/desktop-encryption-strong-etag' }),
+                }),
+            );
         },
     );
 });

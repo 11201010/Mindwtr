@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     generateDicewarePassphrase,
     isSyncEncryptionRemoteVersionUnavailableError,
+    SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE,
     type SyncBackend,
     type SyncEncryptionTransitionProgress,
 } from '@mindwtr/core';
@@ -37,6 +38,7 @@ export const classifyFailure = (error: unknown, terminal: SyncEncryptionErrorKin
     const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
     if (message.includes('SYNC_ENCRYPTION_WRONG_PASSPHRASE')) return 'wrong-passphrase';
     if (message.includes('SYNC_ENCRYPTION_BACKEND_REQUIRED')) return 'backend-required';
+    if (message.includes(SYNC_ENCRYPTION_BACKEND_INCOMPATIBLE)) return 'backend-incompatible';
     if (isSyncEncryptionRemoteVersionUnavailableError(error)) return 'transition-incomplete';
     return isSyncEncryptionFailure(error) ? terminal : 'generic';
 };
