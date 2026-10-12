@@ -2847,6 +2847,22 @@ pub(crate) fn patch_task_in_data(
     task_id: &str,
     patch: &Map<String, Value>,
 ) -> Result<Value, String> {
+    patch_task_in_data_at(
+        data,
+        task_id,
+        patch,
+        OffsetDateTime::now_utc(),
+        &crate::local_query::local_wall,
+    )
+}
+
+fn patch_task_in_data_at(
+    data: &mut Value,
+    task_id: &str,
+    patch: &Map<String, Value>,
+    now: OffsetDateTime,
+    local_wall: &dyn Fn(OffsetDateTime) -> Option<PrimitiveDateTime>,
+) -> Result<Value, String> {
     let device_id = device_id_from_data(data);
     let live_containers = LiveContainers::from_data(data);
     let current = find_task(data, task_id).ok_or("Task not found")?;
@@ -2864,8 +2880,6 @@ pub(crate) fn patch_task_in_data(
         if candidate.get("status").and_then(Value::as_str) == Some("reference") {
             normalize_created_reference_task(&mut candidate);
         }
-        let now = OffsetDateTime::now_utc();
-        let local_wall = &crate::local_query::local_wall;
         let future_start = local_api_task_is_future_start(&candidate, now, local_wall);
         let queued = candidate.get("status").and_then(Value::as_str) == Some("next")
             && has_non_empty_string(&candidate, "startTime")
@@ -5349,6 +5363,73 @@ mod tests {
                 "sequential Focus must select local schedule: {field}={schedule}"
             );
         }
+    }
+
+    /// Core's Focus admission table (focus-admission-cases.test.ts runs the
+    /// same cases against resolveTaskFocusUpdate). A case's patch is the
+    /// before -> after difference; refused-limit maps to the exact error,
+    /// focused/queued to a saved star, unchanged to a successful patch.
+    #[test]
+    fn local_api_patch_focus_matches_core_admission_cases() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../packages/core/src/__fixtures__/focus-admission/cases.json"
+        ))
+        .expect("valid Focus admission fixture");
+        let defaults = fixture["taskDefaults"].as_object().unwrap();
+        let divergences: Vec<&str> = fixture["knownRustDivergences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let mut mismatches = Vec::new();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let task = |side: &str| {
+                let mut task = defaults.clone();
+                task.extend(case[side].as_object().unwrap().clone());
+                task
+            };
+            let (before, after) = (task("before"), task("after"));
+            let mut patch: Map<String, Value> = after
+                .iter()
+                .filter(|(key, value)| before.get(*key) != Some(*value))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            for key in before.keys().filter(|key| !after.contains_key(*key)) {
+                patch.insert(key.clone(), Value::Null);
+            }
+            let limit = case["focusTaskLimit"].as_u64().unwrap();
+            let mut data = json!({
+                "tasks": [Value::Object(before)],
+                "projects": [], "sections": [], "areas": [], "people": [],
+                "settings": {"deviceId": "device-a", "gtd": {"focusTaskLimit": limit}},
+                TASK_MUTATION_FOCUSED_COUNT_KEY: case["focusedCount"].clone(),
+            });
+            let offset = time::UtcOffset::from_whole_seconds(
+                case["utcOffsetMinutes"].as_i64().unwrap() as i32 * 60,
+            )
+            .unwrap();
+            let local_wall = |instant: OffsetDateTime| {
+                let local = instant.to_offset(offset);
+                Some(PrimitiveDateTime::new(local.date(), local.time()))
+            };
+            let now = OffsetDateTime::parse(case["now"].as_str().unwrap(), &Rfc3339).unwrap();
+            let result = patch_task_in_data_at(&mut data, "task", &patch, now, &local_wall);
+            let matches = match case["outcome"].as_str().unwrap() {
+                "refused-limit" => result == Err(format!("Focus limit of {limit} reached")),
+                "focused" | "queued" => result
+                    .as_ref()
+                    .is_ok_and(|task| task["isFocusedToday"] == true),
+                "unchanged" => result.is_ok(),
+                other => panic!("{name}: unknown outcome {other}"),
+            };
+            // A listed divergence that starts matching must leave the list.
+            if matches == divergences.contains(&name) {
+                mismatches.push(format!("{name}: {result:?}"));
+            }
+        }
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
     }
 
     #[test]
