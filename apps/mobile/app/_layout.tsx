@@ -50,6 +50,7 @@ import {
   type UserPromptState,
 } from '@mindwtr/core';
 import { mobileSha256Hex } from '../lib/sync-crypto-native';
+import { getSystemDateFormat } from '../modules/system-date-format';
 import { keepPersistentCaptureNotificationArmed } from '../lib/persistent-capture-notification';
 import { markStartupPhase } from '../lib/startup-profiler';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -640,13 +641,20 @@ function RootLayoutContentInner() {
   }, [language, settingsLanguage, setLanguage]);
 
   useEffect(() => {
+    const systemDateFormat = getSystemDateFormat();
     configureDateFormatting({
       language: settingsLanguage || language,
       dateFormat: settingsDateFormat,
       calendarSystem: settingsCalendarSystem,
       timeFormat: settingsTimeFormat,
       systemLocale: getDeviceLocale(),
+      systemDateFormat,
     });
+    if (Platform.OS === 'ios') {
+      void logInfo('System date format configured', { scope: 'regional-format', extra: {
+        releaseCheck: 'v1.3.6/system-date-format', outcome: systemDateFormat ? 'native' : 'locale-fallback',
+      } });
+    }
   }, [language, settingsCalendarSystem, settingsDateFormat, settingsLanguage, settingsTimeFormat]);
 
   useEffect(() => {

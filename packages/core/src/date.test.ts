@@ -3,6 +3,7 @@ import { isValid, parseISO } from 'date-fns';
 import { buildCompletionDateSections } from './completion-grouping';
 import { createTaskDraft, setTaskDraftField, taskDraftToChangedUpdatePatch, toTaskDraftDateTimeLocalValue } from './task-draft';
 import type { Task } from './types';
+import { parseQuickAdd } from './quick-add';
 import {
     canUseJalaliCalendar,
     configureDateFormatting,
@@ -248,6 +249,50 @@ describe('date utils', () => {
 
         configureDateFormatting({ language: 'en', dateFormat: 'ymd', timeFormat: '24h', systemLocale: 'en-US' });
         expect(safeFormatDate('2025-01-02T15:04:00', 'Pp')).toBe('2025-01-02 15:04');
+    });
+
+    it('preserves the native System short-date pattern on an English German device', () => {
+        const config = { language: 'en', dateFormat: 'system', systemLocale: 'en-DE', systemDateFormat: 'dd.MM.yyyy' };
+        const formatter = createDateFormatter(config);
+        expect(formatter('2026-09-22', 'P')).toBe('22.09.2026');
+        expect(formatter('2026-09-22T15:04', 'Pp')).toBe('22.09.2026, 3:04 PM');
+        expect(formatter('2026-09-22', 'PP')).toBe('Sep 22, 2026');
+        expect(formatter('2026-09-22', 'yyyy-MM-dd')).toBe('2026-09-22');
+        expect(formatter('2026-09-22', "'P' yyyy-MM-dd")).toBe('P 2026-09-22');
+        configureDateFormatting(config);
+        expect(safeFormatDate('2026-09-22', 'P')).toBe('22.09.2026');
+        expect(isActiveDateFormatDayFirst()).toBe(true);
+        configureDateFormatting({ systemLocale: 'en-US' });
+    });
+
+    it.each(['dmy', 'mdy', 'ymd'])('keeps the explicit %s date choice ahead of the native pattern', (dateFormat) => {
+        const formatter = createDateFormatter({ language: 'en', dateFormat, systemLocale: 'en-DE', systemDateFormat: 'dd.MM.yyyy' });
+        expect(formatter('2026-09-22', 'P')).toBe({ dmy: '22/09/2026', mdy: '09/22/2026', ymd: '2026-09-22' }[dateFormat]);
+    });
+
+    it.each([null, '', 'not a pattern', 'yyyy-MM', 'yyyy-MM-dd HH:mm', 'yyyy-MM-dd-yyyy', 'yyyy-\'unterminated-MM-dd', 'yy/MM/dd', 'yy.MM.dd'])('falls back safely for unsupported native patterns: %s', (systemDateFormat) => {
+        expect(createDateFormatter({ systemLocale: 'en-US', systemDateFormat })('2026-09-22', 'P')).toBe('09/22/2026');
+    });
+
+    it.each([
+        ['d.M.yy', '2.1.25'],
+        ["yyyy'年'M'月'd'日'", '2025年1月2日'],
+        ['d\u200f/M\u200f/yyyy', '2\u200f/1\u200f/2025'],
+        ['yyyy/MM/dd', '2025/01/02'],
+    ])('preserves native field widths and literals in %s', (systemDateFormat, expected) => {
+        expect(createDateFormatter({ systemLocale: 'en-DE', systemDateFormat })('2025-01-02', 'P')).toBe(expected);
+    });
+
+    it('keeps Jalali formatting ahead of the Gregorian native pattern', () => {
+        const formatter = createDateFormatter({ language: 'fa', calendarSystem: 'jalali', systemDateFormat: 'dd.MM.yyyy' });
+        expect(formatter('2025-03-21', 'P')).toBe('1404/01/01');
+    });
+
+    it.each(['dd.MM.yyyy', 'dd.MM.yy', 'yyyy/MM/dd', 'yy/MM/dd', 'yy.MM.dd'])('round-trips displayed System dates through quick-add for %s', (systemDateFormat) => {
+        configureDateFormatting({ language: 'en', systemLocale: 'en-DE', systemDateFormat });
+        const displayed = safeFormatDate('2026-08-10', 'P');
+        expect(parseQuickAdd(`Task /due:${displayed}`, undefined, new Date(2026, 0, 1)).props.dueDate).toBe('2026-08-10');
+        configureDateFormatting({ systemLocale: 'en-US' });
     });
 
     it('formats Jalali localized dates without changing stored ISO date output', () => {

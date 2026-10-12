@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
     buildGeneralSettingsModel,
     buildGeneralSettingsUpdate,
+    createDateFormatter,
     isGeneralSettingStored,
     normalizeWeekStartSetting,
     shallow,
@@ -18,6 +19,7 @@ import { useThemeColors } from '@/hooks/use-theme-colors';
 import { isAppSearchSupported, readAppSearchIndexingEnabled, writeAppSearchIndexingEnabled } from '@/lib/app-search-preference';
 import { enableAppSearchIndexing, wipeAppSearchIndex } from '@/lib/app-search-service';
 import { authenticateWithDeviceLock, getMobileAppLockErrorKey } from '@/lib/mobile-app-lock';
+import { getSystemDateFormat } from '@/modules/system-date-format';
 
 import { SettingRow, SettingToggleRow } from './setting-row';
 import { useSettingsLocalization, useSettingsScrollContent } from './settings.hooks';
@@ -58,9 +60,10 @@ export function GeneralSettingsScreen() {
         language,
         systemLocale,
         systemWeekStart: normalizeWeekStartSetting('system'),
-        // Show what "System default" actually resolves to — the runtime locale's
-        // short date, which on a customized OS can differ from the OS format (#1006).
-        systemDateSample: new Date().toLocaleDateString(),
+        systemDateSample: createDateFormatter({
+            language, systemLocale, calendarSystem: settings.calendarSystem,
+            dateFormat: 'system', systemDateFormat: getSystemDateFormat(),
+        })(new Date(), 'P'),
         appSearch: { supported: isAppSearchSupported(), enabled: appSearchEnabled },
         t,
     });

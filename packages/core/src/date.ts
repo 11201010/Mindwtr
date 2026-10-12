@@ -104,6 +104,8 @@ export type DateFormattingConfig = {
     calendarSystem?: string | null;
     timeFormat?: string | null;
     systemLocale?: string | null;
+    /** Device-local Gregorian short-date pattern from the platform, never a stored task format. */
+    systemDateFormat?: string | null;
 };
 type ResolvedDateFormatting = {
     locale: Locale;
@@ -124,6 +126,18 @@ let active: ResolvedDateFormatting = {
 let activeConfig: Readonly<DateFormattingConfig> = {};
 
 const normalizeLocaleTag = (value?: string | null): string => String(value || '').trim().replace(/_/g, '-');
+
+/** Only the numeric UTS #35 date fields shared by Foundation and date-fns are accepted. */
+export function normalizeSystemDateFormat(value: unknown): string | undefined {
+    if (typeof value !== 'string' || !value || value.length > 128) return undefined;
+    const tokens = value.match(/y{1,4}|M{1,2}|d{1,2}|'(?:[^']|'')*'|[^A-Za-z']+/g);
+    if (!tokens || tokens.join('') !== value) return undefined;
+    const fields = tokens.filter((token) => /^[yMd]/.test(token));
+    if (fields.length !== 3 || !['y', 'M', 'd'].every((field) => fields.some((token) => token[0] === field))) return undefined;
+    // A leading two-digit year is ambiguous to quick-add's existing numeric-date parser.
+    if (fields[0] === 'yy') return undefined;
+    return value;
+}
 
 const getPrimaryLanguageSubtag = (value?: string | null): string => (
     normalizeLocaleTag(value).toLowerCase().split('-')[0] || ''
@@ -426,11 +440,19 @@ const resolveDateFormatting = (params: DateFormattingConfig): ResolvedDateFormat
         language: params.language,
         systemLocale,
     });
-    const locale = dateFormat === 'mdy'
+    let locale = dateFormat === 'mdy'
         ? enUS
         : dateFormat === 'dmy'
             ? (language === 'en' ? enGB : DATE_LOCALE_BY_LANGUAGE[language])
             : resolveLocaleFromSystem(systemLocale, language);
+    const systemDateFormat = normalizeSystemDateFormat(params.systemDateFormat);
+    if (dateFormat === 'system' && calendarSystem === 'gregorian' && systemDateFormat) {
+        const formatLong = locale.formatLong;
+        locale = { ...locale, formatLong: {
+            ...formatLong,
+            date: (options) => options?.width === 'short' ? systemDateFormat : formatLong.date(options),
+        } };
+    }
     return { locale, dateFormat, timeFormat, calendarSystem, language };
 };
 
