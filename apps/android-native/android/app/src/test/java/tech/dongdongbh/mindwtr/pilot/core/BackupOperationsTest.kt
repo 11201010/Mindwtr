@@ -18,13 +18,14 @@ class BackupOperationsTest {
     private val a = "11111111-1111-4111-8111-111111111111"
     private val b = "22222222-2222-4222-8222-222222222222"
     private val name = "data.2026-08-09T12-34-05.123.snapshot.json"
-    private fun snapshot(text: String = "{\"tasks\":[]}") = File(snapshots, name).apply { writeText(text) }
+    private val TASKS = "{\"tasks\":[]}"
+    private fun snapshot(text: String = TASKS) = File(snapshots, name).apply { writeText(text) }
 
     private fun refused(work: () -> Unit) = runCatching(work).exceptionOrNull() is BackupOperations.Mismatch
 
     @Test fun aPublishedPlanReadsBackExactly() {
         snapshot()
-        val ref = ops().publish(a, "merge", "{\"plan\":1}", name, wrote = true)
+        val ref = ops().publish(a, "merge", "{\"plan\":1}", name, recovery = TASKS)
         assertEquals("{\"plan\":1}", ops().plan(ref, name))
         assertEquals("merge", ops().mode(ref))
         assertTrue(JSONObject(ref).getInt("byteCount") <= 8192)
@@ -32,8 +33,8 @@ class BackupOperationsTest {
 
     @Test fun swappedManifestsOrPlansAreRefused() {
         snapshot()
-        val refA = ops().publish(a, "merge", "{\"plan\":\"a\"}", name, wrote = true)
-        val refB = ops().publish(b, "merge", "{\"plan\":\"b\"}", name, wrote = true)
+        val refA = ops().publish(a, "merge", "{\"plan\":\"a\"}", name, recovery = TASKS)
+        val refB = ops().publish(b, "merge", "{\"plan\":\"b\"}", name, recovery = TASKS)
         val root = File(folder.root, "ops")
         // B's plan under A: A's manifest no longer matches its plan.
         File(root, "$b/plan.json").copyTo(File(root, "$a/plan.json"), overwrite = true)
@@ -48,7 +49,7 @@ class BackupOperationsTest {
 
     @Test fun aMissingOrTornPlanAndAChangedSnapshotAreRefused() {
         snapshot()
-        val ref = ops().publish(a, "replace", "{\"plan\":1}", name, wrote = true)
+        val ref = ops().publish(a, "replace", "{\"plan\":1}", name, recovery = TASKS)
         File(snapshots, name).writeText("{\"tasks\":[1]}")
         assertTrue(refused { ops().plan(ref, name) })
         snapshot()
@@ -56,32 +57,32 @@ class BackupOperationsTest {
         File(folder.root, "ops/$a/plan.json").delete()
         assertTrue(refused { ops().plan(ref, name) })
         // A death mid-publish: the plan's pending file is there, the manifest never was.
-        val torn = runCatching { ops().publish(b, "merge", "{\"plan\":2}", name, wrote = false) { error("killed") } }
+        val torn = runCatching { ops().publish(b, "merge", "{\"plan\":2}", name, recovery = null) { error("killed") } }
         assertTrue(torn.isFailure)
         assertTrue(refused { ops().plan(JSONObject().put("id", b).put("sha256", "0".repeat(64)).put("byteCount", 10).toString(), name) })
     }
 
     @Test fun aRestoreReadsAnExistingSnapshotWithoutCheckingItsBytes() {
-        val ref = ops().publish(a, "restore", "{\"plan\":1}", name, wrote = false)
+        val ref = ops().publish(a, "restore", "{\"plan\":1}", name, recovery = null)
         assertEquals("{\"plan\":1}", ops().plan(ref, name))
     }
 
     @Test fun aPlanPastTheLimitIsNeverRead() {
-        val ref = ops().publish(a, "merge", "x".repeat(100), name, wrote = false)
+        val ref = ops().publish(a, "merge", "x".repeat(100), name, recovery = null)
         assertTrue(refused { ops(maxPlanBytes = 50).plan(ref, name) })
     }
 
     @Test fun cleanupKeepsOnlyTheJournalsOperations() {
         snapshot()
-        ops().publish(a, "merge", "{}", name, wrote = true)
-        ops().publish(b, "merge", "{}", name, wrote = false)
+        ops().publish(a, "merge", "{}", name, recovery = TASKS)
+        ops().publish(b, "merge", "{}", name, recovery = null)
         ops().cleanup(setOf(b))
         assertFalse(File(folder.root, "ops/$a").exists())
         assertTrue(File(folder.root, "ops/$b/manifest.json").isFile)
     }
 
     @Test fun openOperationsAndTheResultProtectTheirSnapshots() {
-        ops().publish(a, "merge", "{}", name, wrote = false)
+        ops().publish(a, "merge", "{}", name, recovery = null)
         val undo = "data.2026-08-09T12-34-06.000.snapshot.json"
         ops().writeResult(JSONObject().put("requestId", b).put("outcome", "committed").put("undoSnapshot", undo))
         assertEquals(setOf(name, undo), ops().protectedNames())
@@ -95,5 +96,14 @@ class BackupOperationsTest {
         assertEquals(a, ops().result()!!.getString("requestId"))
         ops().clearResult(a)
         assertNull(ops().result())
+    }
+
+    // D1a review P1-1: another writer replaced the snapshot between this operation's write and its plan; nothing is published.
+    @Test fun aSnapshotThatIsNotTheOperationsOwnTextIsNeverPublished() {
+        snapshot("")
+        assertTrue(refused { ops().publish(a, "merge", "{\"plan\":1}", name, recovery = TASKS) })
+        assertFalse(File(folder.root, "ops/$a/manifest.json").exists())
+        File(snapshots, name).delete()
+        assertTrue(refused { ops().publish(b, "merge", "{\"plan\":1}", name, recovery = TASKS) })
     }
 }

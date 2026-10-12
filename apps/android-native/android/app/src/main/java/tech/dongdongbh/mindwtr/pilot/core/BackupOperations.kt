@@ -44,9 +44,10 @@ class BackupOperations(
 
     /**
      * The plan and manifest for operation [id] in [mode], on disk and synced; the journal's reference JSON. [snapshotName] is the
-     * snapshot the plan's reply names; [wrote] says this operation wrote it (so its bytes are checked before every send).
+     * snapshot the plan's reply names; [recovery] is the text this operation wrote there (null: it wrote none). The file must
+     * still hold exactly that text, or nothing is published ([Mismatch]); its hash is then checked before every send.
      */
-    fun publish(id: String, mode: String, planJson: String, snapshotName: String, wrote: Boolean, beforeManifest: () -> Unit = {}): String {
+    fun publish(id: String, mode: String, planJson: String, snapshotName: String, recovery: String?, beforeManifest: () -> Unit = {}): String {
         require(UUID.matches(id)) { "Invalid backup operation id" }
         val dir = File(root, id)
         dir.mkdirs()
@@ -55,8 +56,9 @@ class BackupOperations(
         beforeManifest()
         val manifest = JSONObject().put("version", 1).put("id", id).put("mode", mode)
             .put("planSha256", sha256(plan)).put("planBytes", plan.size.toLong()).put("snapshotName", snapshotName)
-        if (wrote) {
-            val snapshot = File(snapshots, snapshotName).readBytes()
+        if (recovery != null) {
+            val snapshot = File(snapshots, snapshotName).takeIf { it.isFile }?.readBytes()
+            if (snapshot == null || !snapshot.contentEquals(recovery.toByteArray())) throw Mismatch("The recovery snapshot is missing or changed")
             manifest.put("snapshotSha256", sha256(snapshot)).put("snapshotBytes", snapshot.size.toLong())
         }
         val manifestBytes = manifest.toString().toByteArray()

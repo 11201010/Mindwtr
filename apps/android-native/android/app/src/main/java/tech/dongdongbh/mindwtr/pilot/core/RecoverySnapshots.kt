@@ -43,10 +43,13 @@ object RecoverySnapshots {
 
     /**
      * Writes [contents] as core's [fileName] (or, unless [exact], its clash-numbered twin) and returns the name written. [exact]
-     * refuses a name already taken: a backup operation's plan names its snapshot before the write.
+     * refuses a name already taken: a backup operation's plan names its snapshot before the write. Every writer in the process
+     * (a backup operation, a multiline capture) runs one at a time: the name check, the shared pending file and the rename never
+     * interleave.
+     * [beforePublish] runs with the pending file written and synced, before its rename (a test seam).
      */
     fun write(dir: File, fileName: String, contents: String, protect: Set<String> = emptySet(), exact: Boolean = false,
-              syncDirectory: (File) -> Unit = ::syncDirectory): String {
+              syncDirectory: (File) -> Unit = ::syncDirectory, beforePublish: () -> Unit = {}): String = synchronized(this) {
         dir.mkdirs()
         var name = fileName
         var clash = 0
@@ -59,6 +62,7 @@ object RecoverySnapshots {
         val pending = File(dir, PENDING)
         try {
             FileOutputStream(pending).use { out -> out.write(contents.toByteArray()); out.fd.sync() }
+            beforePublish()
             check(pending.renameTo(File(dir, name))) { "Cannot save the recovery snapshot" }
         } catch (failure: Throwable) {
             pending.delete()
@@ -66,7 +70,7 @@ object RecoverySnapshots {
         }
         syncDirectory(dir)
         prune(dir, protect + name)
-        return name
+        name
     }
 
     /** The snapshot names in [dir], newest first by instant, then by clash number (core's sortRecoverySnapshotNames). */
@@ -80,7 +84,7 @@ object RecoverySnapshots {
      * RN's pruneSnapshots with core's protection: the [protect]ed names stay and count toward the 5; the newest others fill the
      * places left; the rest go.
      */
-    fun prune(dir: File, protect: Set<String>) {
+    fun prune(dir: File, protect: Set<String>) = synchronized(this) {
         val names = list(dir)
         val places = maxOf(0, MAX_SNAPSHOTS - names.count { it in protect })
         names.filter { it !in protect }.drop(places).forEach { runCatching { File(dir, it).delete() } }

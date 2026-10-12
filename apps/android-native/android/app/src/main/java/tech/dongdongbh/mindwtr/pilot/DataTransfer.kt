@@ -287,7 +287,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 val recovery = prepared.opt("recoveryJSON") as? String
                 if (recovery != null) RecoverySnapshots.write(snapshots, name, recovery, ops.protectedNames(), exact = true)
                 stop("after-snapshot")
-                val reference = ops.publish(requestId, mode, prepared.getString("planJSON"), name, wrote = recovery != null) { stop("mid-plan") }
+                val reference = ops.publish(requestId, mode, prepared.getString("planJSON"), name, recovery) { stop("mid-plan") }
                 val reply = runtime.backupCommit(reference, name)
                 val result = runtime.backupResultModel(reply.toString())
                 RecoverySnapshots.prune(snapshots, ops.protectedNames())

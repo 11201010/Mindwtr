@@ -83,4 +83,17 @@ class RecoverySnapshotsTest {
         assertTrue(File(dir, old).isFile)
         assertEquals(5, names().size)
     }
+
+    // D1a review P1-1: a capture's write landed while a backup's pending file waited for its rename; the backup's bytes stay its own.
+    @Test fun twoWritersNeverShareThePendingFile() {
+        val name = RecoverySnapshots.name(at)
+        var other: Thread? = null
+        RecoverySnapshots.write(dir, name, "backup", exact = true, syncDirectory = noSync, beforePublish = {
+            other = Thread { RecoverySnapshots.write(dir, name, "capture", syncDirectory = noSync) }.apply { start() }
+            other!!.join(300)
+        })
+        other!!.join(2_000)
+        assertEquals("backup", File(dir, name).readText())
+        assertEquals("capture", File(dir, RecoverySnapshots.name(at, 1)).readText())
+    }
 }

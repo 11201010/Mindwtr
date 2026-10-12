@@ -2106,7 +2106,9 @@ assert.match(model, /RecoverySnapshots\.write\(snapshots, it\.getString\("fileNa
 assert.match(model, /private val snapshots = File\(app\.filesDir, "snapshots"\)/);
 assert.match(snapshotsKt, /private const val MAX_SNAPSHOTS = 5/);
 assert.match(snapshotsKt, /name = fileName\.removeSuffix\(SUFFIX\) \+ "\.\$clash\$SUFFIX"/);
-assert.match(snapshotsKt, /FileOutputStream\(pending\)\.use \{ out -> out\.write\(contents\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+check\(pending\.renameTo\(File\(dir, name\)\)\)/);
+// Pass D1a review: one writer at a time (the name check, the pending file, the rename), and a test seam before the rename.
+assert.match(snapshotsKt, /FileOutputStream\(pending\)\.use \{ out -> out\.write\(contents\.toByteArray\(\)\); out\.fd\.sync\(\) \}\s+beforePublish\(\)\s+check\(pending\.renameTo\(File\(dir, name\)\)\)/);
+assert.match(snapshotsKt, /beforePublish: \(\) -> Unit = \{\}\): String = synchronized\(this\) \{/);
 // No Kotlin capture policy: every chip, picker row and reset sends core's own edit; Kotlin builds only the typed note and the picked day and time.
 assert.deepEqual([...new Set([...code(captureUi).matchAll(/put\("type", "(\w+)"\)/g)].map(([, type]) => type))].sort(), ['setDueDay', 'setDueTime', 'setNote']);
 // The Custom date and due time pickers open on core's values (due.custom.startDay, due.time.start).
