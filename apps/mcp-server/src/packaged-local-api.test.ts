@@ -14,7 +14,7 @@ const token = 'packaged-fixture-api-token-1336';
 // POST /tasks { title, props } -> 201 { task }.
 const taskFixture = () => {
   const timestamp = '2026-01-01T00:00:00.000Z';
-  const task = (id: string, extra: Record<string, unknown>) => ({
+  const task = (id: string, extra: Record<string, unknown>): Record<string, unknown> => ({
     id, title: `Fixture ${id}`, status: 'next', tags: [], contexts: [],
     createdAt: timestamp, updatedAt: timestamp, rev: 1, revBy: 'fixture-device', ...extra,
   });
@@ -49,14 +49,18 @@ const taskFixture = () => {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/tasks') {
-      // The adapter needs all rows before applying MCP's richer filters locally.
-      if (url.searchParams.get('all') !== '1' || url.searchParams.get('deleted') !== '1'
-        || [...url.searchParams.keys()].some((key) => !['all', 'deleted'].includes(key))) {
-        failures.push('Expected GET /tasks?all=1&deleted=1');
+      // The adapter asks for every status and narrows only by the native filters (local_api.rs filter_tasks);
+      // MCP's richer filters run locally on the result.
+      const query = url.searchParams;
+      if (query.get('all') !== '1'
+        || [...query.keys()].some((key) => !['all', 'deleted', 'status', 'isFocusedToday'].includes(key))) {
+        failures.push('Expected GET /tasks?all=1 with only native filters');
         respond(400, { error: 'Unexpected fixture query' });
         return;
       }
-      respond(200, { tasks });
+      respond(200, { tasks: tasks.filter((row) => (query.get('deleted') === '1' || !row.deletedAt)
+        && (!query.get('status') || row.status === query.get('status'))
+        && (!query.has('isFocusedToday') || (row.isFocusedToday === true) === (query.get('isFocusedToday') === '1'))) });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/tasks') {
@@ -241,6 +245,8 @@ test('installed npm tarball uses the Local API fixture on Node without SQLite, w
         name: 'mindwtr_list_tasks', arguments: { status: 'all', includeDeleted: true },
       }));
       expect(withDeleted.tasks.map((task: { id: string }) => task.id)).toContain('deleted');
+      expect(fixture.requests.filter((request) => request.target.startsWith('/tasks')).map((request) => request.target))
+        .toEqual(['/tasks?all=1&status=next&isFocusedToday=1', '/tasks?all=1&deleted=1']);
       const denied = await reader.request('tools/call', { name: 'mindwtr_add_task', arguments: { title: 'Blocked capture' } });
       expect(denied.result.isError).toBe(true);
       expect(denied.result.content[0].text).toContain('--write');

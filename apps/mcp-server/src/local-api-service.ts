@@ -321,7 +321,13 @@ export const createLocalApiService = (options: LocalApiServiceOptions): MindwtrS
     listTasks: async (input) => {
       if (asRecord(input) && Object.hasOwn(input, 'view')) return unsupported('availability views because section and settings data are unavailable');
       parseInput(listTasksSchema, input, 'task list');
-      const tasks = await entities<Task>('/tasks?all=1&deleted=1', 'tasks', 'task');
+      // The native filter (local_api.rs filter_tasks) only narrows what the Node filter below keeps; it never widens it.
+      // Projects and search stay here: the native API has no project filter, and its text query is not core search.
+      const query = new URLSearchParams({ all: '1' });
+      if (input.includeDeleted) query.set('deleted', '1');
+      if (input.status && input.status !== 'all') query.set('status', input.status);
+      if (input.isFocusedToday !== undefined) query.set('isFocusedToday', input.isFocusedToday ? '1' : '0');
+      const tasks = await entities<Task>(`/tasks?${query}`, 'tasks', 'task');
       const from = localDateKey(input.dueDateFrom);
       const to = localDateKey(input.dueDateTo);
       const filtered = tasks.filter((task) => {

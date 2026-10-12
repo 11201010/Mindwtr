@@ -110,13 +110,45 @@ describe('desktop Local API task reads', () => {
   const readFixture = () => fixture((call) => call.url.endsWith('/projects')
     ? jsonResponse({ projects: [project()] }) : jsonResponse({ tasks }));
 
-  test('fetches all native statuses and tombstones before default filtering', async () => {
+  test('fetches all native statuses, and tombstones only when the query includes them', async () => {
     const { service, calls } = readFixture();
     expect((await service.listTasks({})).map((row) => row.id)).toEqual(['archived', 'done', 'next', 'no-focus', 'waiting']);
-    expect(calls[0].url).toBe(`${origin}/tasks?all=1&deleted=1`);
+    expect(calls[0].url).toBe(`${origin}/tasks?all=1`);
     expect((await service.listTasks({ includeDeleted: true })).map((row) => row.id)).toContain('deleted');
+    expect(calls[1].url).toBe(`${origin}/tasks?all=1&deleted=1`);
     expect((await service.listTasks({ status: 'done' })).map((row) => row.id)).toEqual(['done']);
+    expect(calls[2].url).toBe(`${origin}/tasks?all=1&status=done`);
+    expect((await service.listTasks({ status: 'all', isFocusedToday: false })).map((row) => row.id)).not.toContain('next');
+    expect(calls[3].url).toBe(`${origin}/tasks?all=1&isFocusedToday=0`);
     expect((await service.listTasks({ projectId: 'project-1' })).map((row) => row.id)).toEqual(['next']);
+  });
+
+  // The native filter (local_api.rs filter_tasks) runs before the Node filter, so it may only ever drop tasks the
+  // Node filter drops too. Same queries, same data: a server that ignores the parameters (the old full fetch) and
+  // one that applies them the way Rust does must give identical results.
+  test('server-side filtering returns exactly what the full fetch returned', async () => {
+    const rows = [...tasks, task('blank-deleted', { deletedAt: '' }), task('focused-done', { status: 'done', isFocusedToday: true }),
+      task('focused-deleted', { isFocusedToday: true, deletedAt: iso }), task('numeric-focus', { isFocusedToday: 1 as unknown as boolean })];
+    const nativeFocus = (row: Task): boolean => (typeof row.isFocusedToday === 'number' ? row.isFocusedToday !== 0 : row.isFocusedToday === true);
+    const nativeFilter = (url: string): Task[] => {
+      const query = new URL(url).searchParams;
+      const status = query.get('status');
+      const focus = query.get('isFocusedToday');
+      return rows.filter((row) => (query.get('deleted') === '1' || !row.deletedAt?.trim())
+        && (query.get('all') === '1' || (row.status !== 'done' && row.status !== 'archived'))
+        && (!status || row.status === status)
+        && (focus === null || nativeFocus(row) === (focus === '1' || focus === 'true')));
+    };
+    const full = fixture((call) => call.url.endsWith('/projects') ? jsonResponse({ projects: [project()] }) : jsonResponse({ tasks: rows }));
+    const native = fixture((call) => call.url.endsWith('/projects') ? jsonResponse({ projects: [project()] }) : jsonResponse({ tasks: nativeFilter(call.url) }));
+    const queries = [{}, { includeDeleted: true }, { status: 'all' as const }, { status: 'done' as const }, { status: 'archived' as const, includeDeleted: true },
+      { isFocusedToday: true }, { isFocusedToday: false }, { isFocusedToday: true, includeDeleted: true }, { status: 'next' as const, isFocusedToday: true },
+      { status: 'next' as const, isFocusedToday: false, search: 'Call' }];
+    for (const query of queries) {
+      const expected = (await full.service.listTasks(query)).map((row) => row.id);
+      expect({ query, ids: (await native.service.listTasks(query)).map((row) => row.id) }).toEqual({ query, ids: expected });
+    }
+    expect(native.calls.filter((call) => !call.url.endsWith('/projects') && !call.url.includes('deleted=1')).length > 0).toBe(true);
   });
 
   test('uses rich core search operators, quoted text, negation and project names before pagination', async () => {
