@@ -23,7 +23,8 @@
 //       once and, with its marker gone, imports nothing again;
 //   2b  json-ahead marker with a corrupt backup: RN would abandon it (#964), but core's
 //       stricter preflight (legacyCheck) refuses before the RN database opens: the
-//       native app shows core's refusal and changes no file, the marker included;
+//       native app shows core's refusal and changes no file, the marker included; it
+//       only adds the RKStorage byte checkpoint the passed guard takes;
 //   3   damaged database, empty WAL: the native app changes no file;
 //   3b  damaged database with WAL frames: the native app changes no file;
 //   5   database missing, no JSON backup, other RN state present: the native app creates nothing;
@@ -912,8 +913,10 @@ const scenarioCorruptBackup = async () => {
     const after = snapshot();
     check(after.get(DB) === before.get(DB) && after.get(`${DB}-wal`) === before.get(`${DB}-wal`), '(2b) database and -wal bytes are unchanged');
     check(asyncStorage('2b-post-rkstorage').has(MARKER), '(2b) the json-ahead marker stays for RN');
-    const changed = differences(before, after);
-    check(changed.length === 0, `(2b) every file is unchanged and none is new, so no .prewrite, no RKStorage checkpoint and no write (${before.size} files)${shortList(changed)}`);
+    // The guard passed, so the boot took RN's RKStorage byte copy (95b15aad1) before core's preflight refused.
+    check(checkpointMatches(before, after), `(2b) ${RN_CHECKPOINT} holds the pre-upgrade RKStorage files byte for byte`);
+    const changed = differences(before, after, { newOk: isRnCheckpoint });
+    check(changed.length === 0, `(2b) every file is unchanged and none is new but RN's RKStorage checkpoint, so no .prewrite and no write (${before.size} files)${shortList(changed)}`);
 };
 
 const scenarioUnreadable = async (label, withWal) => {
