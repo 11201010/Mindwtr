@@ -27,16 +27,39 @@ class DataFilesTest {
         assertEquals(100L, out.length())
     }
 
-    // D1a review P2-9: the production admission runs before any decode; an oversized copy is refused even when it is not UTF-8.
-    @Test fun aStagedCopyIsAdmittedWithTheLibraryBeforeItIsDecoded() {
-        val file = File(folder.root, "staged")
-        val library = 4L * 1024 * 1024
-        file.writeBytes(ByteArray((DataTransferLimits.LIMIT_BYTES - library + 1).toInt()) { 0xff.toByte() })
-        assertTrue(runCatching { readStaged(file, library) }.exceptionOrNull() is TransferTooLarge)
-        file.writeText("{}")
-        assertEquals("{}", readStaged(file, library))
-        assertTrue(runCatching { admitTransfer(DataTransferLimits.LIMIT_BYTES - library + 1, library) }.exceptionOrNull() is TransferTooLarge)
-        admitTransfer(DataTransferLimits.LIMIT_BYTES - library, library)
+    private val library = 4L * 1024 * 1024
+    private fun stagedCopy(bytes: ByteArray) = StagedCopies.create(File(folder.root, "backup-import")).apply { writeBytes(bytes) }
+
+    // D1a review P2-9 and 2 (#8, #9): a pick's production path (backupPicked's previewStaged) admits the copy with the library
+    // before decoding or inspecting it, and releases the copy on every refusal or failure.
+    @Test fun aPickedCopyIsAdmittedBeforeItIsDecodedAndReleasedUnlessItIsAsked() {
+        val dir = File(folder.root, "backup-import")
+        var inspected = 0
+        val oversized = stagedCopy(ByteArray((DataTransferLimits.LIMIT_BYTES - library + 1).toInt()) { 0xff.toByte() })
+        assertTrue(runCatching { previewStaged(oversized, library) { inspected += 1; JSONObject().put("valid", true) } }.exceptionOrNull() is TransferTooLarge)
+        assertEquals(0, inspected)
+        val throwing = stagedCopy("{}".toByteArray())
+        assertTrue(runCatching { previewStaged(throwing, library) { throw IllegalStateException("inspect failed") } }.isFailure)
+        val invalid = stagedCopy("{}".toByteArray())
+        assertFalse(previewStaged(invalid, library) { JSONObject().put("valid", false) }.second.getBoolean("valid"))
+        val asked = stagedCopy("{}".toByteArray())
+        assertEquals("{}", previewStaged(asked, library) { JSONObject().put("valid", true) }.first)
+        StagedCopies.sweep(dir)
+        assertEquals(listOf(asked.name), dir.list().orEmpty().toList())
+        StagedCopies.release(asked)
+    }
+
+    // D1a review P2-9: an operation's production path (run's admittedText) admits before it reads, and the copy goes either way.
+    @Test fun anOperationAdmitsItsSourceBeforeReadingIt() {
+        var read = 0
+        val staged = stagedCopy(ByteArray(10))
+        assertTrue(runCatching { admittedText(DataTransferLimits.LIMIT_BYTES - library + 1, library, staged) { read += 1; "{}" } }.exceptionOrNull() is TransferTooLarge)
+        assertEquals(0, read)
+        assertFalse(staged.exists())
+        val invalid = stagedCopy(ByteArray(10))
+        assertTrue(runCatching { admittedText(10, library, invalid) { null } }.exceptionOrNull()?.message?.startsWith("INVALID_INPUT:") == true)
+        assertFalse(invalid.exists())
+        assertEquals("{}", admittedText(DataTransferLimits.LIMIT_BYTES - library, library, null) { "{}" })
     }
 
     // D1a review P2-8: a start sweeps every staged copy no open question owns, a partial one too.
@@ -51,14 +74,46 @@ class DataFilesTest {
         assertFalse(live.exists())
     }
 
-    // D1a review P2-7: a leftover that did not commit says so, with core's reason, under RN's failure title.
-    @Test fun aLeftoverThatDidNotCommitShowsItsReason() {
-        val stale = leftoverFailure(JSONObject().put("operation", "merge").put("outcome", "stale").put("error", "STALE_REVISION: Local data changed after backup preparation"))
-        assertEquals("settings.mergeBackupFailed", stale.titleKey)
-        assertEquals("Local data changed after backup preparation", stale.message)
-        val unresolved = leftoverFailure(JSONObject().put("operation", "replace").put("outcome", "refused").put("error", "INVALID_INPUT: Backup operation files do not match"))
-        assertEquals("settings.backupMobile.restoreFailed", unresolved.titleKey)
-        assertEquals("Backup operation files do not match", unresolved.message)
+    // D1a review P1-2 and 2 (#2): run's own snapshot write (writeOperationSnapshot) prunes nothing; operations that each wrote
+    // their snapshot and died before the journal cost no older recovery point.
+    @Test fun repeatedDeathsBeforeTheJournalKeepEveryOlderSnapshot() {
+        val dir = File(folder.root, "snapshots").apply { mkdirs() }
+        val history = (1..5).map { "data.2026-08-0${it}T00-00-00.000.snapshot.json" }.onEach { File(dir, it).writeText("{}") }
+        repeat(3) { writeOperationSnapshot(dir, tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots.nextName(dir, java.util.Date()), "{}", syncDirectory = {}) }
+        assertTrue(dir.list().orEmpty().toList().containsAll(history))
+        assertEquals(8, tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots.list(dir).size)
+    }
+
+    // D1a review P2-7 and 2 (#7): a start's leftover is presented before its record goes; a stale or mismatched plan's record
+    // (as CoreHost.backupFinish writes it) shows RN's failure title with core's reason.
+    @Test fun aLeftoverIsPresentedBeforeItsRecordGoes() {
+        val snapshots = File(folder.root, "snapshots").apply { mkdirs() }
+        val ops = tech.dongdongbh.mindwtr.pilot.core.BackupOperations(File(folder.root, "ops"), snapshots, syncDirectory = {})
+        val a = "11111111-1111-4111-8111-111111111111"
+        for ((record, title, message) in listOf(
+            Triple(JSONObject().put("operation", "merge").put("outcome", "stale").put("error", "STALE_REVISION: Local data changed after backup preparation"),
+                "settings.mergeBackupFailed", "Local data changed after backup preparation"),
+            Triple(JSONObject().put("operation", "replace").put("outcome", "refused").put("error", "INVALID_INPUT: Backup operation files do not match"),
+                "settings.backupMobile.restoreFailed", "Backup operation files do not match"),
+        )) {
+            ops.writeResult(record.put("requestId", a).put("reply", JSONObject.NULL).put("undoSnapshot", ""))
+            var presented: Leftover? = null
+            var shown: (() -> Unit)? = null
+            takeLeftover(ops, snapshots, { error("not committed") }) { leftover, done -> presented = leftover; shown = done }
+            val failure = presented as Leftover.Failure
+            assertEquals(title, failure.titleKey)
+            assertEquals(message, failure.message)
+            assertEquals(a, ops.result()?.getString("requestId"))
+            shown!!()
+            assertNull(ops.result())
+        }
+        val undo = "data.2026-08-09T12-34-05.123.snapshot.json"
+        File(snapshots, undo).writeText("{}")
+        ops.writeResult(JSONObject().put("requestId", a).put("operation", "merge").put("outcome", "committed").put("reply", JSONObject().put("operation", "merge")).put("undoSnapshot", undo))
+        var presented: Leftover? = null
+        takeLeftover(ops, snapshots, { JSONObject().put("title", "Merge Backup") }) { leftover, _ -> presented = leftover }
+        assertEquals(undo, (presented as Leftover.Result).undo)
+        assertEquals(a, ops.result()?.getString("requestId"))
     }
 
     @Test fun invalidUtf8IsRefusedNotReplaced() {

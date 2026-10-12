@@ -19,6 +19,7 @@ import tech.dongdongbh.mindwtr.pilot.core.BackupOperations
 import tech.dongdongbh.mindwtr.pilot.core.CoreHost
 import tech.dongdongbh.mindwtr.pilot.core.RecoverySnapshots
 import tech.dongdongbh.mindwtr.pilot.core.debugProperty
+import tech.dongdongbh.mindwtr.pilot.core.syncDirectory
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -218,15 +219,16 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
-            val text = try { readStaged(stage.file, runtime.databaseBytes()) } catch (failure: TransferTooLarge) {
-                StagedCopies.release(stage.file)
+            val kind = if (mode == "restore") "json-restore" else "json"
+            val (text, preview) = try {
+                previewStaged(stage.file, runtime.databaseBytes()) { runtime.backupInspect(it, stage.metadata.toString(), kind) }
+            } catch (failure: Throwable) {
+                Log.w(CoreHost.TAG, "Backup preview failed ${failureForLog(failure)}")
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
-            val preview = runtime.backupInspect(text ?: "", stage.metadata.toString(), if (mode == "restore") "json-restore" else "json")
             shell.ui {
                 if (!preview.getBoolean("valid") || text == null) {
-                    StagedCopies.release(stage.file)
                     finish()
                     // RN's showSettingsWarning (4.2 s).
                     shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 4_200)
@@ -294,22 +296,18 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val ops = operations
             val requestId = UUID.randomUUID().toString()
             try {
-                admitTransfer(sourceBytes, runtime.databaseBytes())
-                // The staged copy goes once read (or once the read failed); the operation holds its text from here.
-                val read = try { text() } finally { staged?.let(StagedCopies::release) }
-                val source = read ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
+                val source = admittedText(sourceBytes, runtime.databaseBytes(), staged, text)
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
                 val prepared = runtime.backupPrepare(JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
                     .put("text", source).put("metadata", metadata).toString())
                 val recovery = prepared.opt("recoveryJSON") as? String
-                // No prune before the commit: an operation that never commits must not cost an older recovery point.
-                if (recovery != null) RecoverySnapshots.write(snapshots, name, recovery, exact = true, prune = false)
+                if (recovery != null) writeOperationSnapshot(snapshots, name, recovery)
                 stop("after-snapshot")
                 val reference = ops.publish(requestId, mode, prepared.getString("planJSON"), name, recovery) { stop("mid-plan") }
                 val reply = runtime.backupCommit(reference, name)
                 val result = runtime.backupResultModel(reply.toString())
                 RecoverySnapshots.prune(snapshots, ops.protectedNames())
-                shell.ui { finish(); showResult(requestId, result, if (mode == "restore") null else name) }
+                shell.ui { finish(); showResult(result, if (mode == "restore") null else name) { ops.clearResult(requestId) } }
             } catch (failure: Throwable) {
                 staged?.let(StagedCopies::release)
                 Log.w(CoreHost.TAG, "Backup operation failed mode=$mode ${failureForLog(failure)}")
@@ -318,12 +316,12 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
         }
     }
 
-    /** RN's result toast (core's words and duration), with Undo; the result record goes once it shows (design §4.3). */
-    private fun showResult(requestId: String, result: JSONObject, undo: String?) {
+    /** RN's result toast (core's words and duration), with Undo; [shown] (the result record goes) runs once it shows (design §4.3). */
+    private fun showResult(result: JSONObject, undo: String?, shown: () -> Unit) {
         val undoLabel = result.optString("undoLabel").takeIf { it.isNotEmpty() && undo != null }
         shell.showToast(result.getString("title"), result.getString("message"), "success", undoLabel,
             if (result.isNull("durationMs")) null else result.getLong("durationMs")) { undo?.let { askSnapshot(it, undo = true) } }
-        Thread { runCatching { operations.clearResult(requestId) } }.start()
+        Thread { runCatching(shown) }.start()
     }
 
     /**
@@ -334,22 +332,18 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     fun leftover() = whenHosted { runtime ->
         runCatching { cleanupInterruptedExport(runtime) }.onFailure { Log.w(CoreHost.TAG, "Interrupted export cleanup failed ${failureForLog(it)}") }
         runCatching { StagedCopies.sweep(staging) }.onFailure { Log.w(CoreHost.TAG, "Staged copy sweep failed ${failureForLog(it)}") }
-        val ops = operations
-        val record = ops.result() ?: return@whenHosted
-        val requestId = record.optString("requestId")
-        val reply = record.optJSONObject("reply")
-        if (record.optString("outcome") != "committed" || reply == null) {
-            val failure = leftoverFailure(record)
-            val title = runCatching { runtime.strings(listOf(failure.titleKey)).getJSONObject("strings").getString(failure.titleKey) }.getOrDefault("")
-            shell.ui {
-                shell.showToast(title, failure.message, "error", durationMs = 5_200)
-                Thread { runCatching { ops.clearResult(requestId) } }.start()
+        takeLeftover(operations, snapshots, { runtime.backupResultModel(it) }) { leftover, shown ->
+            when (leftover) {
+                is Leftover.Result -> shell.ui { showResult(leftover.model, leftover.undo, shown) }
+                is Leftover.Failure -> {
+                    val title = runCatching { runtime.strings(listOf(leftover.titleKey)).getJSONObject("strings").getString(leftover.titleKey) }.getOrDefault("")
+                    shell.ui {
+                        shell.showToast(title, leftover.message, "error", durationMs = 5_200)
+                        Thread { runCatching(shown) }.start()
+                    }
+                }
             }
-            return@whenHosted
         }
-        val result = runCatching { runtime.backupResultModel(reply.toString()) }.getOrNull() ?: run { ops.clearResult(requestId); return@whenHosted }
-        val undo = record.optString("undoSnapshot").takeIf { it.isNotEmpty() && File(snapshots, it).isFile }
-        shell.ui { showResult(requestId, result, undo) }
     }
 
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */
@@ -551,13 +545,59 @@ internal object StagedCopies {
     }
 }
 
-/** A start's leftover result that did not commit: RN's failure title (a core key) and core's reason. */
-internal class LeftoverFailure(val titleKey: String, val message: String)
+/** A start's leftover result: a committed one's toast model and Undo snapshot, or one that did not commit (RN's failure title, a core key, and core's reason). */
+internal sealed class Leftover {
+    class Result(val model: JSONObject, val undo: String?) : Leftover()
+    class Failure(val titleKey: String, val message: String) : Leftover()
+}
 
-internal fun leftoverFailure(record: JSONObject): LeftoverFailure {
-    val titleKey = if (record.optString("operation") == "merge") "settings.mergeBackupFailed" else "settings.backupMobile.restoreFailed"
-    val error = record.optString("error")
-    return LeftoverFailure(titleKey, error.substringAfter(": ").ifEmpty { error.ifEmpty { record.optString("outcome") } })
+/**
+ * A start's result record, [present]ed first; it leaves the disk only once [present] calls back (its toast showed), so a death
+ * in between shows it again. A committed record whose reply core cannot read goes at once (its data change is already in).
+ */
+internal fun takeLeftover(ops: BackupOperations, snapshots: File, resultModel: (String) -> JSONObject?, present: (Leftover, shown: () -> Unit) -> Unit) {
+    val record = ops.result() ?: return
+    val requestId = record.optString("requestId")
+    val shown = { ops.clearResult(requestId) }
+    val reply = record.optJSONObject("reply")
+    if (record.optString("outcome") != "committed" || reply == null) {
+        val titleKey = if (record.optString("operation") == "merge") "settings.mergeBackupFailed" else "settings.backupMobile.restoreFailed"
+        val error = record.optString("error")
+        present(Leftover.Failure(titleKey, error.substringAfter(": ").ifEmpty { error.ifEmpty { record.optString("outcome") } }), shown)
+        return
+    }
+    val model = runCatching { resultModel(reply.toString()) }.getOrNull() ?: return shown()
+    present(Leftover.Result(model, record.optString("undoSnapshot").takeIf { it.isNotEmpty() && File(snapshots, it).isFile }), shown)
+}
+
+/** A backup operation's recovery snapshot, before its plan and its journaled commit: never pruned there, so an operation that never commits costs no older recovery point. */
+internal fun writeOperationSnapshot(dir: File, name: String, recovery: String, syncDirectory: (File) -> Unit = ::syncDirectory): String =
+    RecoverySnapshots.write(dir, name, recovery, exact = true, prune = false, syncDirectory = syncDirectory)
+
+/**
+ * A staged pick to its question: admitted with the library first (an oversized copy is never decoded), strict UTF-8, then core's
+ * preview ([inspect]). The copy stays only for a valid preview; a refusal, an invalid file or a failure releases it.
+ */
+internal fun previewStaged(file: File, libraryBytes: Long, inspect: (String) -> JSONObject): Pair<String?, JSONObject> {
+    try {
+        val text = readStaged(file, libraryBytes)
+        val preview = inspect(text ?: "")
+        if (!preview.optBoolean("valid") || text == null) StagedCopies.release(file)
+        return text to preview
+    } catch (failure: Throwable) {
+        StagedCopies.release(file)
+        throw failure
+    }
+}
+
+/** An operation's source text: admitted with the library before [text] reads it; the staged copy goes once read or refused. */
+internal fun admittedText(sourceBytes: Long, libraryBytes: Long, staged: File?, text: () -> String?): String {
+    try {
+        admitTransfer(sourceBytes, libraryBytes)
+        return text() ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
+    } finally {
+        staged?.let(StagedCopies::release)
+    }
 }
 
 /** A picked file, or it with the library, over the measured transfer limit (design §4.1). */
