@@ -361,11 +361,12 @@ try {
     dav.state.down = true;
     await capture(titles.down);
     await until('the automatic sync to fail', () => badge()[0] === 'attention', 180_000);
+    // Read the dot before the Sync screen visit (~65 s): the rate-limit retry at +60 s turns the badge to syncing.
+    check(await menuDotIsRed(), '(4) the Menu tab\'s sync dot shows RN\'s attention red');
     nodes = await openSync();
     const failed = await statusLine();
     check(failed.status.endsWith(en['settings.syncStatusFailedSuffix']) && Boolean(failed.error),
         `(4) the status line shows the failure: "${failed.status}" / "${failed.error}"`);
-    check(await menuDotIsRed(), '(4) the Menu tab\'s sync dot shows RN\'s attention red');
     check(phoneTasks()[titles.down] === 'inbox', '(4) the capture stays on the phone');
     check(!webdavDocument(dav, FOLDER).tasks.some((task) => task.title === titles.down)
         && dav.state.requests.filter((request) => request.startsWith('PUT')).length === writesBefore, '(4) nothing reached the server while it was down');
