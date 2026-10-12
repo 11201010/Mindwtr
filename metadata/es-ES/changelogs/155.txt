@@ -1,0 +1,1 @@
+Copia y abre enlaces de tareas. Añade estimaciones con /estimate:45m y convierte listas en tareas de proyecto con Deshacer. Los recordatorios repetidos sustituyen los anteriores y se recuperan tras reinicios y cambios de zona horaria. Mejoras en WebDAV de Synology, cifrado, adjuntos y conservación del archivo. La vista previa queda sobre la barra de navegación.

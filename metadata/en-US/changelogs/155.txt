@@ -1,0 +1,1 @@
+Copy and open task links. Add time estimates with /estimate:45m and turn checklists into project tasks with Undo. Repeating reminders replace earlier notifications and recover after restart and time-zone changes. Improve Synology WebDAV sync, encryption setup, attachment recovery and archive retention. Keep the task preview above the navigation bar.

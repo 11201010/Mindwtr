@@ -88,6 +88,25 @@
   <url type="bugtracker">https://github.com/dongdongbh/Mindwtr/issues</url>
   <url type="vcs-browser">https://github.com/dongdongbh/Mindwtr</url>
   <releases>
+    <release version="1.3.5" date="2026-10-12">
+      <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.5</url>
+      <description>
+        <p>Mindwtr 1.3.5 adds Timeline editing, task links and better desktop organization.</p>
+        <p xml:lang="de">Mindwtr 1.3.5 ergänzt Timeline-Bearbeitung, Aufgabenlinks und bessere Organisation am Desktop.</p>
+        <ul>
+          <li>Filter Timeline by status, show completed work and move or resize dates with Undo.</li>
+          <li xml:lang="de">Filtere Timeline nach Status, zeige erledigte Aufgaben und verschiebe Termine mit Rückgängig.</li>
+          <li>Autocomplete contexts and tags in bulk organize, and drag tasks onto contexts.</li>
+          <li xml:lang="de">Vervollständige Kontexte und Tags bei der Mehrfachbearbeitung und ziehe Aufgaben auf Kontexte.</li>
+          <li>Copy task links, enter quick-add estimates and turn checklists into project tasks.</li>
+          <li xml:lang="de">Kopiere Aufgabenlinks, erfasse Zeitschätzungen und wandle Checklisten in Projektaufgaben um.</li>
+          <li>Run built-in MCP inside the app and filter Obsidian imports by a required inline tag.</li>
+          <li xml:lang="de">Nutze MCP direkt in der App und filtere Obsidian-Importe nach einem erforderlichen Inline-Tag.</li>
+          <li>Fix File Sync attachment copies and MCP connection copying in AppImage builds; protect archive retention and encryption changes.</li>
+          <li xml:lang="de">Korrigiere File-Sync-Anhänge und das Kopieren der MCP-Verbindung in AppImages; schütze Archivaufbewahrung und Verschlüsselungsänderungen.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.4" date="2026-10-05">
       <url type="details">https://github.com/dongdongbh/Mindwtr/releases/tag/v1.3.4</url>
       <description>
