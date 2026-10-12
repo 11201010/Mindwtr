@@ -41,6 +41,7 @@ const fileSystemMocks = vi.hoisted(() => ({
   fileSizes: new Map<string, number>(),
   writeError: null as Error | null,
   deleteError: null as Error | null,
+  truncateThenThrow: null as Error | null,
   getInfoAsync: vi.fn(),
   readAsStringAsync: vi.fn(),
   writeAsStringAsync: vi.fn(),
@@ -131,6 +132,9 @@ vi.mock('expo-file-system', () => ({
     }
     write(text: string) {
       if (fileSystemMocks.writeError) throw fileSystemMocks.writeError;
+      // A death in the middle of a write: the file is cut short, then nothing more runs.
+      const cut = fileSystemMocks.truncateThenThrow;
+      if (cut) { fileSystemMocks.truncateThenThrow = null; fileSystemMocks.fileContents.set(this.uri, ''); throw cut; }
       fileSystemMocks.fileWrites.push(text);
       fileSystemMocks.fileContents.set(this.uri, text);
     }
@@ -189,6 +193,7 @@ describe('mobile data transfer', () => {
     fileSystemMocks.fileWrites = [];
     fileSystemMocks.writeError = null;
     fileSystemMocks.deleteError = null;
+    fileSystemMocks.truncateThenThrow = null;
     fileSystemMocks.readAsStringAsync.mockResolvedValue('');
     fileSystemMocks.getInfoAsync.mockResolvedValue({ exists: true, size: 1 });
     fileSystemMocks.writeAsStringAsync.mockResolvedValue(undefined);
@@ -401,6 +406,24 @@ describe('mobile data transfer', () => {
     await cleanupInterruptedBackupExport();
 
     expect(fileSystemMocks.deleteSafFileAsync).not.toHaveBeenCalled();
+  });
+
+  // D1a review 3: a first death left the newest list only in the pending file; the next update promotes it to the record before
+  // it reuses the pending file, so a second death in that write loses nothing.
+  it('keeps a recovered pending list through a second interrupted write', async () => {
+    Platform.OS = 'android';
+    const half = 'content://com.android.providers.downloads.documents/document/downloads%3AHalf.json';
+    fileSystemMocks.fileContents.set(`${RECORD}.pending`, JSON.stringify({ pending: [{ uri: half, owner: 'an-earlier-run' }] }));
+    fileSystemMocks.requestDirectoryPermissionsAsync.mockResolvedValue({ granted: true, directoryUri: 'content://tree/downloads' });
+    fileSystemMocks.createSafFileAsync.mockImplementationOnce(async () => {
+      fileSystemMocks.truncateThenThrow = new Error('process died mid-write');
+      return 'content://com.android.providers.downloads.documents/document/downloads%3ANext.json';
+    });
+    fileSystemMocks.deleteSafFileAsync.mockRejectedValue(new Error('provider unavailable'));
+
+    await exportCurrentDataBackup(emptyData);
+
+    expect(listedUris()).toEqual([half]);
   });
 
   // D1a review P2-4: a cleanup the provider refused keeps its entry, and a later export never replaces it.

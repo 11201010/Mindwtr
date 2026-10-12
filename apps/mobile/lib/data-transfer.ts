@@ -503,10 +503,17 @@ const updateExportPending = (change: (pending: ExportPendingEntry[]) => ExportPe
     const files = exportPendingFiles();
     if (!files) return;
     const next = change(readExportPending());
-    if (!files.pending.exists) files.pending.create({ intermediates: true, overwrite: true });
-    files.pending.write(JSON.stringify({ pending: next }));
+    // A whole pending list a death left behind is the newest: it becomes the record before the pending file is reused, so a
+    // second death in this write still finds it.
+    if (parseExportPending(files.pending) !== null) {
+        if (files.record.exists) files.record.delete();
+        files.pending.move(files.record);
+    }
+    const pending = exportPendingFiles()!.pending;
+    if (!pending.exists) pending.create({ intermediates: true, overwrite: true });
+    pending.write(JSON.stringify({ pending: next }));
     if (files.record.exists) files.record.delete();
-    files.pending.move(files.record);
+    pending.move(files.record);
 };
 
 // Deleted, then confirmed gone: Expo's delete can resolve although the provider kept the file.
