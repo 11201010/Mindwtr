@@ -389,9 +389,10 @@ try {
     const zip = await exportFile('data-transfer-export-tasknotes', '-tasknotes.zip');
     const entries = execFileSync('unzip', ['-Z1', zip.local], { encoding: 'utf8' });
     check(entries.includes(`d1a${run}`), `(E1) ${zip.name} holds a TaskNotes file per task`);
-    // The three exports are core's bytes: the CSV and each TaskNotes file equal core's serializers over the JSON export of the
-    // same library (data-export-expected.ts runs core under bun).
-    const expected = JSON.parse(execFileSync('bun', [resolve(app, 'scripts/data-export-expected.ts'), json.local], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+    // The three exports are core's bytes: data-export-expected.ts loads the database pulled after the JSON export through core's
+    // store (bun) and runs core's serializers; the library does not change between the three exports.
+    const expected = JSON.parse(execFileSync('bun', [resolve(app, 'scripts/data-export-expected.ts'), db], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+    check(readFileSync(json.local, 'utf8') === expected.json, `(E1) ${json.name} is byte for byte core's serializeBackupData of the library`);
     check(csvText === expected.csv, `(E1) ${csv.name} is byte for byte core's serializeMindwtrCsv`);
     const zipPaths = entries.split('\n').filter(Boolean).sort();
     check(JSON.stringify(zipPaths) === JSON.stringify(expected.tasknotes.map((file) => file.path).sort())
@@ -501,6 +502,23 @@ try {
     await crash('after-sql-commit', { commit_stop: 'backupDocumentCommit' }, fixture(`d1-crash-8-${run}.json`, [task(`d1n${run}`)]), { landed: true, expectReplay: true });
     await crash('after-commit', { journal_stop: 'after:backupDocumentCommit' }, fixture(`d1-crash-4-${run}.json`, [task(`d1h${run}`)]), { landed: true, expectReplay: true });
     await crash('after-settle', { backup_stop: 'after-settle' }, fixture(`d1-crash-5-${run}.json`, [task(`d1i${run}`)]), { landed: true });
+
+    // A plan changed on disk while the process was dead is never sent (the identity check): the start shows RN's Merge failed
+    // with core's reason before the record goes, and nothing lands (review 2, #7).
+    setProp('journal_stop', 'before:backupDocumentCommit');
+    const changed = fixture(`d1-crash-9-${run}.json`, [task(`d1o${run}`)]);
+    push(changed);
+    await merge(changed);
+    await tap(confirmButton(await waitFor('the question', (current) => Boolean(confirmButton(current)), 60_000)));
+    await until('the process to end (changed plan)', () => !pid(), 90_000, 500);
+    setProp('journal_stop', '');
+    const [changedOp] = operations();
+    runAs(`sh -c 'echo x >> no_backup/backup-operations/${changedOp}/plan.json'`);
+    await launch();
+    await toastWith(en['settings.mergeBackupFailed'], 60_000);
+    check(true, '(E4 changed plan) the start showed RN\'s Merge failed for a plan changed on disk');
+    await until('(E4 changed plan) the journal and the operation folder to empty', () => journal().length === 0 && operations().length === 0, 30_000);
+    check(!liveTitles('changed-plan').includes(`d1o${run}`), '(E4 changed plan) the changed plan was never sent: nothing landed');
 
     // settle-fail: the merge shows its result, but its entry and plan stay until the next start replays them from the receipt.
     setProp('backup_stop', 'settle-fail');
