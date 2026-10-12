@@ -45,11 +45,11 @@ object RecoverySnapshots {
      * Writes [contents] as core's [fileName] (or, unless [exact], its clash-numbered twin) and returns the name written. [exact]
      * refuses a name already taken: a backup operation's plan names its snapshot before the write. Every writer in the process
      * (a backup operation, a multiline capture) runs one at a time: the name check, the shared pending file and the rename never
-     * interleave.
-     * [beforePublish] runs with the pending file written and synced, before its rename (a test seam).
+     * interleave. [prune] false (a backup operation before its commit) leaves every older snapshot; the operation prunes once
+     * it settled. [beforePublish] runs with the pending file written and synced, before its rename (a test seam).
      */
     fun write(dir: File, fileName: String, contents: String, protect: Set<String> = emptySet(), exact: Boolean = false,
-              syncDirectory: (File) -> Unit = ::syncDirectory, beforePublish: () -> Unit = {}): String = synchronized(this) {
+              prune: Boolean = true, syncDirectory: (File) -> Unit = ::syncDirectory, beforePublish: () -> Unit = {}): String = synchronized(this) {
         dir.mkdirs()
         var name = fileName
         var clash = 0
@@ -69,7 +69,7 @@ object RecoverySnapshots {
             throw failure
         }
         syncDirectory(dir)
-        prune(dir, protect + name)
+        if (prune) prune(dir, protect + name)
         name
     }
 

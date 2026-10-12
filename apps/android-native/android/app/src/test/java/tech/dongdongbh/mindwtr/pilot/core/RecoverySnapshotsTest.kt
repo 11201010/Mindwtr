@@ -96,4 +96,13 @@ class RecoverySnapshotsTest {
         assertEquals("backup", File(dir, name).readText())
         assertEquals("capture", File(dir, RecoverySnapshots.name(at, 1)).readText())
     }
+
+    // D1a review P1-2: operations that wrote their snapshot and then died before the journal prune nothing.
+    @Test fun snapshotsWrittenBeforeACommitPruneNoOlderRecoveryPoint() {
+        dir.mkdirs()
+        val history = (1..5).map { "data.2026-08-0${it}T00-00-00.000.snapshot.json" }.onEach { File(dir, it).writeText("{}") }
+        repeat(3) { RecoverySnapshots.write(dir, RecoverySnapshots.nextName(dir, at), "{}", exact = true, prune = false, syncDirectory = noSync) }
+        assertTrue(names().containsAll(history))
+        assertEquals(8, RecoverySnapshots.list(dir).size)
+    }
 }
