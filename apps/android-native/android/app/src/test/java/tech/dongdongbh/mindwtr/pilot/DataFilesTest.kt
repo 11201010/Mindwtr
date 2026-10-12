@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
@@ -32,43 +33,77 @@ class DataFilesTest {
         assertEquals("{\"title\":\"日本語 🦉\"}", utf8(file))
     }
 
+    private val record get() = File(folder.root, "export-pending.json")
+    private fun listed() = if (record.isFile) JSONObject(record.readText()).getJSONArray("pending").let { list -> List(list.length()) { list.getString(it) } } else emptyList()
+
     @Test fun aFailedFolderWriteDeletesTheDocumentItCreated() {
-        val record = File(folder.root, "export-pending.json")
         val deleted = mutableListOf<String>()
         val failure = runCatching {
-            writeExportDocument(record, create = { "content://doc/1" }, write = { assertTrue(record.isFile); throw IOException("provider") },
-                delete = { deleted += it; true })
+            writeExportDocument(record, create = { "content://doc/1" }, write = { assertEquals(listOf("content://doc/1"), listed()); throw IOException("provider") },
+                delete = { deleted += it; true }, exists = { true })
         }.exceptionOrNull()
         assertTrue(failure is IOException)
         assertEquals(listOf("content://doc/1"), deleted)
-        assertFalse(record.exists())
+        assertTrue(listed().isEmpty())
     }
 
     @Test fun aRefusedCreateLeavesNothingToDelete() {
-        val record = File(folder.root, "export-pending.json")
         val deleted = mutableListOf<String>()
-        assertTrue(runCatching { writeExportDocument(record, create = { throw IOException("refused") }, write = {}, delete = { deleted += it; true }) }.isFailure)
+        assertTrue(runCatching { writeExportDocument(record, create = { throw IOException("refused") }, write = {}, delete = { deleted += it; true }, exists = { true }) }.isFailure)
         assertTrue(deleted.isEmpty())
         assertFalse(record.exists())
     }
 
-    @Test fun aCompletedWriteLeavesNoRecord() {
-        val record = File(folder.root, "export-pending.json")
-        writeExportDocument(record, create = { "content://doc/2" }, write = {}, delete = { error("not deleted") })
+    @Test fun aCompletedWriteLeavesNothingListed() {
+        writeExportDocument(record, create = { "content://doc/2" }, write = {}, delete = { error("not deleted") }, exists = { true })
         assertFalse(record.exists())
-        assertNull(cleanupExportRecord(record) { error("nothing to clean") })
+        assertNull(cleanupExportRecord(record, delete = { error("nothing to clean") }, exists = { true }))
     }
 
-    @Test fun aDeathMidWriteIsCleanedAtTheNextStart() {
-        val record = File(folder.root, "export-pending.json")
-        // The process died inside write: the record stays on disk.
-        runCatching { writeExportDocument(record, create = { "content://doc/3" }, write = { throw ThreadDeath() }, delete = { false }) }
-        record.writeText("{\"uri\":\"content://doc/3\"}")
+    // D1a review P1-3: a finished document whose URI cannot leave the list is deleted now and the export fails; no later start
+    // deletes a backup this export reported as written.
+    @Test fun aFinishedWriteWhoseRecordCannotChangeFailsInsteadOfLeavingATrap() {
         val deleted = mutableListOf<String>()
-        assertEquals("deleted", cleanupExportRecord(record) { deleted += it; true })
+        val failure = runCatching {
+            writeExportDocument(record, create = { "content://doc/5" }, write = { folder.root.setWritable(false) },
+                delete = { deleted += it; true }, exists = { true })
+        }.exceptionOrNull()
+        folder.root.setWritable(true)
+        assertTrue(failure is IOException)
+        assertEquals(listOf("content://doc/5"), deleted)
+    }
+
+    // D1a review P2-9: the record a death leaves is the production writer's own, taken at the moment of the death.
+    @Test fun aDeathMidWriteIsCleanedAtTheNextStart() {
+        val atDeath = File(folder.root, "at-death.json")
+        writeExportDocument(record, create = { "content://doc/3" }, write = { record.copyTo(atDeath) }, delete = { error("not deleted") }, exists = { true })
+        val deleted = mutableListOf<String>()
+        assertEquals("deleted", cleanupExportRecord(atDeath, delete = { deleted += it; true }, exists = { true }))
         assertEquals(listOf("content://doc/3"), deleted)
-        assertFalse(record.exists())
-        record.writeText("{\"uri\":\"content://doc/4\"}")
-        assertEquals("gone", cleanupExportRecord(record) { false })
+        assertFalse(atDeath.exists())
+    }
+
+    // D1a review P2-4: a provider that refused or cannot say keeps the entry, through a later export, until the document is gone.
+    @Test fun anEntryLeavesOnlyOnceItsDocumentIsGone() {
+        writeExportDocument(record, create = { "content://doc/half" }, write = { record.copyTo(File(folder.root, "keep.json")) }, delete = { true }, exists = { true })
+        File(folder.root, "keep.json").copyTo(record, overwrite = true)
+        assertEquals("kept", cleanupExportRecord(record, delete = { throw SecurityException("provider gone") }, exists = { null }))
+        assertEquals("kept", cleanupExportRecord(record, delete = { false }, exists = { true }))
+        writeExportDocument(record, create = { "content://doc/next" }, write = {}, delete = { true }, exists = { true })
+        assertEquals(listOf("content://doc/half"), listed())
+        assertEquals("deleted", cleanupExportRecord(record, delete = { false }, exists = { false }))
+        assertTrue(listed().isEmpty())
+    }
+
+    // D1a review P2-4: the record cannot be written before the first byte; the created document goes at once.
+    @Test fun aRecordThatCannotBeWrittenDeletesTheNewDocument() {
+        val deleted = mutableListOf<String>()
+        val failure = runCatching {
+            writeExportDocument(record, create = { folder.root.setWritable(false); "content://doc/6" }, write = { error("never written") },
+                delete = { deleted += it; true }, exists = { true })
+        }.exceptionOrNull()
+        folder.root.setWritable(true)
+        assertTrue(failure is IOException)
+        assertEquals(listOf("content://doc/6"), deleted)
     }
 }

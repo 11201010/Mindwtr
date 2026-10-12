@@ -65,6 +65,13 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
     private val snapshots get() = File(app.filesDir, "snapshots")
     private val staging get() = File(app.noBackupFilesDir, "backup-import")
     private val exportPending get() = File(app.noBackupFilesDir, "export-pending.json")
+    private fun deleteDocument(uri: String): Boolean = try {
+        DocumentsContract.deleteDocument(resolver, Uri.parse(uri))
+    } catch (_: java.io.FileNotFoundException) { true }
+    /** Whether the folder still has [uri]'s document; null when the provider cannot say. */
+    private fun documentExists(uri: String): Boolean? = try {
+        resolver.query(Uri.parse(uri), arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use { it.moveToFirst() }
+    } catch (_: java.io.FileNotFoundException) { false } catch (_: Exception) { null }
     val operations get() = BackupOperations(File(app.noBackupFilesDir, "backup-operations"), snapshots, maxPlanBytes = DataTransferLimits.MAX_PLAN_BYTES)
 
     /** RN's backupAction: the running action ("export", "export:csv", "export:tasknotes", "restore", "merge", "snapshot:<name>"). */
@@ -155,7 +162,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 }
                 (resolver.openOutputStream(Uri.parse(uri), "w") ?: throw IOException("The new file cannot be opened")).use { it.write(bytes) }
             },
-            delete = { uri -> DocumentsContract.deleteDocument(resolver, Uri.parse(uri)) })
+            delete = ::deleteDocument, exists = ::documentExists)
     }
 
     /** RN's share fallback (expo-sharing): a chooser over ACTION_SEND with the file's FileProvider link and its read grant. */
@@ -323,7 +330,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /** At start, before any export: a folder document whose write never finished is deleted (the persisted grant allows it). */
     private fun cleanupInterruptedExport(runtime: CoreHost) {
-        val outcome = cleanupExportRecord(exportPending) { uri -> DocumentsContract.deleteDocument(resolver, Uri.parse(uri)) } ?: return
+        val outcome = cleanupExportRecord(exportPending, ::deleteDocument, ::documentExists) ?: return
         runtime.logLine("Native Android interrupted export removed releaseCheck=v1.3.5/android-export-cleanup", JSONObject().put("releaseCheck", "v1.3.5/android-export-cleanup").put("outcome", outcome))
     }
 
@@ -399,28 +406,63 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 }
 
 /**
- * RN's folder write with its two guards: the created document's URI is on disk (synced) in [record] before the first byte, and
- * a failed write deletes the document (RN's 206366cce) before the failure goes on. [record] goes once the write closed.
+ * The folder documents whose write has not closed (RN's export-pending.json): `{ "pending": [uri…] }`, replaced through a synced
+ * pending file and a rename. A URI is listed before the document's first byte and leaves once its write closed, or once a
+ * cleanup found the document gone. Each change reads and writes under one lock, so a start's cleanup and an export never drop
+ * each other's entries.
  */
-internal fun writeExportDocument(record: File, create: () -> String, write: (String) -> Unit, delete: (String) -> Boolean) {
-    val created = create()
-    FileOutputStream(record).use { out -> out.write(JSONObject().put("uri", created).toString().toByteArray()); out.fd.sync() }
-    try {
-        write(created)
-    } catch (failure: Throwable) {
-        runCatching { delete(created) }
-        record.delete()
-        throw failure
+private object ExportRecordLock
+
+private fun exportPendingUris(record: File): List<String> = runCatching {
+    val list = JSONObject(record.readText()).getJSONArray("pending")
+    List(list.length()) { list.getString(it) }
+}.getOrDefault(emptyList())
+
+/** [record]'s list after [change]; throws when it cannot be written (the caller then treats its write as failed). */
+private fun updateExportRecord(record: File, change: (List<String>) -> List<String>) {
+    synchronized(ExportRecordLock) {
+        val next = change(if (record.isFile) exportPendingUris(record) else emptyList())
+        if (next.isEmpty() && (!record.exists() || record.delete())) return
+        val pending = File(record.parentFile, record.name + ".pending")
+        FileOutputStream(pending).use { out -> out.write(JSONObject().put("pending", org.json.JSONArray(next)).toString().toByteArray()); out.fd.sync() }
+        if (!pending.renameTo(record)) { pending.delete(); throw IOException("Cannot save the export record") }
     }
-    record.delete()
 }
 
-/** At start: an export [record] left by a death mid-write deletes its document, then itself; "deleted", "gone", or null (no record). */
-internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean): String? {
-    if (!record.isFile) return null
-    val outcome = runCatching { if (delete(JSONObject(record.readText()).getString("uri"))) "deleted" else "gone" }.getOrElse { "gone" }
-    record.delete()
-    return outcome
+/** [uri]'s document is gone: deleted now, or confirmed absent. False when the provider refused or cannot say. */
+private fun documentGone(uri: String, delete: (String) -> Boolean, exists: (String) -> Boolean?): Boolean =
+    runCatching { delete(uri) }.getOrDefault(false) || runCatching { exists(uri) }.getOrNull() == false
+
+/**
+ * RN's folder write with its guards: the created document's URI is listed (synced) in [record] before the first byte; a failed
+ * write deletes the document (RN's 206366cce) before the failure goes on; a document whose URI cannot leave the list after its
+ * write is deleted too and the export fails, so no later start deletes a backup this one reported as written. A URI leaves the
+ * list only once its document is gone.
+ */
+internal fun writeExportDocument(record: File, create: () -> String, write: (String) -> Unit, delete: (String) -> Boolean, exists: (String) -> Boolean?) {
+    val created = create()
+    try {
+        updateExportRecord(record) { it + created }
+        write(created)
+        updateExportRecord(record) { it - created }
+    } catch (failure: Throwable) {
+        if (documentGone(created, delete, exists)) runCatching { updateExportRecord(record) { it - created } }
+        throw failure
+    }
+}
+
+/**
+ * At start: each listed document (a death mid-write) is deleted, and leaves the list once it is gone; one the provider refused
+ * stays for the next start. "deleted", "kept" (some stay), or null (nothing listed).
+ */
+internal fun cleanupExportRecord(record: File, delete: (String) -> Boolean, exists: (String) -> Boolean?): String? {
+    val listed = if (record.isFile) exportPendingUris(record) else emptyList()
+    if (listed.isEmpty()) { if (record.exists()) runCatching { updateExportRecord(record) { emptyList() } }; return null }
+    var kept = 0
+    for (uri in listed) {
+        if (documentGone(uri, delete, exists)) runCatching { updateExportRecord(record) { it - uri } }.onFailure { kept += 1 } else kept += 1
+    }
+    return if (kept > 0) "kept" else "deleted"
 }
 
 /** A picked file, or it with the library, over the measured transfer limit (design §4.1). */
