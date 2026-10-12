@@ -192,6 +192,16 @@ describe('sync encryption service', () => {
         await expect(dropbox.service.changeSyncEncryptionPassphrase('a', 'b')).rejects.toThrow('Dropbox is not configured');
     });
 
+    it('logs a no-backend unlock or passphrase change as backend-required, not error', async () => {
+        const { service, transitionLines } = createHarness();
+
+        await expect(service.provideSyncEncryptionPassphrase('x')).rejects.toThrow('SYNC_ENCRYPTION_BACKEND_REQUIRED');
+        await expect(service.changeSyncEncryptionPassphrase('a', 'b')).rejects.toThrow('SYNC_ENCRYPTION_BACKEND_REQUIRED');
+
+        expect(transitionLines().filter((line) => line.extra.phase === 'end').map((line) => [line.extra.kind, line.extra.outcome]))
+            .toEqual([['unlock', 'backend-required'], ['change-passphrase', 'backend-required']]);
+    });
+
     it('encrypts a File Sync folder under its lease and releases the lease once', async () => {
         const folder = createMemoryFolder({ 'data.json': encode({ tasks: [], projects: [] }) });
         const { fileSync, service, state } = createHarness(

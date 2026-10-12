@@ -215,12 +215,23 @@ export type SyncEncryptionStateStoreDeps = {
     log: SyncEncryptionLogPort;
 };
 
+/** A state and the key that belongs to it. */
+export type SyncEncryptionMaterialSnapshot = {
+    state: SyncEncryptionLocalState | null;
+    key: Uint8Array | null;
+};
+
 export type SyncEncryptionStateStore = {
     loadSyncEncryptionLocalState(): Promise<SyncEncryptionLocalState | null>;
     /** Re-read the device-local sidecar after a compensated write failed. Recovery code must
      * not make its next key decision from the optimistic cache: `write()` updates that cache
      * before the store acknowledges the durable value and restores it only after rejection. */
     reloadSyncEncryptionLocalStateForRecovery(): Promise<SyncEncryptionLocalState | null>;
+    /** A remote fence was lost after a transition's final state write. Puts `before` back,
+     *  state first (the durable recovery authority) and then its key. When that cannot be done,
+     *  it leaves a state that describes the key which actually survived, keeps the incomplete
+     *  journal, and rejects. */
+    restoreAfterFenceLoss(before: SyncEncryptionMaterialSnapshot, attempted: SyncEncryptionMaterialSnapshot): Promise<void>;
     flushSyncEncryptionLocalState(): Promise<void>;
     syncEncryptionLocalState: SyncEncryptionLocalStatePort;
     syncEncryptionKeyCache: SyncEncryptionKeyCachePort;
@@ -334,6 +345,80 @@ export const createSyncEncryptionStateStore = ({
         },
     };
 
+    const keysEqual = (left: Uint8Array | null, right: Uint8Array | null): boolean => {
+        if (!left || !right) return left === right;
+        if (left.length !== right.length) return false;
+        return left.every((value, index) => value === right[index]);
+    };
+
+    const restoreAfterFenceLoss = async (
+        before: SyncEncryptionMaterialSnapshot,
+        attempted: SyncEncryptionMaterialSnapshot,
+    ): Promise<void> => {
+        const writeLocalStateDurably = async (nextState: SyncEncryptionLocalState | null): Promise<void> => {
+            await syncEncryptionLocalState.write(nextState);
+            await flushSyncEncryptionLocalState();
+        };
+        const restoreKey = async (key: Uint8Array | null): Promise<void> => {
+            if (key) await syncEncryptionKeyCache.setKey(key);
+            else await syncEncryptionKeyCache.clearKey();
+        };
+        const stateWithRetryJournal = (
+            nextState: SyncEncryptionLocalState | null,
+        ): SyncEncryptionLocalState | null => {
+            const incompleteTransition = before.state?.incompleteTransition;
+            if (!incompleteTransition) return nextState;
+            return nextState
+                ? { ...nextState, incompleteTransition }
+                : { state: 'off', incompleteTransition };
+        };
+        try {
+            // State/journal is the durable recovery authority. Persist it before changing
+            // SecureStore so a crash between the two writes always leaves a retry marker.
+            await writeLocalStateDurably(before.state);
+            await restoreKey(before.key);
+            return;
+        } catch (initialRollbackError) {
+            // A failed queued write may have reverted only the optimistic cache. Re-read both
+            // persistence domains before retrying the complete state-then-key compensation.
+            // A transient recovery read must not strand the already-known journal: the
+            // authoritative pre-commit state and key are still safe to write in order.
+            let recoveryReadError: unknown = null;
+            try {
+                await reloadSyncEncryptionLocalStateForRecovery();
+                await syncEncryptionKeyCache.getKey();
+            } catch (error) {
+                recoveryReadError = error;
+            }
+            try {
+                await writeLocalStateDurably(before.state);
+                await restoreKey(before.key);
+                return;
+            } catch (retryRollbackError) {
+                await reloadSyncEncryptionLocalStateForRecovery();
+                const durableKey = await syncEncryptionKeyCache.getKey();
+
+                // If one persistence domain did commit, leave a state/key pair that describes
+                // the key which actually survived. The incomplete journal remains present so
+                // restart cannot mistake this reconciliation for a completed transition.
+                if (keysEqual(durableKey, before.key)) {
+                    await writeLocalStateDurably(before.state);
+                    return;
+                } else if (keysEqual(durableKey, attempted.key)) {
+                    await writeLocalStateDurably(stateWithRetryJournal(attempted.state));
+                }
+
+                const failure = new Error('Failed to reconcile sync encryption state and key after remote fence loss');
+                (failure as Error & { cause?: unknown; retryRollbackError?: unknown }).cause = initialRollbackError;
+                (failure as Error & { retryRollbackError?: unknown }).retryRollbackError = retryRollbackError;
+                if (recoveryReadError) {
+                    (failure as Error & { recoveryReadError?: unknown }).recoveryReadError = recoveryReadError;
+                }
+                throw failure;
+            }
+        }
+    };
+
     /**
      * The key material this device should encrypt/decrypt sync artifacts with, or `null` when
      * encryption is genuinely off. `null` is the encryption-off path everywhere downstream —
@@ -425,6 +510,7 @@ export const createSyncEncryptionStateStore = ({
     return {
         loadSyncEncryptionLocalState,
         reloadSyncEncryptionLocalStateForRecovery,
+        restoreAfterFenceLoss,
         flushSyncEncryptionLocalState,
         syncEncryptionLocalState,
         syncEncryptionKeyCache,

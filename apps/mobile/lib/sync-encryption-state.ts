@@ -55,11 +55,10 @@ const stateStore = (): SyncEncryptionStateStore => {
 export const loadSyncEncryptionLocalState = (): Promise<SyncEncryptionLocalState | null> =>
     stateStore().loadSyncEncryptionLocalState();
 
-/** Re-read the device-local sidecar after a compensated write failed. Recovery code must
- * not make its next key decision from the optimistic cache: `write()` updates that cache
- * before AsyncStorage acknowledges the durable value and restores it only after rejection. */
-export const reloadSyncEncryptionLocalStateForRecovery = (): Promise<SyncEncryptionLocalState | null> =>
-    stateStore().reloadSyncEncryptionLocalStateForRecovery();
+/** Puts the pre-transition state and key back after a remote fence was lost (core's
+ *  `restoreAfterFenceLoss`: state first, then the key it describes). */
+export const restoreAfterFenceLoss: SyncEncryptionStateStore['restoreAfterFenceLoss'] = (before, attempted) =>
+    stateStore().restoreAfterFenceLoss(before, attempted);
 
 export const flushSyncEncryptionLocalState = (): Promise<void> => stateStore().flushSyncEncryptionLocalState();
 
