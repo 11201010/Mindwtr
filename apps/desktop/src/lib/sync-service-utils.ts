@@ -94,10 +94,19 @@ export const stripFileScheme = (uri: string): string => {
 
 const normalizeAttachmentFsPath = (path: string): string => normalizeAttachmentPathForUrl(path.trim());
 
-const isPathWithin = (dir: string, path: string): boolean => {
-    const root = normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+const isPathWithin = (dir: string, path: string, ignoreCase = false): boolean => {
+    let root = normalizeAttachmentFsPath(dir).replace(/\/+$/, '');
+    if (ignoreCase) {
+        root = root.toLowerCase();
+        path = path.toLowerCase();
+    }
     return Boolean(root) && (path === root || path.startsWith(`${root}/`));
 };
+
+// Windows (drive letter or UNC) and macOS (~/Library/Application Support) file systems
+// ignore case by default; Linux file systems do not.
+const isCaseInsensitiveDataDir = (osDataDir: string): boolean =>
+    /^([A-Za-z]:\/|\/\/)/.test(osDataDir) || osDataDir.includes('/Library/Application Support');
 
 // Every folder desktop has ever written attachment bytes into: imports, dropped
 // files and sync downloads (attachments), recordings (audio-captures) and pasted
@@ -131,12 +140,13 @@ export const createManagedAttachmentSourcePredicate = async (): Promise<(localPa
     const allowedDirs = profileRoots.flatMap((root) => ATTACHMENT_SOURCE_DIR_NAMES.map((name) => `${root}/${name}`));
     // Exactly that folder, never the OS data folder itself.
     if (trimRoot(osDataDir)) allowedDirs.push(`${trimRoot(osDataDir)}/${ATTACHMENTS_DIR_NAME}`);
+    const ignoreCase = isCaseInsensitiveDataDir(trimRoot(osDataDir));
     let refusalLogged = false;
     return (localPath: string): boolean => {
         const normalized = normalizeAttachmentFsPath(stripFileScheme(localPath));
         const reason = normalized.split('/').some((segment) => segment === '.' || segment === '..')
             ? 'dot-segment'
-            : allowedDirs.some((dir) => isPathWithin(dir, normalized)) ? null : 'outside-attachment-folders';
+            : allowedDirs.some((dir) => isPathWithin(dir, normalized, ignoreCase)) ? null : 'outside-attachment-folders';
         if (!reason) return true;
         if (!refusalLogged) {
             refusalLogged = true;

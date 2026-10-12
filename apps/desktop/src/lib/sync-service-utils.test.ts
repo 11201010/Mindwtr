@@ -313,6 +313,24 @@ describe('createManagedAttachmentSourcePredicate', () => {
         expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\..\\mindwtr\\config\\secrets.toml')).toBe(false);
     });
 
+    it('compares folders without case on Windows and macOS, with case on Linux', async () => {
+        // Windows and macOS file systems ignore case by default, so a stored URI may differ
+        // from the managed root only in case (drive letter, user name, folder name).
+        const windows = await guardFor('C:\\Users\\Alice\\AppData\\Roaming', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data');
+        expect(windows('file:///c:/Users/alice/AppData/Roaming/mindwtr/data/attachments/a1.pdf')).toBe(true);
+        expect(windows('c:\\users\\alice\\appdata\\roaming\\Mindwtr\\Attachments\\a1.pdf')).toBe(true);
+        expect(windows('c:/users/alice/appdata/roaming/MINDWTR/config/secrets.toml')).toBe(false);
+
+        const mac = await guardFor('/Users/Alice/Library/Application Support', '/Users/Alice/Library/Application Support/mindwtr/data');
+        expect(mac('/Users/alice/Library/Application Support/Mindwtr/data/Attachments/a1.pdf')).toBe(true);
+        expect(mac('/users/alice/library/application support/mindwtr/config/secrets.toml')).toBe(false);
+
+        const linux = await guardFor('/home/alice/.local/share', '/home/alice/.local/share/mindwtr');
+        expect(linux('/home/alice/.local/share/mindwtr/attachments/a1.pdf')).toBe(true);
+        expect(linux('/home/alice/.local/share/Mindwtr/attachments/a1.pdf')).toBe(false);
+        expect(linux('/home/Alice/.local/share/mindwtr/attachments/a1.pdf')).toBe(false);
+    });
+
     it('logs one refusal reason per pass and never the refused path', async () => {
         const canUpload = await guardFor('/os-data', '/os-data/mindwtr');
         canUpload('/os-data/mindwtr/config/secrets.toml');
