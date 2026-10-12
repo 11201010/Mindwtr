@@ -306,8 +306,15 @@ describe('createManagedAttachmentSourcePredicate', () => {
     it('allows the old shared attachment folder in the OS data folder, and nothing else there', async () => {
         // Before 02a9aafa2, sync downloads went to <OS data>/attachments with absolute URIs.
         const canUpload = await guardFor('C:\\Users\\Alice\\AppData\\Roaming', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data');
-        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\a1.pdf')).toBe(true);
-        expect(canUpload('file:///C:/Users/Alice/AppData/Roaming/attachments/a1.pdf')).toBe(true);
+        const id = '3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b';
+        expect(canUpload(`C:\\Users\\Alice\\AppData\\Roaming\\attachments\\${id}.pdf`)).toBe(true);
+        expect(canUpload(`file:///C:/Users/Alice/AppData/Roaming/attachments/${id}.pdf`)).toBe(true);
+        // The folder name is generic: other apps' files there, or anything in a subfolder, stay refused.
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\a1.pdf')).toBe(false);
+        expect(canUpload(`C:\\Users\\Alice\\AppData\\Roaming\\attachments\\other\\${id}.pdf`)).toBe(false);
+        const linux = await guardFor('/home/alice/.local/share', '/home/alice/.local/share/mindwtr');
+        expect(linux(`/home/alice/.local/share/attachments/${id}`)).toBe(true);
+        expect(linux('/home/alice/.local/share/attachments/notes.txt')).toBe(false);
         expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\audio-captures\\rec.wav')).toBe(false);
         expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\secrets.toml')).toBe(false);
         expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\..\\mindwtr\\config\\secrets.toml')).toBe(false);
