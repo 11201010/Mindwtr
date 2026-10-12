@@ -8,7 +8,8 @@
 // - startCloud: the real self-hosted Mindwtr cloud (apps/cloud) under Bun, with one token and a scratch data folder.
 // - hostDevice: the real native bundle (core-host.js) in a Node VM, on node:sqlite, an in-memory RKStorage and secret
 //   store, node:http for its fetch, and @noble/hashes and node:crypto for its sync crypto: core running as a second device,
-//   bound exactly as the Android host binds it.
+//   bound exactly as the Android host binds it. `automaticSync: false` leaves out core's automatic triggers (syncStart), so the
+//   device syncs only when a check tells it: its own timed syncs otherwise take the folder's fence while the phone syncs.
 import { spawn } from 'node:child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { argon2id } from '@noble/hashes/argon2.js';
@@ -131,7 +132,7 @@ export const startCloud = async ({ repo, port, token, dataDir }) => {
  * only), and CoreHost's pumps: [call] waits on its own operation as callAsync does; an idle pump runs timers and settles
  * answers between calls, as CoreHost's does.
  */
-export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) => {
+export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot, automaticSync = true }) => {
     const { DatabaseSync } = await import('node:sqlite');
     const database = new DatabaseSync(':memory:');
     const keyValue = new Map();
@@ -347,12 +348,12 @@ export const hostDevice = async ({ bundle, name, log = () => {}, filesRoot }) =>
         methods: Object.keys(host),
         call,
         stop: () => { clearInterval(pump); database.close(); },
-        /** Boots on an empty database, reports the network online, and starts sync as ProcessCoreHost does. */
+        /** Boots on an empty database, reports the network online, and starts sync as ProcessCoreHost does (unless [automaticSync] is off). */
         async boot() {
             await call('boot', '', '', '');
             await call('language', 'en', 'en-US');
             await call('syncNetwork', JSON.stringify({ isConnected: true, isInternetReachable: true }));
-            return call('syncStart', 'active');
+            return automaticSync ? call('syncStart', 'active') : null;
         },
         /** A Sync screen command (CoreHost.syncCommand). */
         sync: (command, input = {}) => call('menuCommand', command, JSON.stringify(input)),

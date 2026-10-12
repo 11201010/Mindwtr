@@ -301,7 +301,9 @@ try {
     device.launch(ACTIVITY);
     await waitFor('the Inbox', onInbox, 60_000);
     await until('the app to start sync', () => logs().includes('Native Android sync started'), 30_000, 1_000);
-    second = await hostDevice({ bundle, name: 'second', log: (line) => { if (/error|fail/i.test(line)) console.log(`note - ${line.slice(0, 200)}`); } });
+    // The second device syncs only when told: its own timed syncs took the folder's fence while the phone synced (the phone then
+    // waits out the 5-minute lease) and rewrote the fence file during the refused unlock in (4).
+    second = await hostDevice({ bundle, name: 'second', automaticSync: false, log: (line) => { if (/error|fail/i.test(line)) console.log(`note - ${line.slice(0, 200)}`); } });
     await second.boot();
 
     // (1) WebDAV saved on the phone, plaintext; a capture to find later.
@@ -417,8 +419,11 @@ try {
     await tapThenFind((current) => tagged(current, 'sync-encryption-open'), (current) => tagged(current, 'sync-passphrase-current'), 'the unlock flow');
     await fillTag('sync-passphrase-current', PASSPHRASE);
     await tapThenFind((current) => tagged(current, 'sync-encryption-submit'), (current) => withText(current, en['settings.syncEncryptionErrorWrongPassphrase']), 'the old passphrase refused', 60_000);
-    check(remoteArtifacts(dav, FOLDER).fingerprint === folderBefore && JSON.stringify(phoneTasks()) === tasksBefore,
-        `(4) the old passphrase is refused in RN's words ("${en['settings.syncEncryptionErrorWrongPassphrase']}") and changes no file and no task`);
+    const folderAfter = remoteArtifacts(dav, FOLDER).fingerprint;
+    const tasksAfter = JSON.stringify(phoneTasks());
+    check(folderAfter === folderBefore && tasksAfter === tasksBefore,
+        `(4) the old passphrase is refused in RN's words ("${en['settings.syncEncryptionErrorWrongPassphrase']}") and changes no file and no task`
+        + (folderAfter === folderBefore ? '' : ` (folder before:\n${folderBefore}\nafter:\n${folderAfter})`) + (tasksAfter === tasksBefore ? '' : ' (the phone\'s tasks changed)'));
     await fillTag('sync-passphrase-current', NEXT);
     await tapNode((current) => tagged(current, 'sync-encryption-submit'), flowClosed, 'the new passphrase', 120_000);
     await cardShows(en['settings.syncEncryptionStatusOn']);
