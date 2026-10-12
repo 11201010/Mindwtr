@@ -289,6 +289,24 @@ describe('mobile reminder alarms', () => {
         expect(alarms.get('task:b')?.signature).toContain('2026-09-28T12:00:00.000Z');
     });
 
+    it('counts a kept minute-shifted alarm against the one-shot cap', () => {
+        const cap = getMaxPendingOneShotReminderAlarms('ios');
+        const shiftedTask = task('s', { dueDate: '2026-09-28T10:00:00.000Z' });
+        const [held] = plan({ tasks: [shiftedTask], now: new Date('2026-09-28T09:00:00.000Z') }).oneShot;
+        // Its 10:00 minute was taken, so it rings at 10:01; this cycle runs at 10:00:05.
+        const alarms = new Map<string, ReminderAlarmEntry>([['task:s', { id: 1, signature: held.signature, fireAtMs: Date.parse('2026-09-28T10:01:00.000Z') }]]);
+        const tasks = [shiftedTask, ...Array.from({ length: cap }, (_, index) => task(`t${index}`, {
+            dueDate: new Date(NOW.getTime() + (index + 1) * 60 * 60_000).toISOString(),
+        }))];
+        const result = plan({ tasks, alarms, now: new Date('2026-09-28T10:00:05.000Z'), maxOneShotReminders: cap });
+        expect(result.shifted).toEqual(['task:s']);
+        const pending = new Set([...result.oneShot.map((request) => request.key), ...result.shifted]);
+        expect(pending.size).toBeLessThanOrEqual(cap);
+        // The latest-firing new reminder waits for a later top-up.
+        expect(result.oneShot.map((request) => request.key)).not.toContain(`task:t${cap - 1}`);
+        expect(result.oneShot).toHaveLength(cap - 1);
+    });
+
     it('keys a repeating alarm by its local time of day and weekday', () => {
         const config = { title: 'Weekly review', message: 'Body', fireAt: new Date('2026-09-29T18:30:00.000Z'), repeatInterval: 'weekly' as const };
         expect(JSON.parse(buildReminderAlarmSignature(config)).fireAt).toBe('weekly:2:18:30');

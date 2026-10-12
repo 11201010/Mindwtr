@@ -14,7 +14,8 @@
  *   time only passed, or the same reminder is remade): what it delivered stays, so a cycle
  *   5 s after a reminder fires never clears it from the tray.
  * - One-shot task and project reminders are capped per platform (Android 200, iOS 60),
- *   soonest first. A cycle runs again 5 s after the soonest fires, so the window tops up.
+ *   soonest first; a kept minute-shifted alarm counts against the cap. A cycle runs again 5 s
+ *   after the soonest fires, so the window tops up.
  * - Snooze is a new alarm outside the map, 10 minutes after the tap, so a cycle never
  *   cancels it. It can still fire after the task is done: a kept trade-off.
  * - Android start requests remove orphaned native rows (`findStaleNativeReminderAlarms`),
@@ -352,6 +353,14 @@ export function planReminderAlarms(input: ReminderAlarmPlanInput): ReminderAlarm
             && signedFireAtMs !== null && signedFireAtMs <= nowMs
             && getActiveCancelReason(key, entry, requested.has(key), context) === 'expired';
     });
+    // A kept shifted alarm holds one of the platform's one-shot places: the latest new requests wait for a top-up.
+    let excess = oneShot.length + shifted.filter((key) => !requested.has(key)).length - input.maxOneShotReminders;
+    for (let index = oneShot.length - 1; excess > 0 && index >= 0; index -= 1) {
+        if (shifted.includes(oneShot[index].key)) continue;
+        requested.delete(oneShot[index].key);
+        oneShot.splice(index, 1);
+        excess -= 1;
+    }
     const keep = held.filter((key) => shifted.includes(key) && !requested.has(key));
     const schedule: string[] = [];
     for (const request of [...recurring, ...oneShot]) {
