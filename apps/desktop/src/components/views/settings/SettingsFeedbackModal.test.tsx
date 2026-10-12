@@ -51,6 +51,8 @@ describe('SettingsFeedbackModal', () => {
             target: { value: 'CloudKit sync failed' },
         });
         fireEvent.click(screen.getByRole('button', { name: t.feedbackSubmit }));
+        expect(onSubmit).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSendWithoutEmail }));
 
         await waitFor(() => {
             expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -60,6 +62,93 @@ describe('SettingsFeedbackModal', () => {
                 includeDiagnostics: false,
             }));
         });
+    });
+
+    it.each([
+        ['bug', t.feedbackCategoryBug, ''],
+        ['bug', t.feedbackCategoryBug, '   '],
+        ['feature', t.feedbackCategoryFeature, ''],
+        ['feature', t.feedbackCategoryFeature, '   '],
+        ['other', t.feedbackCategoryOther, ''],
+        ['other', t.feedbackCategoryOther, '   '],
+    ])('requires confirmation for %s feedback with email %j', async (category, categoryLabel, email) => {
+        const onSubmit = vi.fn().mockResolvedValue(undefined);
+        renderFeedbackModal({ onSubmit });
+        fireEvent.click(screen.getByRole('button', { name: categoryLabel }));
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackMessage }), {
+            target: { value: 'Please improve this' },
+        });
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackEmail }), {
+            target: { value: email },
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSubmit }));
+
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(screen.getByRole('dialog', { name: t.feedbackNoEmailTitle })).toHaveTextContent(t.feedbackNoEmailDesc);
+        expect(screen.getByRole('button', { name: t.feedbackAddEmail })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSendWithoutEmail }));
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+            category,
+            message: 'Please improve this',
+            email: undefined,
+            includeDiagnostics: false,
+        }));
+    });
+
+    it('keeps the bug draft and focuses email when choosing to add an email', async () => {
+        const onSubmit = vi.fn().mockResolvedValue(undefined);
+        const onClose = vi.fn();
+        renderFeedbackModal({ onSubmit, onClose });
+        await waitFor(() => expect(screen.getByRole('textbox', { name: t.feedbackMessage })).toHaveFocus());
+        fireEvent.change(screen.getByRole('combobox', { name: t.feedbackWhere }), {
+            target: { value: 'sync' },
+        });
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackMessage }), {
+            target: { value: 'Keep this report' },
+        });
+        fireEvent.click(screen.getByRole('switch', { name: t.feedbackIncludeDiagnostics }));
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSubmit }));
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackAddEmail }));
+
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+        expect(screen.queryByRole('dialog', { name: t.feedbackNoEmailTitle })).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: t.feedbackMessage })).toHaveValue('Keep this report');
+        expect(screen.getByRole('combobox', { name: t.feedbackWhere })).toHaveValue('sync');
+        expect(screen.getByRole('switch', { name: t.feedbackIncludeDiagnostics })).toBeChecked();
+        await waitFor(() => expect(screen.getByRole('textbox', { name: t.feedbackEmail })).toHaveFocus());
+
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackEmail }), {
+            target: { value: ' reply@example.com ' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSubmit }));
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+            category: 'bug',
+            message: 'Where: Sync\n\nKeep this report',
+            email: 'reply@example.com',
+            includeDiagnostics: true,
+        }));
+        expect(screen.queryByRole('dialog', { name: t.feedbackNoEmailTitle })).not.toBeInTheDocument();
+    });
+
+    it('blocks invalid email without offering anonymous submission', () => {
+        const onSubmit = vi.fn();
+        renderFeedbackModal({ onSubmit });
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackMessage }), {
+            target: { value: 'A valid message' },
+        });
+        fireEvent.change(screen.getByRole('textbox', { name: t.feedbackEmail }), {
+            target: { value: 'invalid-email' },
+        });
+
+        expect(screen.getByText(t.feedbackInvalidEmail)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: t.feedbackSubmit })).toBeDisabled();
+        fireEvent.click(screen.getByRole('button', { name: t.feedbackSubmit }));
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(screen.queryByRole('dialog', { name: t.feedbackNoEmailTitle })).not.toBeInTheDocument();
     });
 
     it.each([

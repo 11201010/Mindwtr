@@ -8597,6 +8597,9 @@ final class CoreModel: ObservableObject {
         return settingsAboutCurrent(host: currentHost, session: settingsAboutSession) && settingsFeedbackPresented
             && settingsAboutTask == nil && !settingsFeedbackSent
     }
+    var settingsFeedbackHasReplyEmail: Bool {
+        !settingsFeedbackEmail.trimmingCharacters(in: Self.ecmaScriptWhitespace).isEmpty
+    }
     var settingsFeedbackCanSubmit: Bool {
         settingsFeedbackEditable && settingsFeedbackConfigured == true && settingsFeedbackEmailValid
             && !settingsFeedbackMessage.trimmingCharacters(in: Self.ecmaScriptWhitespace).isEmpty && settingsFeedbackMessageCount <= 4_000
@@ -10111,6 +10114,7 @@ final class CoreModel: ObservableObject {
                     "settings.feedbackMessage", "settings.feedbackMessagePlaceholder", "settings.feedbackMessagePlaceholderBug", "settings.feedbackMessagePlaceholderFeature", "settings.feedbackMessagePlaceholderOther",
                     "settings.feedbackWhere", "settings.feedbackWherePlaceholder", "settings.feedbackWhereMessagePrefix", "settings.feedbackWhereInbox", "settings.feedbackWhereFocus", "settings.feedbackWhereProjects",
                     "settings.feedbackWhereReview", "settings.feedbackWhereSettings", "settings.feedbackWhereSync", "settings.feedbackWhereImportExport", "settings.feedbackWhereNotifications", "settings.feedbackWhereOther",
+                    "settings.feedbackNoEmailTitle", "settings.feedbackNoEmailDesc", "settings.feedbackAddEmail", "settings.feedbackSendWithoutEmail",
                     "settings.feedbackEmail", "settings.feedbackEmailPlaceholder", "settings.feedbackIncludeDiagnostics", "settings.feedbackIncludeDiagnosticsDesc", "settings.feedbackPrivacy",
                     "settings.feedbackSubmit", "settings.feedbackSending", "settings.feedbackSent", "settings.feedbackFailed", "settings.feedbackUnavailable", "settings.feedbackUnavailableDesc",
                     "settings.feedbackOpenGitHubIssue", "settings.feedbackGitHubDesc", "settings.feedbackOpenGitHubDiscussion", "settings.feedbackRequired", "settings.feedbackInvalidEmail",

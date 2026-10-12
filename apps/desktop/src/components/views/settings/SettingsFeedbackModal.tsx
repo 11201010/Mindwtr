@@ -6,6 +6,7 @@ import { cn } from '../../../lib/utils';
 import { Dialog, DialogBody, DialogHeader } from '../../ui/Dialog';
 import { Button } from '../../ui/Button';
 import { Switch } from '../../ui/Switch';
+import { ConfirmModal } from '../../ConfirmModal';
 
 type Labels = {
     feedback: string;
@@ -33,6 +34,10 @@ type Labels = {
     feedbackWhereOther: string;
     feedbackEmail: string;
     feedbackEmailPlaceholder: string;
+    feedbackNoEmailTitle: string;
+    feedbackNoEmailDesc: string;
+    feedbackAddEmail: string;
+    feedbackSendWithoutEmail: string;
     feedbackIncludeDiagnostics: string;
     feedbackIncludeDiagnosticsDesc: string;
     feedbackPrivacy: string;
@@ -97,6 +102,8 @@ export function SettingsFeedbackModal({
     const [category, setCategory] = useState<FeedbackCategory>('bug');
     const [message, setMessage] = useState('');
     const [email, setEmail] = useState('');
+    const [confirmNoEmail, setConfirmNoEmail] = useState(false);
+    const emailRef = useRef<HTMLInputElement>(null);
     const [bugLocation, setBugLocation] = useState<FeedbackLocation | ''>('');
     const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
     const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -131,6 +138,7 @@ export function SettingsFeedbackModal({
     };
 
     useEffect(() => {
+        setConfirmNoEmail(false);
         if (!isOpen) return;
         setStatus('idle');
         setError(null);
@@ -153,7 +161,8 @@ export function SettingsFeedbackModal({
     const visibleError = error
         ?? (trimmedEmail && !emailValid ? t.feedbackInvalidEmail : null);
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (withoutEmailConfirmed = false) => {
+        if (!canSubmit) return;
         if (!trimmedMessage) {
             setError(t.feedbackRequired);
             return;
@@ -162,6 +171,11 @@ export function SettingsFeedbackModal({
             setError(t.feedbackInvalidEmail);
             return;
         }
+        if (!trimmedEmail && !withoutEmailConfirmed) {
+            setConfirmNoEmail(true);
+            return;
+        }
+        setConfirmNoEmail(false);
         setStatus('sending');
         setError(null);
         const submittedMessage = category === 'bug' && bugLocation
@@ -186,6 +200,7 @@ export function SettingsFeedbackModal({
     };
 
     return (
+        <>
         <Dialog
             onClose={onClose}
             labelledBy={titleId}
@@ -315,6 +330,7 @@ export function SettingsFeedbackModal({
                             {t.feedbackEmail}
                         </span>
                         <input
+                            ref={emailRef}
                             type="email"
                             value={email}
                             onChange={(event) => {
@@ -363,7 +379,7 @@ export function SettingsFeedbackModal({
                         <Button variant="secondary" onClick={onClose}>
                             {t.close}
                         </Button>
-                        <Button onClick={handleSubmit} disabled={!canSubmit}>
+                        <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
                             <Send className="h-4 w-4" />
                             {status === 'sending' ? t.feedbackSending : t.feedbackSubmit}
                         </Button>
@@ -371,5 +387,18 @@ export function SettingsFeedbackModal({
                 </DialogBody>
             )}
         </Dialog>
+        <ConfirmModal
+            isOpen={confirmNoEmail}
+            title={t.feedbackNoEmailTitle}
+            description={t.feedbackNoEmailDesc}
+            confirmLabel={t.feedbackSendWithoutEmail}
+            cancelLabel={t.feedbackAddEmail}
+            onConfirm={() => void handleSubmit(true)}
+            onCancel={() => {
+                setConfirmNoEmail(false);
+                window.setTimeout(() => emailRef.current?.focus(), 0);
+            }}
+        />
+        </>
     );
 }

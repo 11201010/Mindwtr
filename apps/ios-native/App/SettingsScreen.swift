@@ -3270,6 +3270,7 @@ private struct AboutSettingsCard: View {
 }
 
 private struct FeedbackSettingsForm: View {
+    @State private var confirmNoEmail = false
     @ObservedObject var model: CoreModel
     let palette: AppPalette
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -3366,7 +3367,12 @@ private struct FeedbackSettingsForm: View {
                         .frame(minHeight: 44).disabled(!model.settingsFeedbackEditable).accessibilityIdentifier("feedback-retry")
                 }
                 VStack(spacing: 8) {
-                    Button { field = nil; model.submitFeedbackSettings() } label: {
+                    Button {
+                        field = nil
+                        if !model.settingsFeedbackHasReplyEmail {
+                            confirmNoEmail = true
+                        } else { model.submitFeedbackSettings() }
+                    } label: {
                         Text(model.label(model.settingsFeedbackSending ? "settings.feedbackSending" : "settings.feedbackSubmit"))
                             .rnFont(16, .semibold).frame(maxWidth: .infinity, minHeight: 44)
                     }.buttonStyle(.plain).foregroundStyle(palette.tint)
@@ -3378,6 +3384,10 @@ private struct FeedbackSettingsForm: View {
                 }
             }
         }.padding(16).padding(.bottom, 24)
+            .alert(model.label("settings.feedbackNoEmailTitle"), isPresented: $confirmNoEmail) {
+                Button(model.label("settings.feedbackAddEmail"), role: .cancel) { field = "email" }
+                Button(model.label("settings.feedbackSendWithoutEmail")) { model.submitFeedbackSettings() }
+            } message: { Text(model.label("settings.feedbackNoEmailDesc")) }
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()

@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -418,6 +419,14 @@ private fun FeedbackModal(model: InboxViewModel, view: JSONObject) {
     val check = about.feedbackCheck
     val canSend = check?.optBoolean("canSubmit") == true && draft.status != "sending"
     val sent = draft.status == "sent"
+    var confirmNoEmail by remember { mutableStateOf(false) }
+    if (confirmNoEmail) AlertDialog(
+        onDismissRequest = { confirmNoEmail = false },
+        title = { Text(text.getString("noEmailTitle")) },
+        text = { Text(text.getString("noEmailDescription")) },
+        confirmButton = { TextButton(onClick = { confirmNoEmail = false; if (canSend) about.send() }) { Text(text.getString("sendWithoutEmail")) } },
+        dismissButton = { TextButton(onClick = { confirmNoEmail = false }) { Text(text.getString("addEmail")) } },
+    )
     Dialog(onDismissRequest = { about.closeFeedback() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         SideEffect { window?.setDimAmount(0f) }
@@ -524,7 +533,9 @@ private fun FeedbackModal(model: InboxViewModel, view: JSONObject) {
                         Text(cancel, style = padded(rnText(14, 700)), color = c.secondaryText)
                     }
                     PrimaryButton(if (draft.status == "sending") text.getString("sending") else text.getString("submit"), canSend, draft.status == "sending",
-                        Modifier.widthIn(min = 126.dp).testTag("feedback-send")) { about.send() }
+                        Modifier.widthIn(min = 126.dp).testTag("feedback-send")) {
+                        if (draft.email.trim { it.isWhitespace() || it == '\uFEFF' }.isEmpty()) confirmNoEmail = true else about.send()
+                    }
                 }
             }
         }

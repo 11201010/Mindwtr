@@ -44,6 +44,10 @@ type Labels = {
     feedbackWhereOther: string;
     feedbackEmail: string;
     feedbackEmailPlaceholder: string;
+    feedbackNoEmailTitle: string;
+    feedbackNoEmailDesc: string;
+    feedbackAddEmail: string;
+    feedbackSendWithoutEmail: string;
     feedbackIncludeDiagnostics: string;
     feedbackIncludeDiagnosticsDesc: string;
     feedbackPrivacy: string;

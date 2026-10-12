@@ -2187,6 +2187,10 @@ export const daOverrides: Record<string, string> = {
     'settings.feedbackWhereOther': 'Andet',
     'settings.feedbackEmail': 'Svar-e-mail (valgfrit, anbefales)',
     'settings.feedbackEmailPlaceholder': 'E-mail for svar og opfølgning',
+    "settings.feedbackNoEmailTitle": "Send uden opfølgning?",
+    "settings.feedbackNoEmailDesc": "Mindwtr gemmer primært data lokalt og har ingen konto-e-mail til at kontakte dig. Uden en svaradresse kan vi ikke svare eller følge op på din feedback. Vil du tilføje en e-mailadresse eller sende uden opfølgning?",
+    "settings.feedbackAddEmail": "Tilføj e-mail",
+    "settings.feedbackSendWithoutEmail": "Send uden opfølgning",
     'settings.feedbackIncludeDiagnostics': 'Medtag nyere diagnostik',
     'settings.feedbackIncludeDiagnosticsDesc':
         'Seneste aktivitet og fejl. Genskab problemet på denne enhed før afsendelse.',

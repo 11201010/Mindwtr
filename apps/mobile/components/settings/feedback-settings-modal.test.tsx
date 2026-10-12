@@ -1,7 +1,7 @@
 import React from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, TouchableOpacity } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Switch, Text, TextInput, TouchableOpacity } from 'react-native';
 import { act, create } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedbackSettingsModal } from './feedback-settings-modal';
 import { styles } from './settings.styles';
@@ -51,6 +51,10 @@ const tr = (key: string) => ({
   'settings.feedbackDesc': 'Report a bug or suggest a feature.',
   'settings.feedbackEmail': 'Reply email (optional, recommended)',
   'settings.feedbackEmailPlaceholder': 'you@example.com',
+  'settings.feedbackNoEmailTitle': 'Send without a reply email?',
+  'settings.feedbackNoEmailDesc': 'Mindwtr is local-first, so we cannot follow up without your email.',
+  'settings.feedbackAddEmail': 'Add email',
+  'settings.feedbackSendWithoutEmail': 'Send without email',
   'settings.feedbackFailed': 'Feedback failed',
   'settings.feedbackIncludeDiagnostics': 'Include recent diagnostics',
   'settings.feedbackIncludeDiagnosticsDesc': 'Adds recent sanitized app logs.',
@@ -97,7 +101,17 @@ const renderedText = (children: React.ReactNode): string => React.Children.toArr
     : String(child)
 )).join('');
 
+const pressAlertButton = (label: string) => {
+  const button = vi.mocked(Alert.alert).mock.calls.at(-1)?.[2]?.find((item) => item.text === label);
+  if (!button?.onPress) throw new Error(`Alert button not found: ${label}`);
+  button.onPress();
+};
+
 describe('FeedbackSettingsModal', () => {
+  beforeEach(() => {
+    vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+  });
+
   it('lets the iOS form scroll a growing message without losing its text', () => {
     setPlatform('ios');
     let tree!: ReturnType<typeof create>;
@@ -113,6 +127,7 @@ describe('FeedbackSettingsModal', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     Object.defineProperty(Platform, 'OS', {
       configurable: true,
       value: originalPlatformOs,
@@ -197,6 +212,10 @@ describe('FeedbackSettingsModal', () => {
     });
     await act(async () => {
       findTouchableByText(tree, 'Send feedback').props.onPress();
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+    await act(async () => {
+      pressAlertButton('Send without email');
       await Promise.resolve();
     });
 
@@ -206,6 +225,141 @@ describe('FeedbackSettingsModal', () => {
       email: undefined,
       includeDiagnostics: false,
     }));
+  });
+
+  it.each([
+    ['bug', 'Bug report', ''],
+    ['bug', 'Bug report', '   '],
+    ['feature', 'Feature request', ''],
+    ['feature', 'Feature request', '   '],
+    ['other', 'Other', ''],
+    ['other', 'Other', '   '],
+  ])('requires confirmation for %s feedback with email %j', async (category, categoryLabel, email) => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FeedbackSettingsModal visible isConfigured tr={tr} onClose={vi.fn()} onSubmit={onSubmit} />);
+    });
+    act(() => {
+      findTouchableByText(tree, categoryLabel).props.onPress();
+      tree.root.findAllByType(TextInput)[0].props.onChangeText('Please improve this');
+      tree.root.findAllByType(TextInput)[1].props.onChangeText(email);
+    });
+
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledExactlyOnceWith(
+      tr('settings.feedbackNoEmailTitle'),
+      tr('settings.feedbackNoEmailDesc'),
+      [
+        expect.objectContaining({ text: 'Add email', style: 'cancel', onPress: expect.any(Function) }),
+        expect.objectContaining({ text: 'Send without email', onPress: expect.any(Function) }),
+      ],
+    );
+    await act(async () => { pressAlertButton('Send without email'); });
+
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      category,
+      message: 'Please improve this',
+      email: undefined,
+      includeDiagnostics: false,
+    });
+  });
+
+  it('keeps the bug draft when choosing to add an email and sends directly with a valid email', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FeedbackSettingsModal visible isConfigured tr={tr} onClose={onClose} onSubmit={onSubmit} />);
+    });
+    act(() => {
+      findTouchableByText(tree, 'Sync').props.onPress();
+      tree.root.findAllByType(TextInput)[0].props.onChangeText('Keep this report');
+      tree.root.findByType(Switch).props.onValueChange(true);
+    });
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+    act(() => { pressAlertButton('Add email'); });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(tree.root.findAllByType(TextInput)[0].props.value).toBe('Keep this report');
+    expect(tree.root.findAllByType(TextInput)[1].props.value).toBe('');
+    expect(findTouchableByText(tree, 'Sync').props.accessibilityState.selected).toBe(true);
+    expect(tree.root.findByType(Switch).props.value).toBe(true);
+    vi.mocked(Alert.alert).mockClear();
+
+    act(() => { tree.root.findAllByType(TextInput)[1].props.onChangeText(' reply@example.com '); });
+    await act(async () => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      category: 'bug',
+      message: 'Where: Sync\n\nKeep this report',
+      email: 'reply@example.com',
+      includeDiagnostics: true,
+    });
+  });
+
+  it('blocks invalid email without offering anonymous submission', () => {
+    const onSubmit = vi.fn();
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FeedbackSettingsModal visible isConfigured tr={tr} onClose={vi.fn()} onSubmit={onSubmit} />);
+    });
+    act(() => {
+      tree.root.findAllByType(TextInput)[0].props.onChangeText('A valid message');
+      tree.root.findAllByType(TextInput)[1].props.onChangeText('invalid-email');
+    });
+
+    expect(tree.root.findAllByType(Text).map((node) => node.props.children)).toContain('Enter a valid email.');
+    expect(findTouchableByText(tree, 'Send feedback').props.disabled).toBe(true);
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('ignores an anonymous confirmation from a previous modal visit', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const render = (visible: boolean) => (
+      <FeedbackSettingsModal visible={visible} isConfigured tr={tr} onClose={vi.fn()} onSubmit={onSubmit} />
+    );
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(render(true)); });
+    act(() => { tree.root.findAllByType(TextInput)[0].props.onChangeText('First report'); });
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+    const oldConfirm = vi.mocked(Alert.alert).mock.calls[0][2]!.find((button) => button.text === 'Send without email')!.onPress!;
+
+    act(() => { tree.update(render(false)); });
+    act(() => { tree.update(render(true)); });
+    act(() => { tree.root.findAllByType(TextInput)[0].props.onChangeText('Second report'); });
+    await act(async () => { oldConfirm(); });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(tree.root.findAllByType(TextInput)[0].props.value).toBe('Second report');
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+    await act(async () => { pressAlertButton('Send without email'); });
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+      category: 'bug', message: 'Second report', email: undefined, includeDiagnostics: false,
+    });
+  });
+
+  it('ignores an anonymous confirmation after the modal unmounts', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    let tree!: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<FeedbackSettingsModal visible isConfigured tr={tr} onClose={vi.fn()} onSubmit={onSubmit} />);
+    });
+    act(() => { tree.root.findAllByType(TextInput)[0].props.onChangeText('Unmounted report'); });
+    act(() => { findTouchableByText(tree, 'Send feedback').props.onPress(); });
+    const confirm = vi.mocked(Alert.alert).mock.calls[0][2]!.find((button) => button.text === 'Send without email')!.onPress!;
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    act(() => { tree.unmount(); });
+    await act(async () => { confirm(); });
+
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -278,6 +432,9 @@ describe('FeedbackSettingsModal', () => {
     });
     await act(async () => {
       findTouchableByText(tree, 'Send feedback').props.onPress();
+    });
+    await act(async () => {
+      pressAlertButton('Send without email');
       await Promise.resolve();
     });
     act(() => tree.update(render(false)));

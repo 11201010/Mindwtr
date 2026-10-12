@@ -422,6 +422,10 @@ export type FeedbackModalText = {
     messagePlaceholders: Record<FeedbackCategory, string>;
     email: string;
     emailPlaceholder: string;
+    noEmailTitle: string;
+    noEmailDescription: string;
+    addEmail: string;
+    sendWithoutEmail: string;
     includeDiagnostics: string;
     includeDiagnosticsDescription: string;
     unavailable: string;
@@ -471,6 +475,10 @@ export function buildFeedbackModalText(tr: (key: string) => string): FeedbackMod
         },
         email: tr('settings.feedbackEmail'),
         emailPlaceholder: tr('settings.feedbackEmailPlaceholder'),
+        noEmailTitle: tr('settings.feedbackNoEmailTitle'),
+        noEmailDescription: tr('settings.feedbackNoEmailDesc'),
+        addEmail: tr('settings.feedbackAddEmail'),
+        sendWithoutEmail: tr('settings.feedbackSendWithoutEmail'),
         includeDiagnostics: tr('settings.feedbackIncludeDiagnostics'),
         includeDiagnosticsDescription: tr('settings.feedbackIncludeDiagnosticsDesc'),
         unavailable: tr('settings.feedbackUnavailable'),
