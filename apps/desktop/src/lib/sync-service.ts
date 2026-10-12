@@ -6,7 +6,6 @@ import {
     useTaskStore,
     MergeStats,
     webdavGetSyncDocument,
-    type SyncEncryptionRemotePort,
     type SyncEncryptionStatus,
     type SyncEncryptionTransitionProgress,
     webdavHeadFile,
@@ -135,24 +134,17 @@ import {
 } from './sync-attachments';
 import {
     classifySyncEncryptionFailure,
-    createDropboxRemotePort,
-    createWebdavRemotePort,
+    createDesktopSyncEncryptionService,
     desktopSyncCryptoPrimitives,
     getSyncEncryptionMaterial,
     getSyncEncryptionPosture,
     getSyncEncryptionStatus as readSyncEncryptionStatus,
     isSyncEncryptionFailure,
+    logSyncEncryptionEvent,
     markRemoteSyncEncryptionDiscovered,
     markRemoteSyncEncryptionPlaintext,
     restoreVerifiedRemoteSyncEncryption,
-    runChangePassphraseOverRemote,
-    runDisableLocalOnly,
-    runDisableOverRemote,
-    runEnableLocalOnly,
-    runEnableOverRemote,
     SYNC_ENCRYPTION_REMOTE_ENCRYPTED,
-    runProvidePassphraseOverRemote,
-    withTransitionDiagnostics,
 } from './sync-encryption-service';
 import {
     getFileSyncDir,
@@ -216,6 +208,8 @@ import {
     type SyncConfigurationCommitResult,
     type SyncConfigurationSecretRequirements,
     buildSyncLocationScope,
+    runSyncEncryptionTransitionWithDiagnostics,
+    type SyncEncryptionService,
 } from '@mindwtr/core';
 import {
     buildFastSyncScope,
@@ -227,6 +221,7 @@ import {
     writeFastSyncState,
 } from './sync-service-fast-sync';
 import {
+    clearAttachmentPresenceStamp,
     hasCompletedAttachmentPresenceReconciliation,
     isAttachmentPresenceReconciliationDue,
 } from './attachment-presence-scope';
@@ -678,6 +673,11 @@ async function getTauriFetch(): Promise<typeof fetch | undefined> {
     return syncServiceDependencies.getTauriFetch();
 }
 
+/** Tauri's HTTP client when the runtime has one, else the webview's fetch. */
+const tauriOrWebviewFetch: typeof fetch = async (input, init) => ((await getTauriFetch()) ?? fetch)(input, init);
+
+let desktopEncryptionService: SyncEncryptionService | null = null;
+
 type DropboxCredentialHandleOptions = {
     forceRefresh?: boolean;
     credentialHandle?: string;
@@ -982,14 +982,7 @@ type DesktopSyncCycleContext = {
 export async function getDesktopSyncEncryptionDiagnosticsLines(): Promise<string[]> {
     const posture = await getSyncEncryptionPosture().catch(() => null);
     const backend = await SyncService.getSyncBackend().catch(() => 'off' as SyncBackend);
-    const activeScope = buildSyncLocationScope({
-        backend,
-        syncPath: backend === 'file' ? await SyncService.getSyncPath().catch(() => '') : '',
-        webdavUrl: backend === 'webdav' ? (await SyncService.getWebDavConfig().catch(() => null))?.url : undefined,
-        webdavUsername: backend === 'webdav' ? (await SyncService.getWebDavConfig().catch(() => null))?.username : undefined,
-        cloudProvider: backend === 'cloud' ? await SyncService.getCloudProvider().catch(() => undefined) : undefined,
-        cloudUrl: backend === 'cloud' ? (await SyncService.getCloudConfig().catch(() => null))?.url : undefined,
-    });
+    const activeScope = await readPersistedSyncLocationScope(backend);
     // Stamp the posture into the log too: a user who shares the log without opening this block
     // still needs it, and `force` puts it there even with Debug logging off.
     logSyncEncryptionState({
@@ -1013,6 +1006,16 @@ export async function getDesktopSyncEncryptionDiagnosticsLines(): Promise<string
         activeScope,
     });
 }
+
+/** The scope of the configuration persisted on this device. */
+const readPersistedSyncLocationScope = async (backend: SyncBackend): Promise<string> => buildSyncLocationScope({
+    backend,
+    syncPath: backend === 'file' ? await SyncService.getSyncPath().catch(() => '') : '',
+    webdavUrl: backend === 'webdav' ? (await SyncService.getWebDavConfig().catch(() => null))?.url : undefined,
+    webdavUsername: backend === 'webdav' ? (await SyncService.getWebDavConfig().catch(() => null))?.username : undefined,
+    cloudProvider: backend === 'cloud' ? await SyncService.getCloudProvider().catch(() => undefined) : undefined,
+    cloudUrl: backend === 'cloud' ? (await SyncService.getCloudConfig().catch(() => null))?.url : undefined,
+});
 
 /** #1138: the location identity a discovery persisted during this cycle is bound to. Only the
  *  TS backends (WebDAV, Dropbox) need it here — the file backend's discoveries are persisted
@@ -1801,60 +1804,62 @@ export class SyncService {
     // A transition is an explicit maintenance pass over the whole remote artifact set, so it
     // runs wherever that set can be enumerated:
     //   * File Sync -> Rust, which owns the folder's IO and can walk it directly.
-    //   * WebDAV and Dropbox -> core's shared `run*OverRemote` orchestration from TS, because
-    //     the attachment set is enumerated from the sync document (a TS-side concern) and one
-    //     shared implementation beats a second Rust one. Rust still owns the per-CYCLE WebDAV
-    //     crypto seam; it picks up the key this transition cached.
-    // Either way the key lives only in Rust's keyring — TS keeps no cache of its own.
+    //   * WebDAV, Dropbox, and no backend yet -> core's sync encryption service, the same code
+    //     the mobile apps run. Rust still owns the per-CYCLE WebDAV crypto seam; it picks up
+    //     the key this transition cached.
+    // Either way the key lives only in Rust's keyring — TS keeps no cache of its own. Every
+    // call below runs inside `runSyncRestoreExclusive`, so a transition never interleaves with
+    // a sync cycle, and the core service adds its own document queue inside that one.
     // -----------------------------------------------------------------
 
-    private static async resolveEncryptionTarget(): Promise<
-        { kind: 'native' } | { kind: 'remote'; remote: SyncEncryptionRemotePort } | { kind: 'local' }
-    > {
-        const backend = await SyncService.getSyncBackend();
-        if (backend === 'file') return { kind: 'native' };
+    private static encryptionService(): SyncEncryptionService {
+        desktopEncryptionService ??= createDesktopSyncEncryptionService({
+            location: {
+                readTarget: async () => {
+                    const backend = await SyncService.getSyncBackend();
+                    // No durable backend yet (a typed-but-unproven WebDAV config is still 'off'
+                    // until its activation probe passes): enable/disable run local-only (#1001).
+                    if (backend === 'off') return { backend: 'off' };
+                    if (backend === 'webdav') return { backend: 'webdav' };
+                    // `cloud` covers two very different providers; only Dropbox is a blob store.
+                    if (backend === 'cloud' && (await SyncService.getCloudProvider()) === 'dropbox') {
+                        return { backend: 'dropbox' };
+                    }
+                    // File Sync is routed to Rust before the service. CloudKit and the
+                    // self-hosted cloud are not blob stores this app writes whole documents to.
+                    return { backend: 'unsupported' };
+                },
+                readLocationScope: async () => readPersistedSyncLocationScope(await SyncService.getSyncBackend()),
+                invalidateCycleProofs: async () => {
+                    clearFastSyncState();
+                    clearAttachmentPresenceStamp();
+                },
+            },
+            fetch: tauriOrWebviewFetch,
+            loadWebDavConfig: async () => {
+                const config = await SyncService.getWebDavConfig();
+                return {
+                    url: config.url,
+                    username: config.username,
+                    password: await resolveWebdavPassword(config),
+                    allowInsecureHttp: config.allowInsecureHttp,
+                };
+            },
+            webDavRequestOptions: (allowInsecureHttp) => ({ allowInsecureHttp, fetcher: tauriOrWebviewFetch }),
+            getDropboxClientId: () => SyncService.getDropboxAppKey(),
+            runDropboxAuthorized: async (clientId, operation) => operation(await getDropboxAccessTokenDirect(clientId)),
+        });
+        return desktopEncryptionService;
+    }
 
-        // No durable backend yet (a typed-but-unproven WebDAV config is still 'off' until
-        // its activation probe passes). Enable/disable stay available as local-only key
-        // management so the passphrase can be set BEFORE the first sync ever uploads a
-        // byte (#1001); operations that must read or convert remote artifacts reject with
-        // SYNC_ENCRYPTION_BACKEND_REQUIRED instead of a misleading generic failure.
-        if (backend === 'off') return { kind: 'local' };
-
-        // `cloud` covers two very different providers; only Dropbox is a blob store this
-        // feature applies to. Never branch on a bare `backend === 'cloud'` here.
-        if (backend === 'cloud' && (await SyncService.getCloudProvider()) === 'dropbox') {
-            const clientId = await SyncService.getDropboxAppKey();
-            const fetcher = (await getTauriFetch()) ?? fetch;
-            return {
-                kind: 'remote',
-                remote: createDropboxRemotePort(
-                    async (operation) => operation(await getDropboxAccessTokenDirect(clientId)),
-                    fetcher,
-                ),
-            };
-        }
-
-        if (backend === 'webdav') {
-            const config = await SyncService.getWebDavConfig();
-            const password = await resolveWebdavPassword(config);
-            return {
-                kind: 'remote',
-                remote: createWebdavRemotePort({
-                    baseUrl: getBaseSyncUrl(config.url),
-                    options: {
-                        allowInsecureHttp: config.allowInsecureHttp,
-                        username: config.username,
-                        password,
-                        fetcher: (await getTauriFetch()) ?? fetch,
-                    },
-                }),
-            };
-        }
-
-        // CloudKit and the self-hosted cloud backend are out of scope for #1056 — they are not
-        // blob stores this app writes whole documents to.
-        throw new Error(`Sync encryption is not available for the ${backend} backend.`);
+    /** A File Sync transition in Rust, with the same transition trail core writes. */
+    private static runNativeEncryptionTransition<T>(
+        kind: 'enable' | 'disable' | 'change-passphrase' | 'unlock',
+        onProgress: ((progress: SyncEncryptionTransitionProgress) => void) | undefined,
+        run: () => Promise<T>,
+        outcomeOf?: (value: T) => 'ok' | 'wrong-passphrase' | 'no-encrypted-remote',
+    ): Promise<T> {
+        return runSyncEncryptionTransitionWithDiagnostics(logSyncEncryptionEvent, kind, 'file', onProgress, run, outcomeOf);
     }
 
     static async getSyncEncryptionStatus(): Promise<SyncEncryptionStatus> {
@@ -1868,20 +1873,12 @@ export class SyncService {
         // Serialized against sync runs and restores by the same exclusive gate every other
         // configuration mutation uses; the Rust side additionally holds the sync-folder lock.
         return runSyncRestoreExclusive(async () => {
-            const target = await SyncService.resolveEncryptionTarget();
-            const backend = await SyncService.getSyncBackend();
-            if (target.kind === 'native') {
-                await withTransitionDiagnostics('enable', backend, onProgress, () =>
+            if (await SyncService.getSyncBackend() === 'file') {
+                await SyncService.runNativeEncryptionTransition('enable', onProgress, () =>
                     invokeSyncNative('enable_sync_encryption', { passphrase }));
                 return;
             }
-            if (target.kind === 'local') {
-                await withTransitionDiagnostics('enable-local-only', backend, onProgress, () =>
-                    runEnableLocalOnly(passphrase));
-                return;
-            }
-            await withTransitionDiagnostics('enable', backend, onProgress, (progress) =>
-                runEnableOverRemote(passphrase, target.remote, progress));
+            await SyncService.encryptionService().enableSyncEncryption(passphrase, { onProgress });
         });
     }
 
@@ -1889,20 +1886,12 @@ export class SyncService {
         onProgress?: (progress: SyncEncryptionTransitionProgress) => void,
     ): Promise<void> {
         return runSyncRestoreExclusive(async () => {
-            const target = await SyncService.resolveEncryptionTarget();
-            const backend = await SyncService.getSyncBackend();
-            if (target.kind === 'native') {
-                await withTransitionDiagnostics('disable', backend, onProgress, () =>
+            if (await SyncService.getSyncBackend() === 'file') {
+                await SyncService.runNativeEncryptionTransition('disable', onProgress, () =>
                     invokeSyncNative('disable_sync_encryption'));
                 return;
             }
-            if (target.kind === 'local') {
-                await withTransitionDiagnostics('disable-local-only', backend, onProgress, () =>
-                    runDisableLocalOnly());
-                return;
-            }
-            await withTransitionDiagnostics('disable', backend, onProgress, (progress) =>
-                runDisableOverRemote(target.remote, progress));
+            await SyncService.encryptionService().disableSyncEncryption({ onProgress });
         });
     }
 
@@ -1914,56 +1903,42 @@ export class SyncService {
         return runSyncRestoreExclusive(async () => {
             // Confirm the current passphrase before rewrapping anything: the cached key is
             // what actually decrypts, so an unverified "current" would let a typo rotate the
-            // folder to a passphrase the user did not intend.
+            // folder to a passphrase the user did not intend. With no backend this rejects
+            // SYNC_ENCRYPTION_BACKEND_REQUIRED: a local-only "rotation" while an old sync
+            // location still holds ciphertext would silently strand it under the previous key.
             if ((await SyncService.provideSyncEncryptionPassphraseUnlocked(currentPassphrase)) !== 'ok') {
                 throw new Error('SYNC_ENCRYPTION_WRONG_PASSPHRASE');
             }
-            const target = await SyncService.resolveEncryptionTarget();
-            const backend = await SyncService.getSyncBackend();
-            if (target.kind === 'native') {
-                await withTransitionDiagnostics('change-passphrase', backend, onProgress, () =>
+            if (await SyncService.getSyncBackend() === 'file') {
+                await SyncService.runNativeEncryptionTransition('change-passphrase', onProgress, () =>
                     invokeSyncNative('change_sync_encryption_passphrase', { nextPassphrase }));
                 return;
             }
-            if (target.kind === 'local') {
-                // Rotation rewraps remote artifacts; with no backend there is nothing to
-                // rewrap AND no way to verify the current passphrase against the folder —
-                // and a local-only "rotation" while an old sync location still holds
-                // ciphertext would silently strand it under the previous key.
-                throw new Error('SYNC_ENCRYPTION_BACKEND_REQUIRED');
-            }
-            await withTransitionDiagnostics('change-passphrase', backend, onProgress, (progress) =>
-                runChangePassphraseOverRemote(currentPassphrase, nextPassphrase, target.remote, progress));
+            await SyncService.encryptionService().changeSyncEncryptionPassphrase(
+                currentPassphrase,
+                nextPassphrase,
+                { onProgress },
+            );
         });
     }
 
     private static async provideSyncEncryptionPassphraseUnlocked(
         passphrase: string,
     ): Promise<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'> {
-        const target = await SyncService.resolveEncryptionTarget();
-        const backend = await SyncService.getSyncBackend();
-        // Unlock reports its answer rather than throwing it, so the end line takes the returned
-        // outcome verbatim — it is already the fixed outcome vocabulary.
-        return withTransitionDiagnostics(
-            'unlock',
-            backend,
-            undefined,
-            () => {
-                if (target.kind === 'native') {
-                    return invokeSyncNative<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'>(
-                        'provide_sync_encryption_passphrase',
-                        { passphrase },
-                    );
-                }
-                if (target.kind === 'local') {
-                    // A passphrase can only be VALIDATED against remote artifacts; with no
-                    // backend there are none to check against.
-                    throw new Error('SYNC_ENCRYPTION_BACKEND_REQUIRED');
-                }
-                return runProvidePassphraseOverRemote(passphrase, target.remote);
-            },
-            (result) => (result === 'ok' ? 'ok' : result),
-        );
+        if (await SyncService.getSyncBackend() === 'file') {
+            // Unlock reports its answer rather than throwing it, so the end line takes the
+            // returned outcome verbatim — it is already the fixed outcome vocabulary.
+            return SyncService.runNativeEncryptionTransition(
+                'unlock',
+                undefined,
+                () => invokeSyncNative<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'>(
+                    'provide_sync_encryption_passphrase',
+                    { passphrase },
+                ),
+                (result) => result,
+            );
+        }
+        return SyncService.encryptionService().provideSyncEncryptionPassphrase(passphrase);
     }
 
     /** Validates against the remote's own header and caches the key on success. Never mutates

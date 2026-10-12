@@ -163,6 +163,62 @@ const transitionOutcomeForError = (error: unknown): SyncEncryptionTransitionOutc
 };
 
 /**
+ * Start/end lines around one transition (#1056 diagnostics trail), plus a per-phase progress
+ * line when a phase completes. Deliberately NOT one line per artifact: a folder with hundreds of
+ * attachments would push the rest of the cycle out of the rotated log for no extra diagnosis.
+ * Exported for desktop's File Sync transitions, which run in Rust outside this service.
+ */
+export const runSyncEncryptionTransitionWithDiagnostics = async <T>(
+    logEvent: SyncEncryptionStateStore['logSyncEncryptionEvent'],
+    kind: SyncEncryptionTransitionLogKind,
+    backend: string,
+    callerProgress: SyncEncryptionProgressCallback | undefined,
+    run: (onProgress: SyncEncryptionProgressCallback | undefined) => Promise<T>,
+    outcomeOf: (value: T) => SyncEncryptionTransitionOutcome = () => 'ok',
+): Promise<T> => {
+    const logTransition = (input: Parameters<typeof buildSyncEncryptionTransitionExtra>[0]): void => {
+        void logEvent(
+            SYNC_ENCRYPTION_LOG_EVENTS.transition,
+            buildSyncEncryptionTransitionExtra(input),
+            // Transitions rewrite every artifact at the sync location. Their outcome must be in
+            // the shareable log whether or not Debug logging happened to be on at the time.
+            { level: input.outcome && input.outcome !== 'ok' ? 'warn' : 'info', force: true },
+        );
+    };
+    logTransition({ kind, backend, phase: 'start' });
+    // Core reports BEFORE it increments its counter, so `completed` never reaches `total`
+    // inside the callback. A phase is finished when the NEXT phase reports (its `completed`
+    // is exactly what the finished phase got through) or when the run returns.
+    let last: SyncEncryptionTransitionProgress | undefined;
+    const logPhase = (phase: string, planned: number, done: number) => {
+        logTransition({ kind, backend, phase: 'artifact', artifact: phase, planned, done });
+    };
+    const onProgress: SyncEncryptionProgressCallback = (progress) => {
+        if (last && last.phase !== progress.phase) {
+            logPhase(last.phase, progress.total, progress.completed);
+        }
+        last = progress;
+        callerProgress?.(progress);
+    };
+    try {
+        const value = await run(onProgress);
+        if (last) logPhase(last.phase, last.total, last.total);
+        logTransition({ kind, backend, phase: 'end', outcome: outcomeOf(value) });
+        return value;
+    } catch (error) {
+        logTransition({
+            kind,
+            backend,
+            phase: 'end',
+            outcome: transitionOutcomeForError(error),
+            errorName: error instanceof Error ? error.name : 'unknown',
+            errorMessage: error instanceof Error ? error.message : String(error ?? ''),
+        });
+        throw error;
+    }
+};
+
+/**
  * The artifact set a transition covers, derived from authoritative provider enumeration
  * plus the remote document. The provider list includes unreferenced files; the document
  * keeps referenced-but-missing keys in the inventory so a peer creation is also detected.
@@ -348,65 +404,19 @@ export const createSyncEncryptionService = <Lease>(deps: SyncEncryptionServiceDe
         purpose: 'encryption-transition' as const,
     };
 
-    // -----------------------------------------------------------------------
-    // Transition diagnostics (#1056 diagnostics trail)
-    // -----------------------------------------------------------------------
-
-    const logTransition = (input: Parameters<typeof buildSyncEncryptionTransitionExtra>[0]): void => {
-        state.logSyncEncryptionEvent(
-            SYNC_ENCRYPTION_LOG_EVENTS.transition,
-            buildSyncEncryptionTransitionExtra(input),
-            // Transitions rewrite every artifact at the sync location. Their outcome must be in
-            // the shareable log whether or not Debug logging happened to be on at the time.
-            { level: input.outcome && input.outcome !== 'ok' ? 'warn' : 'info', force: true },
-        );
-    };
-
-    /**
-     * Start/end lines around one transition, plus a per-phase progress line when a phase
-     * completes. Deliberately NOT one line per artifact: a folder with hundreds of attachments
-     * would push the rest of the cycle out of the rotated log for no extra diagnosis.
-     */
     const withTransitionDiagnostics = async <T>(
         kind: SyncEncryptionTransitionLogKind,
         options: SyncEncryptionTransitionOptions | undefined,
         run: (onProgress: SyncEncryptionProgressCallback | undefined) => Promise<T>,
-        outcomeOf: (value: T) => SyncEncryptionTransitionOutcome = () => 'ok',
-    ): Promise<T> => {
-        const backend = backendLabel(await location.readTarget().catch(() => null));
-        logTransition({ kind, backend, phase: 'start' });
-        const callerProgress = options?.onProgress;
-        // Core reports BEFORE it increments its counter, so `completed` never reaches `total`
-        // inside the callback. A phase is finished when the NEXT phase reports (its `completed`
-        // is exactly what the finished phase got through) or when the run returns.
-        let last: SyncEncryptionTransitionProgress | undefined;
-        const logPhase = (phase: string, planned: number, done: number) => {
-            logTransition({ kind, backend, phase: 'artifact', artifact: phase, planned, done });
-        };
-        const onProgress: SyncEncryptionProgressCallback | undefined = (progress) => {
-            if (last && last.phase !== progress.phase) {
-                logPhase(last.phase, progress.total, progress.completed);
-            }
-            last = progress;
-            callerProgress?.(progress);
-        };
-        try {
-            const value = await run(onProgress);
-            if (last) logPhase(last.phase, last.total, last.total);
-            logTransition({ kind, backend, phase: 'end', outcome: outcomeOf(value) });
-            return value;
-        } catch (error) {
-            logTransition({
-                kind,
-                backend,
-                phase: 'end',
-                outcome: transitionOutcomeForError(error),
-                errorName: error instanceof Error ? error.name : 'unknown',
-                errorMessage: error instanceof Error ? error.message : String(error ?? ''),
-            });
-            throw error;
-        }
-    };
+        outcomeOf?: (value: T) => SyncEncryptionTransitionOutcome,
+    ): Promise<T> => runSyncEncryptionTransitionWithDiagnostics(
+        (event, extra, logOptions) => state.logSyncEncryptionEvent(event, extra, logOptions),
+        kind,
+        backendLabel(await location.readTarget().catch(() => null)),
+        options?.onProgress,
+        run,
+        outcomeOf,
+    );
 
     const parseWebdavAttachmentKeys = (xml: string, collectionUrl: string): string[] =>
         parseWebdavAttachmentInventory(xml, collectionUrl, deps.parseWebdavXml);

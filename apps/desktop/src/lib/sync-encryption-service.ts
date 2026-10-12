@@ -1,11 +1,11 @@
-// Desktop's glue for sync encryption (#1056, phase 2 of 3).
+// Desktop's glue for sync encryption (#1056).
 //
 // Rust owns key derivation and the OS-keyring cache (apps/desktop/src-tauri/src/
-// sync_encryption.rs), plus the two storage seams it drives itself: the File Sync backend and
-// the native WebDAV get/put. This module is the other half — the seams that live in the
-// webview: Dropbox's data document, all three backends' attachment bytes, WebDAV when a config
-// override sends the request through TS instead of Rust, and the shared transition
-// orchestration from @mindwtr/core.
+// sync_encryption.rs), the File Sync transitions, and the per-cycle WebDAV crypto seam. WebDAV
+// and Dropbox transitions run in core's sync encryption service
+// (`packages/core/src/sync-encryption-service.ts`), the same code the mobile apps run; this
+// module binds it to Rust's keyring and sidecar, the Rust Argon2 primitive and xmldom. It also
+// holds the attachment byte seams and the failure classification.
 //
 // Desktop TS never keeps a key cache of its own; every getKey/setKey/clearKey here is a Tauri
 // call into Rust's keyring, so there is exactly one source of truth on the device.
@@ -14,96 +14,51 @@
 
 import {
     SYNC_ENCRYPTION_LOG_EVENTS,
-    SyncEncryptionRemoteConflictError,
     buildSyncEncryptionRemoteReadExtra,
-    buildSyncEncryptionTransitionExtra,
+    createSyncEncryptionService,
     syncEncryptionLogMessage,
     type SyncEncryptionRemoteReadLogInput,
-    type SyncEncryptionTransitionLogKind,
-    type SyncEncryptionTransitionOutcome,
-    acquireSyncRemoteMutationFence,
-    assertWebdavStrongEtagSupport,
-    createDropboxSyncRemoteMutationFencePort,
-    createWebdavSyncRemoteMutationFencePort,
-    DEFAULT_TIMEOUT_MS,
     decryptRemoteArtifactOrThrow,
     defaultSyncCryptoPrimitives,
-    deleteDropboxFileVersioned,
-    deriveSyncKeyMaterial,
-    downloadDropboxFileVersioned,
     encryptSyncArtifact,
-    fetchWithTimeoutAndConsume,
     inspectSyncArtifact,
-    isSyncRemoteMutationFenceError,
-    listDropboxFolderFiles,
-    parseWebdavAttachmentInventory,
-    readResponseText,
-    runChangeSyncEncryptionPassphraseOverRemote,
-    runDisableSyncEncryptionLocalOnly,
-    runDisableSyncEncryptionOverRemote,
-    runEnableSyncEncryptionLocalOnly,
-    runEnableSyncEncryptionOverRemote,
-    runProvideSyncEncryptionPassphraseOverRemote,
-    sanitizeAttachmentCloudKeyForSyncMerge,
     SYNC_ENCRYPTION_KEYED_STATES,
-    SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS,
     SyncCryptoUnsupportedError,
-    SyncEncryptionBackendIncompatibleError,
     SyncEncryptionRemotePlaintextError,
-    SyncEncryptionRemoteVersionUnavailableError,
     SyncEncryptionTerminalError,
-    uploadDropboxFileVersioned,
-    webdavDeleteFileVersioned,
-    webdavGetFileVersioned,
-    webdavMakeDirectory,
-    webdavPutFileVersioned,
-    type AppData,
-    type Attachment,
     type SyncCryptoKdfParams,
     type SyncCryptoPrimitives,
     type SyncEncryptionKeyCachePort,
     type SyncEncryptionLocalState,
     type SyncEncryptionLocalStatePort,
-    type SyncEncryptionRemoteEntry,
-    type SyncEncryptionRemoteInventory,
-    type SyncEncryptionRemotePort,
-    type SyncEncryptionRemoteRead,
+    type SyncEncryptionLocationPort,
+    type SyncEncryptionService,
+    type SyncEncryptionServiceDeps,
+    type SyncEncryptionServiceStatePort,
     type SyncEncryptionStatus,
-    type SyncEncryptionTransitionProgress,
     type SyncEncryptionTransitionKind,
     type SyncKeyMaterial,
-    type SyncRemoteMutationFenceLease,
-    type SyncRemoteMutationFencePort,
-    SyncRemoteMutationFenceUnavailableError,
-    type WebDavOptions,
 } from '@mindwtr/core';
 import { DOMParser } from '@xmldom/xmldom';
 import { logInfo, logWarn } from './app-log';
 import { invokeNative, invokeNativeOr } from './tauri-invoke';
 
-// ---------------------------------------------------------------------------
-// Diagnostics trail (#1056 follow-up)
-//
-// One emitter, core's builders for the field maps. `transition` always lands in the log file
-// (`force`) because a transition rewrites every artifact at the sync location and its outcome
-// is the single most useful line in an encryption report; `logInfo`/`logWarn` sanitize the
-// extras a second time on the way out.
-// ---------------------------------------------------------------------------
+export {
+    isSyncEncryptionCleanupDeferredError,
+    SyncEncryptionCleanupDeferredError,
+} from '@mindwtr/core';
 
-const logSyncEncryptionTransition = (
-    input: Parameters<typeof buildSyncEncryptionTransitionExtra>[0],
-): void => {
-    const context = {
-        scope: 'sync',
-        extra: buildSyncEncryptionTransitionExtra(input),
-        force: true,
-    };
-    const message = syncEncryptionLogMessage(SYNC_ENCRYPTION_LOG_EVENTS.transition);
-    if (input.outcome && input.outcome !== 'ok') {
-        void logWarn(message, context);
-        return;
-    }
-    void logInfo(message, context);
+/** The `[sync-encryption]` emitter core's service writes its transition trail through.
+ *  `logInfo`/`logWarn` sanitize the extras a second time on the way out; never rejects. */
+export const logSyncEncryptionEvent: SyncEncryptionServiceStatePort['logSyncEncryptionEvent'] = (
+    event,
+    extra,
+    options,
+) => {
+    const message = syncEncryptionLogMessage(event);
+    const context = { scope: 'sync', extra, force: options?.force };
+    const written = options?.level === 'warn' ? logWarn(message, context) : logInfo(message, context);
+    return Promise.resolve(written).then(() => undefined, () => undefined);
 };
 
 /** fresh-join-attachment-posture packet -10: the attachment byte seams (`sealAttachmentBytes`,
@@ -116,107 +71,6 @@ const logSyncEncryptionRemoteRead = (input: SyncEncryptionRemoteReadLogInput): v
         syncEncryptionLogMessage(SYNC_ENCRYPTION_LOG_EVENTS.remoteRead),
         { scope: 'sync', extra: buildSyncEncryptionRemoteReadExtra(input) },
     );
-};
-
-const transitionOutcomeForError = (error: unknown): SyncEncryptionTransitionOutcome => {
-    if (error instanceof SyncEncryptionRemoteConflictError) return 'conflict';
-    const message = error instanceof Error ? error.message : String(error ?? '');
-    if (message.includes('SYNC_ENCRYPTION_BACKEND_REQUIRED')) return 'backend-required';
-    if (/wrong passphrase/i.test(message)) return 'wrong-passphrase';
-    return 'error';
-};
-
-/**
- * Start/end lines around one transition, plus one line per completed progress phase.
- * Deliberately NOT one line per artifact: a folder with hundreds of attachments would push the
- * rest of the run out of the rotated log for no extra diagnosis.
- */
-export const withTransitionDiagnostics = async <T>(
-    kind: SyncEncryptionTransitionLogKind,
-    backend: string,
-    onProgress: ((progress: SyncEncryptionTransitionProgress) => void) | undefined,
-    run: (onProgress: ((progress: SyncEncryptionTransitionProgress) => void) | undefined) => Promise<T>,
-    outcomeOf: (value: T) => SyncEncryptionTransitionOutcome = () => 'ok',
-): Promise<T> => {
-    logSyncEncryptionTransition({ kind, backend, phase: 'start' });
-    // Core reports BEFORE it increments its counter, so `completed` never reaches `total`
-    // inside the callback. A phase is finished when the NEXT phase reports (its `completed`
-    // is exactly what the finished phase got through) or when the run returns.
-    let last: SyncEncryptionTransitionProgress | undefined;
-    const logPhase = (phase: string, planned: number, done: number) => {
-        logSyncEncryptionTransition({ kind, backend, phase: 'artifact', artifact: phase, planned, done });
-    };
-    const wrappedProgress = (progress: SyncEncryptionTransitionProgress) => {
-        if (last && last.phase !== progress.phase) {
-            logPhase(last.phase, progress.total, progress.completed);
-        }
-        last = progress;
-        onProgress?.(progress);
-    };
-    try {
-        const value = await run(wrappedProgress);
-        if (last) logPhase(last.phase, last.total, last.total);
-        logSyncEncryptionTransition({ kind, backend, phase: 'end', outcome: outcomeOf(value) });
-        return value;
-    } catch (error) {
-        logSyncEncryptionTransition({
-            kind,
-            backend,
-            phase: 'end',
-            outcome: transitionOutcomeForError(error),
-            errorName: error instanceof Error ? error.name : 'unknown',
-            errorMessage: error instanceof Error ? error.message : String(error ?? ''),
-        });
-        throw error;
-    }
-};
-
-/** The document names a blob remote can hold. Reads of an absent name resolve to `null` and
- *  the core transition loops skip them, so probing existence up front buys nothing. */
-const REMOTE_DOCUMENT_NAMES = ['data.json', 'data.json.bak', 'data.json.enc', 'data.json.enc.bak'];
-
-type TransitionRemotePort = SyncEncryptionRemotePort & {
-    acquireRemoteMutationFence?: () => Promise<SyncRemoteMutationFenceLease>;
-};
-
-/** The transition and durable local commit completed, but the conditional remote
- * fence cleanup did not. Callers must refresh/close as success and show a bounded
- * cleanup warning; retrying the already-completed transition is the wrong remedy. */
-export class SyncEncryptionCleanupDeferredError<T = void> extends Error {
-    readonly retryAfterMs: number;
-
-    constructor(
-        public readonly outcome: T,
-        public readonly cleanupCause: unknown,
-        retryAfterMs: number,
-    ) {
-        super('SYNC_ENCRYPTION_COMMITTED_CLEANUP_DEFERRED');
-        this.name = 'SyncEncryptionCleanupDeferredError';
-        this.retryAfterMs = Math.max(0, Math.floor(retryAfterMs));
-        (this as Error & { cause?: unknown }).cause = cleanupCause;
-    }
-}
-
-export const isSyncEncryptionCleanupDeferredError = (
-    error: unknown,
-): error is SyncEncryptionCleanupDeferredError<unknown> => (
-    error instanceof SyncEncryptionCleanupDeferredError
-);
-
-const TRANSITION_FENCE_OPTIONS = {
-    ownerId: 'mindwtr-desktop',
-    purpose: 'encryption-transition' as const,
-};
-
-const sanitizeBlobAttachmentKey = (value: unknown): string | undefined => {
-    const key = sanitizeAttachmentCloudKeyForSyncMerge(value);
-    return key?.startsWith('attachments/') ? key : undefined;
-};
-
-const assertManagedRemoteArtifactName = (name: string): string => {
-    if (REMOTE_DOCUMENT_NAMES.includes(name)) return name;
-    if (sanitizeBlobAttachmentKey(name) === name) return name;
-    throw new Error('Invalid sync encryption remote artifact name');
 };
 
 const OFF_STATUS: SyncEncryptionStatus = { state: 'off' };
@@ -448,22 +302,26 @@ const restoreNativeTransitionSnapshot = async (
     }
 };
 
-/** Rust's keyring and sidecar, exposed as core's two ports.
+/** Rust's keyring and sidecar as core's state port.
  *
  *  Core always calls `keyCache.setKey(key)` and then `localState.write({state, salt, params})`
  *  — the key alone cannot rebuild a header, so the persist is deferred to the write, where
- *  both halves are in hand for the one Rust command. That also
- *  keeps the "persist the enabled flag only after the transition has fully succeeded" rule:
- *  core never reaches the write if any artifact failed.
+ *  both halves are in hand for the one Rust command. That also keeps the "persist the enabled
+ *  flag only after the transition has fully succeeded" rule: core never reaches the write if
+ *  any artifact failed.
  *
  *  `localState.write` returns the native persistence promise. When Rust reports a partial
  *  enabled-material commit, the adapter restores the preceding key/state/journal snapshot
- *  before rejecting, so core's compensating key-cache write is not merely an in-memory update. */
-const createTransitionPorts = (initial: SyncEncryptionLocalState | null) => {
-    let current = initial;
+ *  before rejecting, so core's compensating key-cache write is not merely an in-memory update.
+ *
+ *  The pending key and the snapshot belong to one transition: core loads the state at the start
+ *  of each one, on its serialized queue, and every desktop call reaches the service through
+ *  `runSyncRestoreExclusive`, so two transitions never share them. */
+const createDesktopSyncEncryptionState = (): SyncEncryptionServiceStatePort => {
+    let current: SyncEncryptionLocalState | null = null;
     let pendingKey: Uint8Array | null = null;
     let persistedMaterial: SyncKeyMaterial | null | undefined;
-    const queued: Promise<unknown>[] = [];
+    let queued: Promise<unknown>[] = [];
 
     const keyCache: SyncEncryptionKeyCachePort = {
         async getKey() {
@@ -528,26 +386,41 @@ const createTransitionPorts = (initial: SyncEncryptionLocalState | null) => {
         },
     };
 
+    const flush = async () => {
+        await Promise.all(queued);
+    };
+
     return {
-        keyCache,
-        localState,
-        restore: async (
-            state: SyncEncryptionLocalState | null,
-            key: Uint8Array | null,
-            attemptedState: SyncEncryptionLocalState | null,
-        ) => {
-            pendingKey = key;
-            current = state;
+        loadSyncEncryptionLocalState: async () => {
+            current = statusToLocalState(await getSyncEncryptionStatus());
+            pendingKey = null;
+            persistedMaterial = undefined;
+            queued = [];
+            void logInfo('Sync encryption state loaded for the core service', {
+                scope: 'sync',
+                extra: { releaseCheck: 'v1.3.5/desktop-encryption-core-service' },
+                force: true,
+            });
+            return current;
+        },
+        // Rust commits the key and the state in one call: one snapshot restore puts both back.
+        restoreAfterFenceLoss: async (before, attempted) => {
+            pendingKey = before.key;
+            current = before.state;
             await restoreNativeTransitionSnapshot(
-                state,
+                before.state,
                 persistedMaterial ?? null,
-                attemptedState ?? state ?? { state: 'off' },
+                attempted.state ?? before.state ?? { state: 'off' },
             );
             clearSyncEncryptionMaterialCache();
+            await flush();
         },
-        flush: async () => {
-            await Promise.all(queued);
-        },
+        flushSyncEncryptionLocalState: flush,
+        syncEncryptionLocalState: localState,
+        syncEncryptionKeyCache: keyCache,
+        getSyncEncryptionMaterial,
+        getSyncEncryptionStatus,
+        logSyncEncryptionEvent,
     };
 };
 
@@ -560,534 +433,27 @@ const statusToLocalState = (status: SyncEncryptionStatus): SyncEncryptionLocalSt
             incompleteTransition: status.incompleteTransition,
         };
 
-const openTransitionPorts = async () =>
-    createTransitionPorts(statusToLocalState(await getSyncEncryptionStatus()));
+/** What the core service needs from SyncService: where this device syncs and the backend
+ *  credentials. Desktop has no File Sync port here — SyncService routes File Sync to Rust. */
+export type DesktopSyncEncryptionHost = Pick<
+    SyncEncryptionServiceDeps<never>,
+    'fetch' | 'loadWebDavConfig' | 'webDavRequestOptions' | 'getDropboxClientId' | 'runDropboxAuthorized'
+> & { location: SyncEncryptionLocationPort };
 
-const createAuthorizedDropboxFencePort = (
-    withToken: <T>(operation: (token: string) => Promise<T>) => Promise<T>,
-    fetcher: typeof fetch,
-): SyncRemoteMutationFencePort => {
-    const portFor = (token: string) => createDropboxSyncRemoteMutationFencePort(token, fetcher);
-    const conflictClassifier = portFor('');
-    return {
-        read: () => withToken((token) => portFor(token).read()),
-        write: (bytes, expectedVersion) => withToken((token) =>
-            portFor(token).write(bytes, expectedVersion)),
-        remove: (expectedVersion) => withToken((token) => portFor(token).remove(expectedVersion)),
-        isConflict: conflictClassifier.isConflict,
-    };
-};
-
-const runWithRemoteMutationFence = async <T>(
-    remote: SyncEncryptionRemotePort,
-    ports: ReturnType<typeof createTransitionPorts>,
-    operation: (
-        guardedRemote: SyncEncryptionRemotePort,
-        guardedKeyCache: SyncEncryptionKeyCachePort,
-        guardedLocalState: SyncEncryptionLocalStatePort,
-    ) => Promise<T>,
-): Promise<T> => {
-    const acquire = (remote as TransitionRemotePort).acquireRemoteMutationFence;
-    if (!acquire) {
-        const result = await operation(remote, ports.keyCache, ports.localState);
-        await ports.flush();
-        return result;
-    }
-
-    const lease = await acquire();
-    const runLeaseOperation = async (message: string, action: () => Promise<void>): Promise<void> => {
-        try {
-            await action();
-        } catch (error) {
-            if (isSyncRemoteMutationFenceError(error)) throw error;
-            const detail = error instanceof Error ? error.message : String(error);
-            throw new SyncRemoteMutationFenceUnavailableError(`${message}: ${detail}`);
-        }
-    };
-    const assertHeld = (minRemainingMs = 0) => runLeaseOperation(
-        'Remote sync mutation fence validation failed',
-        () => lease.assertHeld(minRemainingMs),
-    );
-    const renewHeld = () => runLeaseOperation(
-        'Remote sync mutation fence renewal failed',
-        () => lease.renew(),
-    );
-    const previousState = ports.localState.read();
-    const previousKey = await ports.keyCache.getKey();
-    let localMaterialTouched = false;
-    let finalStateWriteAttempted = false;
-    let stateBeforeFinalCommit = previousState;
-    let attemptedFinalState: SyncEncryptionLocalState | null = null;
-    const guardedRemote: SyncEncryptionRemotePort = {
-        ...remote,
-        list: async () => {
-            await assertHeld();
-            return remote.list();
+export const createDesktopSyncEncryptionService = (host: DesktopSyncEncryptionHost): SyncEncryptionService =>
+    createSyncEncryptionService<never>({
+        ...host,
+        fenceOwnerId: 'mindwtr-desktop',
+        state: createDesktopSyncEncryptionState(),
+        crypto: desktopSyncCryptoPrimitives,
+        parseWebdavXml: (source) => {
+            const errors: string[] = [];
+            const document = new DOMParser({
+                errorHandler: (level, message) => errors.push(`${level}: ${String(message)}`),
+            }).parseFromString(source, 'application/xml') as unknown as Document;
+            return { document, errors };
         },
-        captureInventory: remote.captureInventory
-            ? async (recoveryPassphrase) => {
-                await assertHeld();
-                return remote.captureInventory!(recoveryPassphrase);
-            }
-            : undefined,
-        read: async (name) => {
-            await assertHeld();
-            return remote.read(name);
-        },
-        write: async (name, bytes, expectedVersion) => {
-            await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            await remote.write(name, bytes, expectedVersion);
-        },
-        remove: async (name, expectedVersion) => {
-            await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            await remote.remove(name, expectedVersion);
-        },
-    };
-    const guardedKeyCache: SyncEncryptionKeyCachePort = {
-        getKey: () => ports.keyCache.getKey(),
-        setKey: async (key) => {
-            await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            localMaterialTouched = true;
-            await ports.keyCache.setKey(key);
-        },
-        clearKey: async () => {
-            await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            localMaterialTouched = true;
-            await ports.keyCache.clearKey();
-        },
-    };
-    const guardedLocalState: SyncEncryptionLocalStatePort = {
-        read: () => ports.localState.read(),
-        write: async (state) => {
-            if (state?.incompleteTransition) {
-                await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-            } else {
-                stateBeforeFinalCommit = ports.localState.read();
-                attemptedFinalState = state;
-                finalStateWriteAttempted = true;
-                await renewHeld();
-            }
-            await ports.localState.write(state);
-        },
-    };
-
-    let result: T;
-    try {
-        result = await operation(guardedRemote, guardedKeyCache, guardedLocalState);
-        await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-        await ports.flush();
-        await assertHeld(SYNC_REMOTE_MUTATION_REQUEST_HORIZON_MS);
-    } catch (primaryError) {
-        let failureToThrow = primaryError;
-        if (isSyncRemoteMutationFenceError(primaryError) && (localMaterialTouched || finalStateWriteAttempted)) {
-            try {
-                if (finalStateWriteAttempted) {
-                    await ports.restore(stateBeforeFinalCommit, previousKey, attemptedFinalState);
-                } else if (previousKey) {
-                    await ports.keyCache.setKey(previousKey);
-                } else {
-                    await ports.keyCache.clearKey();
-                }
-                await ports.flush();
-            } catch (rollbackError) {
-                const failure = new Error('Failed to roll back sync encryption material after remote fence loss');
-                (failure as Error & { cause?: unknown; rollbackError?: unknown }).cause = primaryError;
-                (failure as Error & { rollbackError?: unknown }).rollbackError = rollbackError;
-                failureToThrow = failure;
-            }
-        }
-        try {
-            await lease.release();
-        } catch (cleanupError) {
-            if (failureToThrow instanceof Error) {
-                (failureToThrow as Error & { cleanupError?: unknown }).cleanupError = cleanupError;
-            }
-        }
-        throw failureToThrow;
-    }
-
-    try {
-        await lease.release();
-    } catch (cleanupError) {
-        let retryAfterMs = 0;
-        try {
-            retryAfterMs = lease.retryAfterMs();
-        } catch {
-            // The cleanup failure remains bounded by the lease protocol even if
-            // the adapter cannot provide a more precise remaining duration.
-        }
-        throw new SyncEncryptionCleanupDeferredError(result, cleanupError, retryAfterMs);
-    }
-    return result;
-};
-
-// ---------------------------------------------------------------------------
-// Remote ports
-// ---------------------------------------------------------------------------
-
-const collectRemoteAttachmentKeys = (data: AppData | null): string[] => {
-    if (!data) return [];
-    const keys = new Set<string>();
-    const visit = (attachments: Attachment[] | undefined) => {
-        for (const attachment of attachments ?? []) {
-            const key = sanitizeBlobAttachmentKey(attachment.cloudKey);
-            if (key) keys.add(key);
-        }
-    };
-    for (const task of data.tasks ?? []) visit(task.attachments);
-    for (const project of data.projects ?? []) visit(project.attachments);
-    return Array.from(keys).sort();
-};
-
-const PROVIDER_INVENTORY_MAX_BYTES = 4 * 1024 * 1024;
-const DAV_PROPFIND_BODY = '<?xml version="1.0" encoding="utf-8"?>'
-    + '<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>';
-
-const webdavInventoryHeaders = (options: WebDavOptions): Record<string, string> => {
-    const headers: Record<string, string> = {
-        ...(options.headers ?? {}),
-        'Content-Type': 'application/xml; charset=utf-8',
-        Depth: '1',
-    };
-    if (options.username && typeof options.password === 'string') {
-        headers.Authorization = `Basic ${bytesToBase64(new TextEncoder().encode(`${options.username}:${options.password}`))}`;
-    }
-    return headers;
-};
-
-const parseWebdavAttachmentKeys = (xml: string, collectionUrl: string): string[] =>
-    parseWebdavAttachmentInventory(xml, collectionUrl, (source) => {
-        const errors: string[] = [];
-        const document = new DOMParser({
-            errorHandler: (level, message) => errors.push(`${level}: ${String(message)}`),
-        }).parseFromString(source, 'application/xml') as unknown as Document;
-        return { document, errors };
     });
-
-const listWebdavAttachmentKeys = async (
-    baseUrl: string,
-    options: WebDavOptions,
-): Promise<string[]> => {
-    const collectionUrl = `${baseUrl.replace(/\/+$/, '')}/attachments/`;
-    // `null` = the collection itself answered 404.
-    const propfind = (): Promise<string[] | null> => fetchWithTimeoutAndConsume(
-        collectionUrl,
-        {
-            method: 'PROPFIND',
-            headers: webdavInventoryHeaders(options),
-            body: DAV_PROPFIND_BODY,
-            signal: options.signal,
-        },
-        options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        options.fetcher ?? fetch,
-        'WebDAV attachment inventory timed out',
-        async (response, signal) => {
-            if (response.status === 404) return null;
-            if (!response.ok) {
-                throw new Error(`WebDAV attachment inventory PROPFIND failed (${response.status})`);
-            }
-            const xml = await readResponseText(response, PROVIDER_INVENTORY_MAX_BYTES, signal);
-            return parseWebdavAttachmentKeys(xml, collectionUrl);
-        },
-    );
-    const keys = await propfind();
-    if (keys) return keys;
-    // A sync root that never held an attachment has no `attachments/` collection yet (#1250).
-    // A bare 404 is not proof of an empty inventory, so create the collection and list it
-    // again: only the server's own listing of it counts, and a second 404 still fails closed.
-    await webdavMakeDirectory(collectionUrl, options);
-    const created = await propfind();
-    if (!created) throw new Error('WebDAV attachment inventory PROPFIND failed (404)');
-    return created;
-};
-
-const listDropboxAttachmentKeys = async (
-    accessToken: string,
-    fetcher: typeof fetch,
-): Promise<string[]> => {
-    const keys = new Set<string>();
-    for (const entry of await listDropboxFolderFiles(accessToken, '/attachments', fetcher)) {
-            const name = entry.name;
-            const expectedLowerPath = `/attachments/${name.toLowerCase()}`;
-            if (entry.pathLower !== expectedLowerPath) {
-                throw new Error('Dropbox attachment inventory file identity is inconsistent');
-            }
-            const candidate = `attachments/${name}`;
-            const key = sanitizeBlobAttachmentKey(candidate);
-            if (key !== candidate) {
-                throw new Error('Dropbox attachment inventory returned an invalid attachment name');
-            }
-            keys.add(key);
-    }
-    return Array.from(keys).sort();
-};
-
-/** Remote documents remain a second attachment index so a referenced-but-currently-missing
- *  key is captured as an expected absence. Provider enumeration adds unreferenced files; the
- *  union lets final inventory validation detect create, change, and removal races for both. */
-/** Never throws on a document it cannot open — enumerating attachment names is its only job,
- *  and failing the listing aborts the whole transition before the recovery logic that would
- *  have fixed the artifact ever runs (that is what bricked a passphrase-change resume: the
- *  base document is rewrapped first, so the cached key stops opening it).
- *
- *  `recoveryPassphrase` is what keeps "returns null" from trading a hard abort for silent
- *  data loss: on a resume the document is sealed under an ABANDONED intermediate salt, and a
- *  null listing would enumerate zero attachments and leave every one of them behind under a
- *  key nothing ever derives again. Re-deriving from the artifact's OWN header is the same
- *  recovery core's `rewrap` performs on each artifact. */
-const decodeDocument = async (
-    bytes: Uint8Array | null,
-    key: Uint8Array | null,
-    recoveryPassphrase?: string,
-): Promise<AppData | null> => {
-    if (!bytes) return null;
-    const inspected = inspectSyncArtifact(bytes);
-    if (inspected.kind === 'unsupported') {
-        // Same classification core's `unsupportedArtifact` gives this input class. Parsing it
-        // as JSON would throw a raw SyntaxError out of remote.list() instead.
-        throw new SyncEncryptionTerminalError(new SyncCryptoUnsupportedError(inspected.reason));
-    }
-    if (inspected.kind === 'plaintext') {
-        return JSON.parse(new TextDecoder().decode(bytes)) as AppData;
-    }
-    const candidates: Uint8Array[] = key ? [key] : [];
-    if (recoveryPassphrase) {
-        const recovered = await deriveSyncKeyMaterial(
-            recoveryPassphrase,
-            inspected.salt,
-            inspected.params,
-            desktopSyncCryptoPrimitives,
-        );
-        candidates.push(recovered.key);
-    }
-    for (const candidate of candidates) {
-        try {
-            const plain = await decryptRemoteArtifactOrThrow(bytes, candidate, desktopSyncCryptoPrimitives);
-            return JSON.parse(new TextDecoder().decode(plain)) as AppData;
-        } catch (error) {
-            if (!(error instanceof SyncEncryptionTerminalError)) throw error;
-        }
-    }
-    return null;
-};
-
-/** The key is resolved here rather than taken as a parameter: a caller that passed `null` by
- * mistake would enumerate zero attachments and a transition would silently skip all of them.
- * The returned snapshot includes the exact document generations used for that derivation, so
- * core never rereads a newer document and treats its attachment list as if it came from it. */
-const captureRemoteInventory = async (
-    read: (name: string) => Promise<SyncEncryptionRemoteRead>,
-    listAttachmentKeys: () => Promise<string[]>,
-    recoveryPassphrase?: string,
-): Promise<SyncEncryptionRemoteInventory & { referencedAttachmentKeys: string[] }> => {
-    const snapshot = new Map<string, SyncEncryptionRemoteRead>();
-    for (const name of REMOTE_DOCUMENT_NAMES) snapshot.set(name, await read(name));
-    const listedAttachmentKeys = await listAttachmentKeys();
-    const key = (await getSyncEncryptionMaterial())?.key ?? null;
-    const referencedAttachmentKeys = new Set<string>();
-    for (const name of ['data.json.enc', 'data.json', 'data.json.enc.bak', 'data.json.bak']) {
-        const data = await decodeDocument(snapshot.get(name)?.bytes ?? null, key, recoveryPassphrase);
-        for (const attachmentKey of collectRemoteAttachmentKeys(data)) {
-            referencedAttachmentKeys.add(attachmentKey);
-        }
-    }
-    const referenced = Array.from(referencedAttachmentKeys).sort();
-    const attachmentKeys = new Set([...listedAttachmentKeys, ...referenced]);
-    for (const name of attachmentKeys) snapshot.set(name, await read(name));
-    const entries: SyncEncryptionRemoteEntry[] = [
-        ...REMOTE_DOCUMENT_NAMES.map((name) => ({ name, kind: 'document' as const })),
-        ...Array.from(attachmentKeys).sort().map((name) => ({ name, kind: 'attachment' as const })),
-    ];
-    return { entries, snapshot, referencedAttachmentKeys: referenced };
-};
-
-const listRemoteEntries = async (
-    listAttachmentKeys: () => Promise<string[]>,
-    referencedAttachmentKeys: readonly string[],
-): Promise<SyncEncryptionRemoteEntry[]> => [
-    ...REMOTE_DOCUMENT_NAMES.map((name) => ({ name, kind: 'document' as const })),
-    ...Array.from(new Set([...await listAttachmentKeys(), ...referencedAttachmentKeys]))
-        .sort()
-        .map((name) => ({ name, kind: 'attachment' as const })),
-];
-
-export type WebdavRemotePortConfig = {
-    baseUrl: string;
-    options: WebDavOptions;
-};
-
-export function createWebdavRemotePort(config: WebdavRemotePortConfig): TransitionRemotePort {
-    const urlFor = (name: string) => `${config.baseUrl}/${assertManagedRemoteArtifactName(name)}`;
-    const read = (name: string): Promise<SyncEncryptionRemoteRead> =>
-        webdavGetFileVersioned(urlFor(name), config.options);
-    const listAttachmentKeys = () => listWebdavAttachmentKeys(config.baseUrl, config.options);
-    let referencedAttachmentKeys: string[] = [];
-    return {
-        acquireRemoteMutationFence: async () => {
-            // Same proof as core's WebDAV port (ab7ae85c2): a server without strong ETags could never read the fence
-            // back, so refuse it before the fence file is written instead of failing as "fence lost".
-            try {
-                await assertWebdavStrongEtagSupport(urlFor('data.json'), config.options);
-            } catch (error) {
-                if (!(error instanceof SyncEncryptionRemoteVersionUnavailableError)) throw error;
-                void logWarn('WebDAV server refused for an encryption transition: no strong ETags', {
-                    scope: 'sync',
-                    extra: { releaseCheck: 'v1.3.5/desktop-encryption-strong-etag' },
-                    force: true,
-                });
-                throw new SyncEncryptionBackendIncompatibleError(error);
-            }
-            return acquireSyncRemoteMutationFence(
-                createWebdavSyncRemoteMutationFencePort(urlFor('data.json'), config.options),
-                TRANSITION_FENCE_OPTIONS,
-            );
-        },
-        list: () => listRemoteEntries(listAttachmentKeys, referencedAttachmentKeys),
-        captureInventory: async (recoveryPassphrase) => {
-            const inventory = await captureRemoteInventory(read, listAttachmentKeys, recoveryPassphrase);
-            referencedAttachmentKeys = inventory.referencedAttachmentKeys;
-            return inventory;
-        },
-        read,
-        write: async (name, bytes, expectedVersion) => {
-            await webdavPutFileVersioned(
-                urlFor(name), bytes, 'application/octet-stream', expectedVersion, config.options,
-            );
-        },
-        remove: async (name, expectedVersion) => {
-            await webdavDeleteFileVersioned(urlFor(name), expectedVersion, config.options);
-        },
-    };
-}
-
-export function createDropboxRemotePort(
-    withToken: <T>(operation: (token: string) => Promise<T>) => Promise<T>,
-    fetcher: typeof fetch,
-): TransitionRemotePort {
-    const read = (name: string): Promise<SyncEncryptionRemoteRead> =>
-        withToken((token) => downloadDropboxFileVersioned(token, assertManagedRemoteArtifactName(name), fetcher));
-    const listAttachmentKeys = () => withToken((token) => listDropboxAttachmentKeys(token, fetcher));
-    let referencedAttachmentKeys: string[] = [];
-    return {
-        acquireRemoteMutationFence: () => acquireSyncRemoteMutationFence(
-            createAuthorizedDropboxFencePort(withToken, fetcher),
-            TRANSITION_FENCE_OPTIONS,
-        ),
-        list: () => listRemoteEntries(listAttachmentKeys, referencedAttachmentKeys),
-        captureInventory: async (recoveryPassphrase) => {
-            const inventory = await captureRemoteInventory(read, listAttachmentKeys, recoveryPassphrase);
-            referencedAttachmentKeys = inventory.referencedAttachmentKeys;
-            return inventory;
-        },
-        read,
-        write: async (name, bytes, expectedVersion) => {
-            await withToken((token) =>
-                uploadDropboxFileVersioned(
-                    token, assertManagedRemoteArtifactName(name), bytes, expectedVersion, fetcher,
-                ),
-            );
-        },
-        remove: async (name, expectedVersion) => {
-            await withToken((token) => deleteDropboxFileVersioned(
-                token, assertManagedRemoteArtifactName(name), expectedVersion, fetcher,
-            ));
-        },
-    };
-}
-
-// ---------------------------------------------------------------------------
-// Transitions over a TS-driven remote (Dropbox always; WebDAV under a config override)
-// ---------------------------------------------------------------------------
-
-export async function runEnableOverRemote(
-    passphrase: string,
-    remote: SyncEncryptionRemotePort,
-    onProgress?: (progress: SyncEncryptionTransitionProgress) => void,
-): Promise<void> {
-    const ports = await openTransitionPorts();
-    await runWithRemoteMutationFence(remote, ports, (guardedRemote, keyCache, localState) =>
-        runEnableSyncEncryptionOverRemote(
-            passphrase,
-            guardedRemote,
-            keyCache,
-            localState,
-            onProgress,
-            desktopSyncCryptoPrimitives,
-        ));
-}
-
-/** No configured backend (#1001): derive+persist only, so the first sync a later backend
- *  runs writes ciphertext from its first byte. Core guards the entry state. */
-export async function runEnableLocalOnly(passphrase: string): Promise<void> {
-    const ports = await openTransitionPorts();
-    await runEnableSyncEncryptionLocalOnly(
-        passphrase,
-        ports.keyCache,
-        ports.localState,
-        desktopSyncCryptoPrimitives,
-    );
-    await ports.flush();
-}
-
-/** No configured backend: clears this device's key and state; no remote is touched. */
-export async function runDisableLocalOnly(): Promise<void> {
-    const ports = await openTransitionPorts();
-    await runDisableSyncEncryptionLocalOnly(ports.keyCache, ports.localState);
-    await ports.flush();
-}
-
-export async function runDisableOverRemote(
-    remote: SyncEncryptionRemotePort,
-    onProgress?: (progress: SyncEncryptionTransitionProgress) => void,
-): Promise<void> {
-    const ports = await openTransitionPorts();
-    await runWithRemoteMutationFence(remote, ports, (guardedRemote, keyCache, localState) =>
-        runDisableSyncEncryptionOverRemote(
-            guardedRemote,
-            keyCache,
-            localState,
-            onProgress,
-            desktopSyncCryptoPrimitives,
-        ));
-}
-
-export async function runChangePassphraseOverRemote(
-    currentPassphrase: string,
-    nextPassphrase: string,
-    remote: SyncEncryptionRemotePort,
-    onProgress?: (progress: SyncEncryptionTransitionProgress) => void,
-): Promise<void> {
-    const ports = await openTransitionPorts();
-    await runWithRemoteMutationFence(remote, ports, (guardedRemote, keyCache, localState) =>
-        runChangeSyncEncryptionPassphraseOverRemote(
-            currentPassphrase,
-            nextPassphrase,
-            guardedRemote,
-            keyCache,
-            localState,
-            onProgress,
-            desktopSyncCryptoPrimitives,
-        ));
-}
-
-/** `'no-encrypted-remote'` (#1138): nothing encrypted is at this location, so the no-key state
- *  described somewhere this device has left behind. Core clears it back to off (which this
- *  adapter's `localState.write(null)` turns into `clear_sync_encryption_key_material`). */
-export async function runProvidePassphraseOverRemote(
-    passphrase: string,
-    remote: SyncEncryptionRemotePort,
-): Promise<'ok' | 'wrong-passphrase' | 'no-encrypted-remote'> {
-    const ports = await openTransitionPorts();
-    return runWithRemoteMutationFence(remote, ports, (guardedRemote, keyCache, localState) =>
-        runProvideSyncEncryptionPassphraseOverRemote(
-            passphrase,
-            'data.json',
-            guardedRemote,
-            keyCache,
-            localState,
-            desktopSyncCryptoPrimitives,
-        ));
-}
 
 // ---------------------------------------------------------------------------
 // Attachment bytes (WebDAV, Dropbox, and the file backend — all three go through the
@@ -1205,16 +571,3 @@ export function classifySyncEncryptionFailure(error: unknown): SyncEncryptionFai
 
 export const isSyncEncryptionFailure = (error: unknown): boolean =>
     classifySyncEncryptionFailure(error) !== null;
-
-export const __syncEncryptionServiceTestUtils = {
-    base64ToBytes,
-    bytesToBase64,
-    bytesToHex,
-    hexToBytes,
-    collectRemoteAttachmentKeys,
-    captureRemoteInventory,
-    listDropboxAttachmentKeys,
-    listWebdavAttachmentKeys,
-    REMOTE_DOCUMENT_NAMES,
-    runWithRemoteMutationFence,
-};
