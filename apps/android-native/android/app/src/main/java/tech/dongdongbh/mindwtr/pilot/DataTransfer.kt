@@ -209,14 +209,14 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 return@whenHosted
             }
             val text = try { readStaged(stage.file, runtime.databaseBytes()) } catch (failure: TransferTooLarge) {
-                stage.file.delete()
+                StagedCopies.release(stage.file)
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
                 return@whenHosted
             }
             val preview = runtime.backupInspect(text ?: "", stage.metadata.toString(), if (mode == "restore") "json-restore" else "json")
             shell.ui {
                 if (!preview.getBoolean("valid") || text == null) {
-                    stage.file.delete()
+                    StagedCopies.release(stage.file)
                     finish()
                     // RN's showSettingsWarning (4.2 s).
                     shell.showToast(preview.getString("errorTitle"), preview.getString("errorMessage"), "warning", durationMs = 4_200)
@@ -230,7 +230,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /** The question's Cancel: nothing was written; the staged copy goes. */
     fun cancel() {
-        question?.optString("stage")?.takeIf { it.isNotEmpty() }?.let { File(staging, it).delete() }
+        question?.optString("stage")?.takeIf { it.isNotEmpty() }?.let { StagedCopies.release(File(staging, it)) }
         question = null
         finish()
     }
@@ -243,7 +243,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             "confirm" -> {
                 val file = File(staging, open.getString("stage"))
                 val mode = if (open.getString("mode") == "restore") "replace" else "merge"
-                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file.length()) { utf8(file).also { file.delete() } }
+                run(open.getString("mode"), mode, null, open.getJSONObject("metadata"), file.length(), staged = file) { utf8(file) }
             }
             "snapshot" -> {
                 val name = open.getString("name")
@@ -276,7 +276,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
      * backupAction; [snapshot] the snapshot a `restore` reads (null: a new one is named now). Debug builds only:
      * `debug.mindwtr.native.backup_stop` = `after-snapshot` or `mid-plan` ends the process at that step.
      */
-    private fun run(running: String, mode: String, snapshot: String?, metadata: JSONObject, sourceBytes: Long, text: () -> String?) {
+    private fun run(running: String, mode: String, snapshot: String?, metadata: JSONObject, sourceBytes: Long, staged: File? = null, text: () -> String?) {
         action = running
         val words = words()
         val failedTitle = when (running) { "merge" -> words?.optString("mergeFailed"); else -> words?.optString("restoreFailed") }
@@ -285,7 +285,9 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
             val requestId = UUID.randomUUID().toString()
             try {
                 admitTransfer(sourceBytes, runtime.databaseBytes())
-                val source = text() ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
+                // The staged copy goes once read (or once the read failed); the operation holds its text from here.
+                val read = try { text() } finally { staged?.let(StagedCopies::release) }
+                val source = read ?: throw IllegalStateException("INVALID_INPUT: Backup file is not valid UTF-8")
                 val name = snapshot ?: RecoverySnapshots.nextName(snapshots, Date())
                 val prepared = runtime.backupPrepare(JSONObject().put("requestId", requestId).put("mode", mode).put("snapshotName", name)
                     .put("text", source).put("metadata", metadata).toString())
@@ -299,6 +301,7 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
                 RecoverySnapshots.prune(snapshots, ops.protectedNames())
                 shell.ui { finish(); showResult(requestId, result, if (mode == "restore") null else name) }
             } catch (failure: Throwable) {
+                staged?.let(StagedCopies::release)
                 Log.w(CoreHost.TAG, "Backup operation failed mode=$mode ${failureForLog(failure)}")
                 shell.ui { finish(); warn(runtime, failedTitle, failure) }
             }
@@ -315,10 +318,12 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /**
      * After a start: a result record left by a death after its commit shows its toast once (design §4.3); one that did not commit
-     * (stale, refused, its files unreadable) shows RN's failure toast with core's reason before it goes.
+     * (stale, refused, its files unreadable) shows RN's failure toast with core's reason before it goes. Staged copies no open
+     * question owns go too.
      */
     fun leftover() = whenHosted { runtime ->
         runCatching { cleanupInterruptedExport(runtime) }.onFailure { Log.w(CoreHost.TAG, "Interrupted export cleanup failed ${failureForLog(it)}") }
+        runCatching { StagedCopies.sweep(staging) }.onFailure { Log.w(CoreHost.TAG, "Staged copy sweep failed ${failureForLog(it)}") }
         val ops = operations
         val record = ops.result() ?: return@whenHosted
         val requestId = record.optString("requestId")
@@ -349,13 +354,12 @@ class DataTransferModel(private val menu: MenuModel, private val saved: SavedSta
 
     /** RN's picker copy (copyToCacheDirectory) as a private file: its bytes counted while copied, stopped past the limit. */
     private fun stage(uri: Uri): Stage {
-        staging.mkdirs()
         val (name, modified) = details(uri)
-        val file = File(staging, UUID.randomUUID().toString())
+        val file = StagedCopies.create(staging)
         try {
             (resolver.openInputStream(uri) ?: throw IOException("The selected file cannot be read")).use { input -> copyBounded(input, file, stageLimit()) }
         } catch (failure: Throwable) {
-            file.delete()
+            StagedCopies.release(file)
             throw failure
         }
         return Stage(file, JSONObject().put("fileName", name).put("lastModified", modified).put("appVersion", BuildConfig.VERSION_NAME))
@@ -481,6 +485,28 @@ internal fun readStaged(file: File, libraryBytes: Long): String? {
 
 /** The staged copy's own bound: the transfer limit, and core's source limit for a JSON backup. */
 internal fun stageLimit(): Long = minOf(DataTransferLimits.MAX_DATA_TRANSFER_BYTES, DataTransferLimits.MAX_BACKUP_SOURCE_BYTES)
+
+/**
+ * The picked files' private copies (`no_backup/backup-import`). A copy is live from its creation until its question closes or
+ * its operation read it; a start sweeps every other file there, so a death after a pick (or mid-copy) leaves none behind.
+ */
+internal object StagedCopies {
+    private val live = HashSet<String>()
+
+    fun create(dir: File): File = synchronized(this) {
+        dir.mkdirs()
+        File(dir, UUID.randomUUID().toString()).also { live += it.name }
+    }
+
+    fun release(file: File): Unit = synchronized(this) {
+        file.delete()
+        live -= file.name
+    }
+
+    fun sweep(dir: File): Unit = synchronized(this) {
+        dir.listFiles().orEmpty().filter { it.name !in live }.forEach { it.delete() }
+    }
+}
 
 /** A start's leftover result that did not commit: RN's failure title (a core key) and core's reason. */
 internal class LeftoverFailure(val titleKey: String, val message: String)

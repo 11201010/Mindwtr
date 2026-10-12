@@ -39,6 +39,18 @@ class DataFilesTest {
         admitTransfer(DataTransferLimits.LIMIT_BYTES - library, library)
     }
 
+    // D1a review P2-8: a start sweeps every staged copy no open question owns, a partial one too.
+    @Test fun theStartSweepKeepsOnlyLiveStagedCopies() {
+        val dir = File(folder.root, "backup-import")
+        val live = StagedCopies.create(dir).apply { writeText("{}") }
+        val orphan = File(dir, "11111111-1111-4111-8111-111111111111").apply { writeText("{\"tasks\":[") }
+        StagedCopies.sweep(dir)
+        assertTrue(live.isFile)
+        assertFalse(orphan.exists())
+        StagedCopies.release(live)
+        assertFalse(live.exists())
+    }
+
     // D1a review P2-7: a leftover that did not commit says so, with core's reason, under RN's failure title.
     @Test fun aLeftoverThatDidNotCommitShowsItsReason() {
         val stale = leftoverFailure(JSONObject().put("operation", "merge").put("outcome", "stale").put("error", "STALE_REVISION: Local data changed after backup preparation"))
