@@ -303,6 +303,16 @@ describe('createManagedAttachmentSourcePredicate', () => {
         expect(portable('/media/usb/Mindwtr/config/secrets.toml')).toBe(false);
     });
 
+    it('allows the old shared attachment folder in the OS data folder, and nothing else there', async () => {
+        // Before 02a9aafa2, sync downloads went to <OS data>/attachments with absolute URIs.
+        const canUpload = await guardFor('C:\\Users\\Alice\\AppData\\Roaming', 'C:\\Users\\Alice\\AppData\\Roaming\\mindwtr\\data');
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\a1.pdf')).toBe(true);
+        expect(canUpload('file:///C:/Users/Alice/AppData/Roaming/attachments/a1.pdf')).toBe(true);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\audio-captures\\rec.wav')).toBe(false);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\secrets.toml')).toBe(false);
+        expect(canUpload('C:\\Users\\Alice\\AppData\\Roaming\\attachments\\..\\mindwtr\\config\\secrets.toml')).toBe(false);
+    });
+
     it('logs one refusal reason per pass and never the refused path', async () => {
         const canUpload = await guardFor('/os-data', '/os-data/mindwtr');
         canUpload('/os-data/mindwtr/config/secrets.toml');

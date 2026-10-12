@@ -116,7 +116,8 @@ const ATTACHMENT_SOURCE_DIR_NAMES = [ATTACHMENTS_DIR_NAME, 'audio-captures', 'qu
  * Windows/macOS `config/secrets.toml` lives in the profile next to them. The roots are
  * the managed data dir (portable-aware, #855), the flat OS profile `<data>/mindwtr`
  * (paths recorded before #1245 moved folders into `data/`; quick-add-images never moved)
- * and the installed profile's `data/` (a portable copy sharing its paths).
+ * and the installed profile's `data/` (a portable copy sharing its paths), plus the old
+ * shared `<data>/attachments` folder that sync downloads used before 02a9aafa2.
  */
 export const createManagedAttachmentSourcePredicate = async (): Promise<(localPath: string) => boolean> => {
     const { dataDir } = await import('@tauri-apps/api/path');
@@ -128,6 +129,8 @@ export const createManagedAttachmentSourcePredicate = async (): Promise<(localPa
     const profileRoots = [trimRoot(managedDataDir), osProfile, osProfile && `${osProfile}/data`]
         .filter(Boolean);
     const allowedDirs = profileRoots.flatMap((root) => ATTACHMENT_SOURCE_DIR_NAMES.map((name) => `${root}/${name}`));
+    // Exactly that folder, never the OS data folder itself.
+    if (trimRoot(osDataDir)) allowedDirs.push(`${trimRoot(osDataDir)}/${ATTACHMENTS_DIR_NAME}`);
     let refusalLogged = false;
     return (localPath: string): boolean => {
         const normalized = normalizeAttachmentFsPath(stripFileScheme(localPath));
