@@ -29,6 +29,8 @@ release and advances at most one exact stage: 5% → 20% → 50% → 100%. A del
 store approval does not make one run skip multiple stages. A new stable release
 remains at 5% for at least 24 hours after its GitHub release `published_at`
 timestamp; scheduled jobs delivered late on release day skip both stores.
+If the newest stable tag has no published GitHub Release yet, scheduled promotion
+also waits. A recovering release cannot inherit the preceding release's age.
 Completed, non-staged, pending, or halted releases are successful no-ops.
 
 Monitor crash/ANR reports, launch failures, storage/migration and sync errors,
@@ -111,6 +113,14 @@ stores the run actually reaches: a dispatch that re-runs package channels alone
 (Scoop/Winget, Flathub, Linux repos, AUR, Chocolatey, or a single desktop build)
 is not checked, so recovering one of those never trips over the open rollout of
 the release being recovered.
+
+If the same-version Microsoft submission is already accepted, clear
+`run_msstore` in a manual `release.yml` dispatch while keeping `run_windows`
+enabled to rebuild download assets. This skips production and Beta flight
+publication and the Microsoft preflight, preserving the accepted submission.
+The flag defaults to true and tag pushes continue publishing normally. Clear
+the Apple inputs too when their accepted builds need no changes; keep the tag
+input pointed at the validated recovery tag.
 
 Ordinary hotfixes are staged too. For a critical correction, choose
 `rollout_mode=immediate` when dispatching `release.yml`, or disable
