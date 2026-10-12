@@ -135,64 +135,9 @@ jobs:
           set -e
           bun install --frozen-lockfile || (echo "bun install failed, clearing cache and retrying..." && (bun pm cache rm || bun pm cache clean || true) && bun install --frozen-lockfile)
 
-      - name: Locale parity check
-        run: bun run i18n:check
-
-      - name: Ubuntu APT preparation regression tests
-        run: python3 scripts/ci/prepare-ubuntu-apt.test.py
-
-      - name: Apple output cleanup regression tests
-        run: python3 -m unittest discover -s scripts/ci -p test_cleanup_apple_outputs.py
-
-      - name: Merged worktree cleanup regression tests
-        run: python3 -m unittest discover -s scripts/maintenance -p test_cleanup_merged_worktrees.py
-
-      - name: Schema and release workflow governance checks
-        run: bun run test:governance
-
-      - name: README heading parity check
-        run: bun run docs:check-readme
-
-      - name: Store image asset check
-        run: bash scripts/ci/validate-store-image-assets.sh
-
-      - name: AppStream metainfo locale check
-        run: python3 scripts/ci/validate-appstream-locales.py
-
-      - name: Workflow JSON newline check
-        run: node scripts/ci/validate-workflow-json-newlines.js
-
-      - name: Package-lock override sync check
-        run: |
-          node scripts/ci/check-package-lock-sync.js packages/core/package.json packages/core/package-lock.json --check-overrides
-          node scripts/ci/check-package-lock-sync.js apps/desktop/package.json apps/desktop/package-lock.json --check-overrides
-          node scripts/ci/check-mobile-foss-lock-sync.js
-
-      - name: EAS CLI lock install check
-        run: npm ci --prefix tools/eas-cli --ignore-scripts --legacy-peer-deps --dry-run
-
-      - name: Google Play listing metadata check
-        run: |
-          python3 scripts/ci/prepare-google-play-listing-metadata.test.py
-          python3 scripts/ci/prepare-google-play-listing-metadata.py \
-            metadata \
-            /tmp/mindwtr-play-listing-metadata.json
-
-      - name: Store changelog length check
-        run: node scripts/ci/check-changelog-length.js
-
-      - name: App Store listing metadata check
-        run: |
-          python3 scripts/ci/validate-fastlane-metadata.test.py
-          python3 scripts/ci/validate-watch-bundle.test.py
-          python3 scripts/ci/validate-macos-private-apis.test.py
-          FASTLANE_METADATA_DIR=/tmp/mindwtr-fastlane-metadata scripts/ci/prepare-fastlane-metadata.sh
-
-      - name: iOS App Intents availability check
-        run: node scripts/ci/validate-ios-app-intents-availability.js
-
-      - name: Apple property list syntax check
-        run: python3 scripts/ci/validate-apple-plists.py
+      # One script for CI and `bun run verify`; add new governance checks there.
+      - name: Governance checks
+        run: bun run governance
 
   # Compile and execute the actual Swift/Objective-C CloudKit Task mappers.
   native-schema:

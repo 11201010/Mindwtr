@@ -139,9 +139,14 @@ bun run verify
 
 `bun run verify` chains typecheck (core, cloud, desktop, mobile, and mcp), lint
 for every workspace app, the five workspace unit-test suites, the Rust suite
-(`native:test`, a few seconds once the cargo cache is warm), governance and
-schema checks, locale parity, and README parity. CI also runs performance
-budgets, coverage thresholds, Expo Doctor, and store/workflow metadata checks.
+(`native:test`, a few seconds once the cargo cache is warm), the governance
+checks, and schema checks. The governance checks (`bun run governance`, which is
+`scripts/ci/governance.sh`) are the same script the CI governance job runs:
+locale parity, README parity, store and workflow metadata, and the release
+script tests. Add a new governance check to that script, not to the workflow.
+A check whose tool is not installed locally is skipped with a message; in CI a
+missing tool fails. CI also runs performance budgets, coverage thresholds, and
+Expo Doctor.
 
 Run `bun run native:test` on its own while iterating on
 `apps/desktop/src-tauri/`, and run
