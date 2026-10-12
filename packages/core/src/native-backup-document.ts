@@ -268,7 +268,9 @@ export async function prepareNativeBackupDocument(adapter: NativeReceiptSqliteAd
             const ticktickApplied = operation === 'ticktick' ? applyImportSource('ticktick', current, ticktick!) : null;
             const dgtApplied = operation === 'dgt' ? applyImportSource('dgt', current, dgt!) : null;
             const omnifocusApplied = operation === 'omnifocus' ? applyImportSource('omnifocus', current, omnifocus!) : null;
-            const data = omnifocusApplied?.data ?? dgtApplied?.data ?? ticktickApplied?.data ?? todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
+            const appliedData = omnifocusApplied?.data ?? dgtApplied?.data ?? ticktickApplied?.data ?? todoistApplied?.data ?? csvApplied?.data ?? applied?.data ?? applyImportSource('backup', current, parsed!).data;
+            // A key inside the picked file (an older export) is never planned or saved either.
+            const data: AppData = { ...appliedData, settings: stripSensitiveSettings(appliedData.settings) };
             const counts = applied ? summarizeBackupMerge(applied.result) : { added: 0, updated: 0 };
             let reply: NativeBackupDocumentReply;
             if (omnifocusApplied) {

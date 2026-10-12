@@ -367,6 +367,17 @@ describe('native backup artifacts never hold a legacy AI key (D1a review P2-5)',
         expect(JSON.stringify(reply)).not.toContain(SENTINEL);
         expect(JSON.stringify(await env.state())).not.toContain(SENTINEL);
     });
+    it.each(['merge', 'replace'] as const)('%s: a key inside the picked backup never reaches the plan or the saved settings', async (operation) => {
+        const env = await open();
+        const backup = clone(incoming); backup.settings = { ...backup.settings, ai: { enabled: true, apiKey: SENTINEL } as AppData['settings']['ai'] };
+        const text = JSON.stringify({ ...JSON.parse(serializeBackupData(backup)), settings: backup.settings });
+        expect(text).toContain(SENTINEL);
+        const prepared = await prepareNativeBackupDocument(env.adapter, input(text, operation));
+        expect(prepared.planJSON).not.toContain(SENTINEL);
+        expect(prepared.recoveryJSON).not.toContain(SENTINEL);
+        await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        expect(JSON.stringify(await env.state())).not.toContain(SENTINEL);
+    });
 });
 
 describe('native immutable Mindwtr CSV and ZIP import', () => {
