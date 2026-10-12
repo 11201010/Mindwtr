@@ -52,6 +52,7 @@
       "app"
     ],
     "macOS": {
+      "minimumSystemVersion": "10.15",
       "signingIdentity": "Developer ID Application",
       "entitlements": "./Entitlements.mac.plist",
       "infoPlist": "./Info.plist"
