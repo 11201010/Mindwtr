@@ -299,6 +299,16 @@ const stripDeviceLocalRestoreSettings = (settings: AppData['settings']): AppData
     return nextSettings;
 };
 
+// App Lock is this device's own: a restore never takes it from the file (above) and never turns this device's lock off.
+const keepDeviceLocalRestoreSettings = (
+    restored: AppData['settings'],
+    previous: AppData['settings'] | undefined,
+): AppData['settings'] => {
+    const lock = previous?.security?.mobileAppLockEnabled;
+    if (lock === undefined) return restored;
+    return { ...restored, security: { ...restored.security, mobileAppLockEnabled: lock } };
+};
+
 const RESTORED_SETTINGS_SYNC_GROUPS: SettingsSyncGroup[] = [
     'appearance',
     'language',
@@ -368,7 +378,7 @@ const prepareRestoredSettingsForSync = (
     previous: AppData['settings'] | undefined,
     restoredAt: string,
 ): AppData['settings'] => {
-    const restored = stripDeviceLocalRestoreSettings(settings);
+    const restored = keepDeviceLocalRestoreSettings(stripDeviceLocalRestoreSettings(settings), previous);
     const settingsOnWire = (value: AppData['settings']) => sanitizeAppDataForRemote({
         tasks: [], projects: [], sections: [], areas: [], people: [], settings: value,
     }).settings;

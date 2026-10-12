@@ -451,6 +451,17 @@ describe('backup transfer', () => {
         expect(restored.settings.pendingRemoteWriteAt).toBe(restoredAt);
     });
 
+    it('keeps this device\'s App Lock through a restore, whatever the file says (D1a review 2)', () => {
+        const data = buildAppData();
+        data.settings = { security: { mobileAppLockEnabled: false } };
+        const previousData = buildAppData();
+        previousData.settings = { security: { mobileAppLockEnabled: true } };
+
+        const restored = prepareRestoredBackupDataForSync(data, { restoredAt: '2026-04-01T00:00:10.000Z', previousData });
+
+        expect(restored.settings.security).toEqual({ mobileAppLockEnabled: true });
+    });
+
     it('keeps restored synced settings authoritative across repeated merges', () => {
         const restoredAt = '2026-09-28T12:00:00.000Z';
         const backup = buildAppData();

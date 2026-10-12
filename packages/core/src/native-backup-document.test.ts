@@ -328,6 +328,31 @@ describe('native backup commit replayed after process death (pass D1a, gate G-B1
     });
 });
 
+describe('a restore keeps this device\'s App Lock (D1a review 2, P1)', () => {
+    const locked = (): AppData => ({ ...clone(original), settings: { ...clone(original).settings, security: { mobileAppLockEnabled: true } } });
+    it.each([
+        ['replace', { mobileAppLockEnabled: false }],
+        ['replace', undefined],
+        ['restore', undefined],
+    ] as const)('%s with the backup\'s lock %o: the enabled lock survives the commit and a restart', async (operation, incomingLock) => {
+        const env = await open(locked());
+        const backup = clone(incoming); backup.settings = { ...backup.settings, ...(incomingLock ? { security: incomingLock } : {}) };
+        const prepared = await prepareNativeBackupDocument(env.adapter, input(serializeBackupData(backup), operation));
+        expect(JSON.parse(prepared.planJSON).data.settings.security).toEqual({ mobileAppLockEnabled: true });
+        await commitNativeBackupDocument(env.adapter, reference, prepared.planJSON, NAME);
+        resetForTests(); setStorageAdapter(env.adapter);
+        await useTaskStore.getState().fetchData({ throwOnError: true });
+        await flushPendingSave();
+        expect(useTaskStore.getState().settings.security?.mobileAppLockEnabled).toBe(true);
+    });
+    it('a device without App Lock does not take it from the backup', async () => {
+        const env = await open();
+        const backup = clone(incoming); backup.settings = { ...backup.settings, security: { mobileAppLockEnabled: true } };
+        const prepared = await prepareNativeBackupDocument(env.adapter, input(serializeBackupData(backup), 'replace'));
+        expect(JSON.parse(prepared.planJSON).data.settings.security).toBeUndefined();
+    });
+});
+
 describe('native backup artifacts never hold a legacy AI key (D1a review P2-5)', () => {
     // An older build saved settings.ai.apiKey in the document; the store strips it on load but the row keeps it until a save.
     const SENTINEL = 'sk-legacy-sentinel-5f2c9e';
@@ -484,7 +509,8 @@ describe('native selected JSON backup replacement', () => {
             expect(plan.expectedCurrent.tasks.some((item: Task) => item.id === 'latest-before-replace')).toBe(true);
             const recovery = validateBackupJson(prepared.recoveryJSON!).data!; expect(recovery.tasks).toEqual(plan.expectedCurrent.tasks);
             expect(recovery.settings.theme).toBe('light'); expect(plan.data.settings).toMatchObject({ theme: 'dark', language: 'ar', gtd: { focusTaskLimit: 1 }, syncPreferences: { gtd: false }, pendingRemoteWriteAt: AT });
-            expect(plan.data.settings.security).toBeUndefined(); expect(plan.data.settings.syncPreferencesUpdatedAt.preferences > '2099-01-01T00:00:00.000Z').toBe(true);
+            // App Lock is this device's own (13c807f07): the backup's value is dropped and the current device's kept (D1a review 2).
+            expect(plan.data.settings.security).toEqual({ mobileAppLockEnabled: true }); expect(plan.data.settings.syncPreferencesUpdatedAt.preferences > '2099-01-01T00:00:00.000Z').toBe(true);
             const restored = plan.data.tasks.find((item: Task) => item.id === 'visible'); expect(restored.title).toBe('日本語 🦉'); expect(restored.deletedAt).toBeUndefined(); expect(restored.rev).toBeGreaterThan(99);
             for (const [field, localId] of [['tasks','latest-before-replace'],['projects','local-project'],['sections','local-section'],['areas','local-area'],['people','local-person']]) {
                 expect(plan.data[field].find((item: { id: string }) => item.id === localId).deletedAt).toBe(AT);
