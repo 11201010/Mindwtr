@@ -1695,7 +1695,7 @@ enum NativeUpNoteLink {
         let opened = await withCheckedContinuation { continuation in
             UIApplication.shared.open(url, options: [:]) { continuation.resume(returning: $0) }
         }
-        NSLog("Native iOS UpNote handoff scope=links releaseCheck=v1.3.4/upnote-links outcome=%@ surface=%@ scheme=upnote", opened ? "opened" : "failed", surface)
+        NSLog("Native iOS UpNote handoff scope=links outcome=%@ surface=%@ scheme=upnote", opened ? "opened" : "failed", surface)
         return opened
     }
     static func showFailure(_ original: String, labels: CoreObject) {

@@ -4229,7 +4229,7 @@ globalThis.MindwtrHost = {
     logLinkHandoff(outcome: string, surface: string): string {
         return submit(async () => {
             if (!['opened', 'failed'].includes(outcome) || !['markdown', 'attachment'].includes(surface)) return {};
-            const meta = { scope: 'links', force: true, context: { releaseCheck: 'v1.3.4/upnote-links', outcome, surface, scheme: 'upnote' } };
+            const meta = { scope: 'links', force: true, context: { outcome, surface, scheme: 'upnote' } };
             if (outcome === 'failed') logWarn('Native UpNote handoff failed', meta);
             else logInfo('Native UpNote handoff accepted', meta);
             return {};

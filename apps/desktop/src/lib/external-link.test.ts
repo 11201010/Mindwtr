@@ -23,7 +23,7 @@ describe('external links', () => {
         await openExternalLink(uri, surface);
         expect(mocks.open).toHaveBeenCalledWith(uri);
         expect(mocks.info).toHaveBeenCalledWith('UpNote link handed to the OS', {
-            scope: 'links', force: true, extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'opened', surface, scheme: 'upnote' },
+            scope: 'links', force: true, extra: { outcome: 'opened', surface, scheme: 'upnote' },
         });
         expect(JSON.stringify(mocks.info.mock.calls)).not.toContain('Note%');
     });
@@ -33,7 +33,7 @@ describe('external links', () => {
         await expect(openExternalLink(uri, 'attachment')).rejects.toThrow();
         expect(browser).not.toHaveBeenCalled();
         expect(mocks.warn).toHaveBeenCalledWith('UpNote link handoff failed', {
-            scope: 'links', force: true, extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'failed', surface: 'attachment', scheme: 'upnote' },
+            scope: 'links', force: true, extra: { outcome: 'failed', surface: 'attachment', scheme: 'upnote' },
         });
         expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('Note%');
     });

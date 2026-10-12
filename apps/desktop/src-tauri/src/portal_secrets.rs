@@ -30,7 +30,7 @@ async fn retrieve_portal_secret() -> Result<Vec<u8>, String> {
         answer.map_err(|_| "Secret portal is unavailable or access was declined".to_owned())
     });
     log::info!(
-        "Secret portal asked once for this session extra.releaseCheck=v1.3.4/flatpak-portal-once outcome={} elapsedMs={}",
+        "Secret portal asked once for this session outcome={} elapsedMs={}",
         if result.is_ok() { "answered" } else { "failed" },
         started.elapsed().as_millis()
     );

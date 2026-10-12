@@ -16,7 +16,7 @@ export async function openExternalLink(href: string, surface: 'markdown' | 'atta
                 await open(href);
                 if (upnote) void logInfo('UpNote link handed to the OS', {
                     scope: 'links', force: true,
-                    extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'opened', surface, scheme: 'upnote' },
+                    extra: { outcome: 'opened', surface, scheme: 'upnote' },
                 });
                 return;
             } catch (error) {
@@ -30,7 +30,7 @@ export async function openExternalLink(href: string, surface: 'markdown' | 'atta
     } catch (error) {
         if (upnote) void logWarn('UpNote link handoff failed', {
             scope: 'links', force: true,
-            extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'failed', surface, scheme: 'upnote' },
+            extra: { outcome: 'failed', surface, scheme: 'upnote' },
         });
         throw error;
     }

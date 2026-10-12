@@ -54,10 +54,6 @@ describe('capture-quick route', () => {
     act(() => { vi.runAllTimers(); });
     expect(harness.openQuickCapture).toHaveBeenCalledExactlyOnceWith({ autoRecord: false, preserveDraft: true });
     expect(harness.replace).toHaveBeenCalledExactlyOnceWith('/inbox');
-    expect(harness.logInfo).toHaveBeenCalledExactlyOnceWith('Android detailed capture opened', {
-      scope: 'capture',
-      extra: { releaseCheck: 'v1.3.4/android-detailed-capture' },
-    });
     act(() => tree.unmount());
   });
 

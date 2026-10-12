@@ -21,7 +21,7 @@ describe('explicit external link opening', () => {
     expect(Linking.openURL).toHaveBeenCalledWith(uri);
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(state.logInfo).toHaveBeenCalledWith('External app link handoff', {
-      scope: 'links', force: true, extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'opened', surface, scheme: 'upnote' },
+      scope: 'links', force: true, extra: { outcome: 'opened', surface, scheme: 'upnote' },
     });
   });
   it('handles a missing app and copies the exact original URI without logging native details', async () => {
@@ -32,7 +32,7 @@ describe('explicit external link opening', () => {
     buttons.find((button) => button.text === 'Copy link')!.onPress!();
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(uri);
     expect(state.logWarn).toHaveBeenCalledWith('External app link handoff', {
-      scope: 'links', force: true, extra: { releaseCheck: 'v1.3.4/upnote-links', outcome: 'failed', surface: 'markdown', scheme: 'upnote' },
+      scope: 'links', force: true, extra: { outcome: 'failed', surface: 'markdown', scheme: 'upnote' },
     });
     expect(JSON.stringify(state.logWarn.mock.calls)).not.toContain('noteId');
   });

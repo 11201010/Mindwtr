@@ -20,7 +20,7 @@ export async function openExternalLink(
     const log = outcome === 'opened' ? logInfo : logWarn;
     void log('External app link handoff', {
       scope: 'links', force: true,
-      extra: { releaseCheck: 'v1.3.4/upnote-links', outcome, surface, scheme: 'upnote' },
+      extra: { outcome, surface, scheme: 'upnote' },
     }).catch(() => undefined);
   };
   try {
