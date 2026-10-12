@@ -1129,6 +1129,22 @@ const hasMonthlyRuleDateAnchor = (byDay?: RecurrenceByDay[], byMonthDay?: number
     || Boolean(byDay?.length)
 );
 
+/**
+ * Strict occurrences at or before this instant are already past (#1366). A
+ * date-only start is still current today; explicit times must be future.
+ * Completion and the preview/calendar projection share it so the preview shows
+ * the date completion creates.
+ */
+const getStrictCatchUpBoundary = (
+    anchorField: RecurrenceScheduleField | null,
+    anchorIso: string | undefined,
+    at: Date,
+): Date => (
+    anchorField === 'startTime' && /^\d{4}-\d{2}-\d{2}$/.test(anchorIso ?? '')
+        ? new Date(startOfDay(at).getTime() - 1)
+        : at
+);
+
 function projectStrictIsoFrom(
     baseIso: string | undefined,
     rule: RecurrenceRule,
@@ -1385,7 +1401,8 @@ function projectNextRecurringOccurrenceFields(
                 bySetPos,
             );
         }
-        return projectStrictIsoFrom(baseIso, rule, projectionBase, byDay, interval, byMonthDay, weekStart, anchors[field], bySetPos);
+        return projectStrictIsoFrom(baseIso, rule, getStrictCatchUpBoundary(field, baseIso, projectionBase),
+            byDay, interval, byMonthDay, weekStart, anchors[field], bySetPos);
     };
 
     const hasScheduleFields = Boolean(baseTask.startTime || baseTask.dueDate || baseTask.reviewAt);
@@ -1946,10 +1963,7 @@ export function projectNextRecurringTask(
     let rebuiltFields = anchorField && nextAnchorIso
         ? rebuildScheduleFieldsFromAnchor(task, anchorField, nextAnchorIso)
         : {};
-    // A date-only start is still current today; explicit times must be future.
-    const catchUpBoundary = anchorField === 'startTime' && /^\d{4}-\d{2}-\d{2}$/.test(sourceAnchorIso!)
-        ? new Date(startOfDay(completedAtDate).getTime() - 1)
-        : completedAtDate;
+    const catchUpBoundary = getStrictCatchUpBoundary(anchorField, sourceAnchorIso, completedAtDate);
     if (
         strategy === 'strict'
         && !advanceOne

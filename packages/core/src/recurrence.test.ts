@@ -3007,6 +3007,44 @@ describe('createNextRecurringTask late completion coherence', () => {
         expect(next?.startTime).toBe('2026-08-14');
         expect(next?.dueDate).toBe('2026-08-16');
     });
+
+    // Local (offset-free) strings: every zone the suite runs in asserts the same
+    // local days. Due-only strict completion keeps one step by design, so it is
+    // not part of this parity table.
+    it.each([
+        { label: 'daily overdue date-only start', fields: { startTime: '2026-10-08' }, now: '2026-10-11T12:00', next: { startTime: '2026-10-11' } },
+        { label: 'daily start yesterday', fields: { startTime: '2026-10-10' }, now: '2026-10-11T00:30', next: { startTime: '2026-10-11' } },
+        { label: 'daily interval 3', fields: { startTime: '2026-08-10' }, rrule: { rule: 'daily', rrule: 'FREQ=DAILY;INTERVAL=3' }, now: '2026-08-13T20:00', next: { startTime: '2026-08-13' } },
+        { label: 'weekly', fields: { startTime: '2026-10-04' }, rrule: { rule: 'weekly' }, now: '2026-10-11T12:00', next: { startTime: '2026-10-11' } },
+        { label: 'weekly three weeks late', fields: { startTime: '2026-01-05' }, rrule: { rule: 'weekly' }, now: '2026-01-26T12:00', next: { startTime: '2026-01-26' } },
+        { label: 'monthly-day', fields: { startTime: '2026-02-05' }, rrule: { rule: 'monthly', byMonthDay: [5] }, now: '2026-04-05T12:00', next: { startTime: '2026-04-05' } },
+        { label: 'monthly-nth', fields: { startTime: '2026-02-02' }, rrule: { rule: 'monthly', byDay: ['1MO'] }, now: '2026-04-06T12:00', next: { startTime: '2026-04-06' } },
+        { label: 'month-end on the 30th', fields: { startTime: '2026-01-31', reviewAt: '2026-02-01' }, rrule: { rule: 'monthly' }, now: '2026-04-30T12:00', next: { startTime: '2026-04-30', reviewAt: '2026-05-01' } },
+        { label: 'month-end mid-month', fields: { startTime: '2026-01-31', reviewAt: '2026-02-01' }, rrule: { rule: 'monthly' }, now: '2026-04-20T12:00', next: { startTime: '2026-04-30', reviewAt: '2026-05-01' } },
+        { label: 'Feb 29 yearly', fields: { startTime: '2024-02-29' }, rrule: { rule: 'yearly' }, now: '2027-02-28T12:00', next: { startTime: '2027-02-28' } },
+        { label: 'DST date-only', fields: { startTime: '2026-03-06' }, now: '2026-03-09T12:00', next: { startTime: '2026-03-09' } },
+        { label: 'DST timed start', fields: { startTime: '2026-03-06T09:00' }, now: '2026-03-09T12:00', next: { startTime: '2026-03-10T09:00' } },
+        { label: 'timed start later today', fields: { startTime: '2026-10-08T15:00' }, now: '2026-10-11T12:00', next: { startTime: '2026-10-11T15:00' } },
+        { label: 'start and due', fields: { startTime: '2026-01-05', dueDate: '2026-01-05' }, now: '2026-01-08T12:00', next: { startTime: '2026-01-09', dueDate: '2026-01-09' } },
+        { label: 'future start', fields: { startTime: '2026-10-15' }, now: '2026-10-11T12:00', next: { startTime: '2026-10-16' } },
+        { label: 'start today', fields: { startTime: '2026-10-11' }, now: '2026-10-11T12:00', next: { startTime: '2026-10-12' } },
+    ] satisfies { label: string; fields: Partial<Task>; rrule?: NonNullable<Exclude<Task['recurrence'], string>>; now: string; next: Partial<Task> }[])(
+        'previews the same next occurrence that completion creates: $label (#1366)', ({ fields, rrule, now, next }) => {
+            const task = buildTask({ ...fields, recurrence: { ...(rrule ?? { rule: 'daily' }), strategy: 'strict' } });
+            const pick = (value: Task | null | undefined) => ({
+                startTime: value?.startTime, dueDate: value?.dueDate, reviewAt: value?.reviewAt,
+            });
+            const expected = { startTime: undefined, dueDate: undefined, reviewAt: undefined, ...next };
+            expect(pick(createNextRecurringTask(task, now, 'done'))).toEqual(expected);
+
+            const open: Task = { ...task, status: 'next', showFutureRecurrence: true };
+            expect(pick(createProjectedRecurringTask(open, now))).toEqual(expected);
+            expect(getRecurringTaskPreviewDate({ ...open, showFutureRecurrence: false }, now))
+                .toBe(getTaskCalendarOccurrenceDate({ ...open, ...expected }));
+            const range = expandCalendarRecurringTasksInRange(open, { startIso: '2000-01-01T00:00', endIso: '2031-01-01T00:00' }, now);
+            expect(pick(range[1])).toEqual(expected);
+        },
+    );
 });
 
 describe('getRecurringTaskPreviewDate', () => {
