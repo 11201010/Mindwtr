@@ -812,7 +812,11 @@ export const createMobileSyncService = <Lease>(host: MobileSyncServiceHost<Lease
   async function getMobileSelectedSyncBackend(): Promise<SyncBackend> {
     if (fatalCleanupError) throw fatalCleanupError;
     if (core.isSandboxMode()) return 'off';
-    return resolveBackend((await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null);
+    const raw = (await readConfigValue(SYNC_BACKEND_KEY, false))?.trim() ?? null;
+    const backend = resolveBackend(raw);
+    // A stored value that is neither empty nor Off but resolves to Off is unreadable, not a choice of Off.
+    if (backend === 'off' && raw && raw !== 'off') throw new Error('Unknown sync backend selection');
+    return backend;
   }
 
   async function getMobileSyncConfigurationStatus(): Promise<{ backend: SyncBackend; configured: boolean; cloudProvider?: CloudProvider }> {

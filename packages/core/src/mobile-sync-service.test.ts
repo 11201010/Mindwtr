@@ -258,6 +258,9 @@ describe('mobile sync service behind fake ports', () => {
     // The selection itself survives that check: archive retention must still wait for a sync (R-2).
     await expect(cloudkit.getMobileSelectedSyncBackend()).resolves.toBe('cloudkit');
     await expect(off.getMobileSelectedSyncBackend()).resolves.toBe('off');
+    // An unreadable or unknown stored value is not a choice of Off: the caller keeps waiting.
+    const odd = createMobileSyncService(createFakeHost({ values: { [SYNC_BACKEND_KEY]: 'unexpected-backend' } }).host);
+    await expect(odd.getMobileSelectedSyncBackend()).rejects.toThrow('Unknown sync backend selection');
   });
 
   it('runs a WebDAV cycle under the mindwtr-mobile fence and publishes the status', async () => {
