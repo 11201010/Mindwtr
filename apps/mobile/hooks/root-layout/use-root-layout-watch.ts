@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
-import { getNextFutureStartRevealAt, useTaskStore, type AppData, type Language } from '@mindwtr/core';
+import { getNextFutureStartRevealAt, safeParseDate, useTaskStore, type AppData, type Language, type Task } from '@mindwtr/core';
 
 import {
   activateWatchConnectivity,
@@ -19,6 +19,17 @@ import { buildWatchApplicationContext, watchPomodoroPublicationKey } from '@/lib
 const WATCH_SNAPSHOT_RELEASE_CHECK = 'v1.3.0/watch-snapshot';
 const WATCH_NUMERIC_BRIDGE_RELEASE_CHECK = 'v1.3.0/watch-numeric-bridge';
 const WATCH_PUBLICATION_COALESCE_MS = 120;
+
+/** The earliest future review time among the tasks: a review coming due can reorder Focus (a waiting step in a sequential project). */
+function getNextReviewDueAt(tasks: readonly Task[], nowMs: number): number | null {
+  let next: number | null = null;
+  for (const task of tasks) {
+    const reviewAt = safeParseDate(task.reviewAt)?.getTime();
+    if (reviewAt === undefined || reviewAt <= nowMs) continue;
+    if (next === null || reviewAt < next) next = reviewAt;
+  }
+  return next;
+}
 
 export function useRootLayoutWatch({
     canonicalDataReady,
@@ -41,7 +52,8 @@ export function useRootLayoutWatch({
     let publishAgain = false;
     let lastContextKey = '';
     // What the context is built from. The Focus screen re-derives on the same
-    // triggers: its data, the local day, and the next timed start (#995).
+    // triggers: its data, the local day, the next timed start (#995) and the
+    // next review coming due.
     // Anything else (UI state, sync status) skips the build entirely.
     let lastInputs: readonly unknown[] | null = null;
     let nextRevealAt: number | null = null;
@@ -59,7 +71,9 @@ export function useRootLayoutWatch({
       && (nextRevealAt === null || Date.now() < nextRevealAt);
     const rememberInputs = (inputs: ReturnType<typeof readInputs>) => {
       lastInputs = inputs;
-      nextRevealAt = getNextFutureStartRevealAt(inputs[0]);
+      const startAt = getNextFutureStartRevealAt(inputs[0]);
+      const reviewAt = getNextReviewDueAt(inputs[0], Date.now());
+      nextRevealAt = startAt === null ? reviewAt : reviewAt === null ? startAt : Math.min(startAt, reviewAt);
     };
     const forgetPublished = () => {
       lastContextKey = '';

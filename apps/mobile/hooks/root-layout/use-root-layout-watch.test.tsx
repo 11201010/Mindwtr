@@ -110,4 +110,27 @@ describe('useRootLayoutWatch', () => {
     await vi.waitFor(() => expect(mocks.buildWidgetPayload).toHaveBeenCalledTimes(2));
     act(() => tree.unmount());
   });
+
+  // In a sequential project, a waiting task's review coming due displaces the
+  // Today task after it, with no data, day or Pomodoro change.
+  it('rebuilds once a timed review has come due', async () => {
+    mocks.state = {
+      ...mocks.state,
+      projects: [{ id: 'p1', title: 'Project', status: 'active', isSequential: true }],
+      tasks: [
+        { id: 'waiting', projectId: 'p1', status: 'waiting', reviewAt: new Date(Date.now() + 300).toISOString() },
+        { id: 'today', projectId: 'p1', status: 'next', dueDate: new Date().toISOString() },
+      ],
+    };
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness canonicalDataReady />); });
+    await vi.waitFor(() => expect(mocks.buildWidgetPayload).toHaveBeenCalledOnce());
+    const notify = mocks.subscribeStore.mock.calls[0][0];
+
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    act(() => notify());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+    expect(mocks.buildWidgetPayload).toHaveBeenCalledTimes(2);
+    act(() => tree.unmount());
+  });
 });
