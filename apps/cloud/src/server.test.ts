@@ -3581,13 +3581,31 @@ describe('cloud server api', () => {
         });
         expect(plainStar.status).toBe(200);
 
-        const activate = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, {
-            method: 'PATCH',
-            headers: { ...authHeaders, 'content-type': 'application/json' },
-            body: JSON.stringify({ startTime: null }),
+        const captured: string[] = [];
+        const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+            captured.push(String(chunk));
+            return true;
         });
+        let activate: Response;
+        try {
+            activate = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, {
+                method: 'PATCH',
+                headers: { ...authHeaders, 'content-type': 'application/json' },
+                body: JSON.stringify({ startTime: null }),
+            });
+        } finally {
+            stdoutSpy.mockRestore();
+        }
         expect(activate.status).toBe(409);
         expect((await activate.json()).error).toBe('Focus limit of 1 reached');
+        const receipt = captured.map((line) => JSON.parse(line) as { message: string; context?: Record<string, unknown> })
+            .find((entry) => entry.context?.releaseCheck === 'v1.3.5/cloud-focus-queued-activation');
+        expect(receipt?.message).toBe('Cloud refused a queued Focus star on activation');
+        expect(receipt?.context).toEqual({
+            releaseCheck: 'v1.3.5/cloud-focus-queued-activation', operation: 'patch', outcome: 'refused-limit', count: 1,
+        });
+        expect(captured.join('')).not.toContain('Queued');
+        expect(captured.join('')).not.toContain(queuedId);
 
         const unchanged = await fetch(`${baseUrl}/v1/tasks/${queuedId}`, { headers: authHeaders });
         expect(unchanged.status).toBe(200);

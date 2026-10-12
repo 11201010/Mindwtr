@@ -42,6 +42,7 @@ export const CLOUD_LOG_MESSAGES = [
     'Capture webhook request accepted',
     'Capture webhook replay ignored',
     'Cloud quick-add capture saved',
+    'Cloud refused a queued Focus star on activation',
     'Cloud task Focus write policy applied',
     'Cloud task reopened archived project',
     'Cloud search tolerated malformed assignee text',

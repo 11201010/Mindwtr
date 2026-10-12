@@ -804,7 +804,15 @@ const ENTITY_ROUTES: Array<EntityRouteDefinition<any>> = [
                 focusTaskLimit: normalizeFocusTaskLimit(data.settings.gtd?.focusTaskLimit),
                 now: new Date(),
             });
-            if (focusDecision.outcome !== 'unchanged') {
+            if (focusDecision.outcome === 'refused-limit' && existing.isFocusedToday === true) {
+                // The star was already on but queued for a later day; this write made it current.
+                logInfo('Cloud refused a queued Focus star on activation', {
+                    releaseCheck: 'v1.3.5/cloud-focus-queued-activation',
+                    operation: 'patch',
+                    outcome: focusDecision.outcome,
+                    count: focusedCount,
+                });
+            } else if (focusDecision.outcome !== 'unchanged') {
                 logInfo('Cloud task Focus write policy applied', {
                     releaseCheck: focusDecision.outcome === 'queued' ? 'v1.3.3/scheduled-focus-cloud-write' : 'v1.3.0/cloud-focus-write-parity',
                     operation: 'patch',
