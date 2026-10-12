@@ -444,7 +444,11 @@ try {
     // (5) A provider error that echoes the key: redacted.
     stub.state.mode = 'echo';
     nodes = await link(`title=${encodeURIComponent(`Echo ${run}`)}`, (current) => Boolean(tagged(current, 'capture-modal-title')), 'the capture screen for the echo');
-    nodes = await tapExpecting(tagged(nodes, 'capture-modal-save-edit'), (current) => inEditor(current), 'the echo task\'s editor');
+    // Samsung's keyboard can open on its Clipboard panel, which took both taps on Save & edit (d1 full4, 10-12): the keyboard
+    // goes first (a Back can only close the panel, so up to three).
+    for (let tries = 0; tries < 3 && keyboardShown(); tries += 1) await hideKeyboard();
+    nodes = await screen();
+    nodes = await tapExpecting(tagged(nodes, 'capture-modal-save-edit') ?? fail('no Save & edit'), (current) => inEditor(current), 'the echo task\'s editor');
     nodes = await tapExpecting(tagged(nodes, 'ai-clarify'), (current) => dialogTexts(current).includes(en['ai.errorTitle']) && Boolean(button(current, en['common.ok'])), 'the error alert', 60_000);
     const alertText = dialogTexts(nodes).join(' | ');
     check(alertText.includes('Incorrect API key provided') && !alertText.includes(KEYS.first), `(5) the error shows, with the key redacted: ${alertText.slice(0, 200)}`);
@@ -541,24 +545,28 @@ try {
     nodes = await device.settle();
     if (tagged(nodes, 'review-ai-error')) fail(`the analysis failed: ${tagged(nodes, 'review-ai-error').text}`);
     // A suggestion's row (its test tag) holds its title: its checkbox state is the row's `checked`.
-    const suggestionOf = (title) => {
-        const label = nodes.find((node) => node.text === title && !(node['content-desc'] ?? '').includes('Status'));
+    const suggestionOf = (title, current = nodes) => {
+        const label = current.find((node) => node.text === title && !(node['content-desc'] ?? '').includes('Status'));
         if (!label) return undefined;
         const [x1, y1, x2, y2] = box(label);
-        return nodes.filter((node) => (node['resource-id'] ?? '').endsWith('review-ai-suggestion')).find((row) => {
+        return current.filter((node) => (node['resource-id'] ?? '').endsWith('review-ai-suggestion')).find((row) => {
             const [l, t, r, b] = box(row);
             return l <= x1 && t <= y1 && r >= x2 && b >= y2;
         });
     };
-    check(Boolean(suggestionOf(titles.staleSomeday)) && Boolean(suggestionOf(titles.staleKeep))
-        && nodes.some((node) => node.text === `${en['review.aiAction.someday']} · Stale for weeks ${run}`),
-        '(7) the stub\'s suggestions show with core\'s action label and reason');
-    check(suggestionOf(titles.staleSomeday).checked === 'true' && suggestionOf(titles.staleKeep).checked !== 'true' && suggestionOf(titles.staleKeep).enabled === 'false',
+    // The suggestions sit under Run analysis, below the step's stale list (the phone's other stale tasks make it long): each
+    // is scrolled into view on its own.
+    const revealed = async (find, description) => reveal(find, description).catch(() => undefined);
+    const somedaySuggestion = await revealed((current) => suggestionOf(titles.staleSomeday, current), 'the Someday suggestion');
+    const keptSuggestion = await revealed((current) => suggestionOf(titles.staleKeep, current), 'the kept suggestion');
+    const reason = await revealed((current) => current.find((node) => node.text === `${en['review.aiAction.someday']} · Stale for weeks ${run}`), 'the action label and reason');
+    check(Boolean(somedaySuggestion) && Boolean(keptSuggestion) && Boolean(reason), '(7) the stub\'s suggestions show with core\'s action label and reason');
+    check(somedaySuggestion.checked === 'true' && keptSuggestion.checked !== 'true' && keptSuggestion.enabled === 'false',
         '(7) the actionable suggestion is chosen; the kept one is not, and cannot be');
     check(JSON.stringify(sqlite(database(), 'SELECT id, rev FROM tasks ORDER BY id')) === JSON.stringify(tasksBefore), '(7) the analysis wrote nothing');
     const applyLabel = `${en['review.aiApply']} (1)`;
     const applyButton = await reveal((current) => tagged(current, 'review-ai-apply'), applyLabel);
-    check(nodes.some((node) => node.text === applyLabel), `(7) RN's "${applyLabel}"`);
+    check((await screen()).some((node) => node.text === applyLabel), `(7) RN's "${applyLabel}"`);
     nodes = await tapExpecting(applyButton, () => taskByTitle(titles.staleSomeday)[0]?.status === 'someday', 'Apply selected', 30_000);
     check(taskByTitle(titles.staleKeep)[0]?.status === 'next', '(7) Apply selected moved only the chosen task to Someday (runReviewAction applySuggestions)');
     await toTabs();
