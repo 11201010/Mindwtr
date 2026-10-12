@@ -331,7 +331,7 @@ export function useTaskEditActions({
         if (!task || !canMutate()) return;
         if ((mergedTask.checklist ?? task.checklist)?.length) setProjectConversionOpen(true);
         else void confirmProjectConversion();
-    }, [canMutate, confirmProjectConversion, mergedTask.checklist, task]);
+    }, [canMutate, confirmProjectConversion, mergedTask, task]);
 
     const handleDeleteTask = useCallback(async () => {
         if (!task || !canMutate()) return;

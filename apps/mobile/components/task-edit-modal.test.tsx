@@ -226,6 +226,37 @@ describe('TaskEditModal', () => {
     }
   });
 
+  it.each(['android', 'ios'])('renders no task fallback for a closed empty editor on %s', async (platform) => {
+    const originalPlatform = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+    let tree: renderer.ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        tree = renderer.create(<TaskEditModal visible={false} task={null} onClose={vi.fn()} onSave={vi.fn()} />);
+      });
+      expect(tree!.toJSON()).toBeNull();
+      const task: Task = {
+        id: 'editor-lifecycle-task', title: 'Editor lifecycle', status: 'next', contexts: [], tags: [],
+        checklist: [{ id: 'step-1', title: 'First step', isCompleted: false }],
+        createdAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z',
+      };
+      const onClose = vi.fn();
+      const onSave = vi.fn();
+      await act(async () => {
+        tree!.update(<TaskEditModal visible task={task} onClose={onClose} onSave={onSave} />);
+      });
+      expect(tree!.root.findAllByType('TaskEditFormTab' as any)).toHaveLength(1);
+      await act(async () => {
+        tree!.update(<TaskEditModal visible={false} task={null} onClose={onClose} onSave={onSave} />);
+      });
+      expect(tree!.toJSON()).toBeNull();
+      expect(onSave).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => tree?.unmount());
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+    }
+  });
+
   it.each([
     { platform: 'android', tab: 'view', readOnly: false, width: 390, folded: false, edges: ['top', 'bottom'] },
     { platform: 'android', tab: 'task', readOnly: false, width: 390, folded: false, edges: ['top', 'bottom'] },
