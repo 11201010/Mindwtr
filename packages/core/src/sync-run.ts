@@ -30,6 +30,7 @@ import { isAttachmentUploadTooLargeError, isCloudHostUploadLimitError, isWebdavH
 import { isSyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { isHostResponseTooLargeError } from './http-utils';
 import { flushPendingSave, useTaskStore } from './store';
+import { markArchiveRetentionSyncCompleted } from './store-archive-retention';
 import {
     assertNoPendingAttachmentContentReplacements,
     assertNoPendingAttachmentUploads,
@@ -684,13 +685,18 @@ class SharedSyncRunMachine {
         if (!this.options.activationProbe && !skipResult && !localOnlyUpload && this.policy.enableReadCheckSkip) {
             skipResult = await this.trySkipUnchangedReadSync();
         }
-        if (skipResult) {
-            return skipResult;
+        let result = skipResult;
+        if (!result) {
+            if (!this.policy.preSyncAttachmentsBeforeFastCheck) {
+                await this.runAttachmentPreSyncPhase();
+            }
+            result = await this.runMergePhase();
         }
-        if (!this.policy.preSyncAttachmentsBeforeFastCheck) {
-            await this.runAttachmentPreSyncPhase();
+        // Only a merged or confirmed-unchanged remote lets archive retention run (R-2).
+        if (!this.options.activationProbe && (!result.skipped || result.skipped === 'unchanged')) {
+            markArchiveRetentionSyncCompleted();
         }
-        return this.runMergePhase();
+        return result;
     }
 
     private get backend(): SyncBackend {

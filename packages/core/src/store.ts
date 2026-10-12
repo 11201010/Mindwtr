@@ -22,7 +22,7 @@ import { markCoreStartupPhase } from './startup-profiler';
 import { createProjectActions } from './store-projects';
 import { createSettingsActions } from './store-settings';
 import { createTaskActions } from './store-tasks';
-import { createArchiveRetentionActions } from './store-archive-retention';
+import { createArchiveRetentionActions, resetArchiveRetentionSyncForTests } from './store-archive-retention';
 import { sleep } from './async-utils';
 import { instrumentStoreSubscribe } from './store-notify-profiler';
 import { runAfterStoreWriteLock } from './data-transfer-transaction';
@@ -244,6 +244,7 @@ export const resetForTests = () => {
         errorAutoClearTimer = null;
     }
     persistenceRetryInFlight = null;
+    resetArchiveRetentionSyncForTests();
 };
 
 type EntityCollectionConfig<T extends { id: string }> = {

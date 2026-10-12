@@ -2404,7 +2404,7 @@ describe('canonical local reads contract', () => {
                     await flushPendingSave();
                     control.resetBaseline();
                     vi.setSystemTime(new Date(first + 2 * 24 * 60 * 60 * 1000));
-                    expect(await call('runArchiveRetention')).toMatchObject({ success: true });
+                    expect(await call('runArchiveRetention', { syncConfigured: false })).toMatchObject({ success: true });
                     control.expectPersisted((written) => {
                         expect(written.tasks.some((entry) => entry.purgedAt)).toBe(true);
                     });

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => ({
     days: 0, loading: false, error: null as string | null, editLockCount: 0,
-    run: vi.fn(async () => ({ success: true })),
+    run: vi.fn(async (_options: { syncConfigured: boolean }) => ({ success: true })),
+    syncStatus: vi.fn(async () => ({ backend: 'off', configured: false })),
 }));
 vi.mock('@mindwtr/core', () => ({
     isArchiveRetentionDays: (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 36500,
@@ -15,6 +16,7 @@ vi.mock('@mindwtr/core', () => ({
     ),
 }));
 vi.mock('@/lib/app-log', () => ({ logError: vi.fn(async () => undefined) }));
+vi.mock('@/lib/sync-service', () => ({ getMobileSyncConfigurationStatus: harness.syncStatus }));
 
 import { useRootLayoutArchiveRetention } from './use-root-layout-archive-retention';
 
@@ -29,6 +31,7 @@ describe('useRootLayoutArchiveRetention', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         harness.days = 0; harness.loading = false; harness.error = null; harness.editLockCount = 0; harness.run.mockClear();
+        harness.syncStatus.mockReset(); harness.syncStatus.mockResolvedValue({ backend: 'off', configured: false });
         Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
     });
     afterEach(() => {
@@ -62,6 +65,28 @@ describe('useRootLayoutArchiveRetention', () => {
         Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
         await act(async () => { listener?.('active'); });
         expect(harness.run).toHaveBeenCalledTimes(2);
+        await act(async () => tree.unmount());
+    });
+
+    it('tells retention whether sync is configured so it waits for the first sync (R-2)', async () => {
+        let listener: ((state: AppStateStatus) => void) | null = null;
+        vi.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => {
+            listener = callback as (state: AppStateStatus) => void;
+            return { remove: vi.fn() };
+        });
+        harness.days = 30;
+        harness.syncStatus.mockResolvedValue({ backend: 'webdav', configured: true });
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(<Probe ready disabled={false} />); });
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        harness.syncStatus.mockResolvedValue({ backend: 'off', configured: false });
+        await act(async () => { listener?.('active'); });
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: false });
+        // An unreadable sync configuration must not count as "sync is off".
+        harness.syncStatus.mockRejectedValue(new Error('config unavailable'));
+        await act(async () => { listener?.('active'); });
+        expect(harness.run).toHaveBeenLastCalledWith({ syncConfigured: true });
+        expect(harness.run).toHaveBeenCalledTimes(3);
         await act(async () => tree.unmount());
     });
 });

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { isArchiveRetentionDays, useTaskStore } from '@mindwtr/core';
 import { logError } from '@/lib/app-log';
+import { getMobileSyncConfigurationStatus } from '@/lib/sync-service';
 
 export function useRootLayoutArchiveRetention(canonicalDataReady: boolean, disabled: boolean) {
     const days = useTaskStore((state) => {
@@ -16,9 +17,13 @@ export function useRootLayoutArchiveRetention(canonicalDataReady: boolean, disab
             if (running || AppState.currentState === 'background' || AppState.currentState === 'inactive'
                 || state.isLoading || state.error || state.editLockCount > 0) return;
             running = true;
-            void state.runArchiveRetention().then((result) => {
-                if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app' });
-            }).catch((error) => void logError(error, { scope: 'app' }))
+            // An unreadable sync configuration counts as configured: waiting is the safe side (R-2).
+            void getMobileSyncConfigurationStatus().then((status) => status.configured, () => true)
+                .then((syncConfigured) => useTaskStore.getState().runArchiveRetention({ syncConfigured }))
+                .then((result) => {
+                    if (!result.success) void logError(new Error(result.error ?? 'Archive retention failed'), { scope: 'app' });
+                })
+                .catch((error) => void logError(error, { scope: 'app' }))
                 .finally(() => { running = false; });
         };
         run();

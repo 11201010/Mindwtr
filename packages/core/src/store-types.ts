@@ -609,8 +609,8 @@ export interface TaskStore {
 
     /** Set the synced Archive expiration policy; zero disables it. */
     setArchiveRetentionDays: (days: number) => Promise<StoreActionResult>;
-    /** Expire eligible Archive records from the latest store state. */
-    runArchiveRetention: () => Promise<StoreActionResult>;
+    /** Expire eligible Archive records from the latest store state. With sync configured, waits until this session has completed a sync (R-2). */
+    runArchiveRetention: (options: { syncConfigured: boolean }) => Promise<StoreActionResult>;
 
     // Actions
     /** Load all data from storage, or apply an already-persisted snapshot without re-reading storage */

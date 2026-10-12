@@ -41,6 +41,8 @@ import { createMemoryFileSystem, createMemoryStorage, createRecordingLog, MANAGE
 import { SyncEncryptionPartlyEncryptedError } from './sync-encryption';
 import { NativeAttachmentCleanupUnconfirmedError } from './native-attachment-cleanup';
 import { LocalSyncAbort } from './sync-client-helpers';
+import { resetForTests } from './store';
+import { isArchiveRetentionSyncCompleted } from './store-archive-retention';
 
 // Each harness stands up its own fake store, so the process-wide idle-cycle
 // snapshot (keyed on sync scope + the store's change stamp, unique inside a
@@ -338,6 +340,24 @@ describe('runSharedSyncCycle', () => {
         expect(io.readRemote).not.toHaveBeenCalled();
         expect(storage.persistLocal).not.toHaveBeenCalled();
         expect(harness.callOrder).toEqual(['flush']);
+    });
+
+    it('opens archive retention only after a cycle has read the remote (R-2)', async () => {
+        resetForTests();
+        await createHarness({ hooks: { setupCycle: vi.fn(async () => ({ kind: 'disabled' as const })) } }).run();
+        await createHarness({ io: { acquireRemoteMutationFence: vi.fn(async () => {
+            throw new SyncRemoteMutationFenceBusyError(5_000);
+        }) } }).run();
+        await createHarness({ remote: createData(), activationProbe: true }).run();
+        expect(isArchiveRetentionSyncCompleted()).toBe(false);
+
+        const { run } = createHarness({ remote: createData([createTask('t-remote', 'Remote task')]), fastSyncScope: 'scope-1' });
+        expect((await run()).skipped).toBeUndefined();
+        expect(isArchiveRetentionSyncCompleted()).toBe(true);
+        resetForTests();
+        expect(await run()).toMatchObject({ success: true, skipped: 'unchanged' });
+        expect(isArchiveRetentionSyncCompleted()).toBe(true);
+        resetForTests();
     });
 
     it('merges local and remote data, persists both sides, and finalizes success', async () => {
