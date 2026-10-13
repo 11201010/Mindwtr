@@ -665,9 +665,15 @@ mod tests {
     fn mcp_native_rich_search_matches_core_fixture_in_isolated_timezone_process() {
         const MARKER: &str = "MINDWTR_NATIVE_QUERY_TZ_CHILD";
         if std::env::var_os(MARKER).is_none() {
-            let status=std::process::Command::new(std::env::current_exe().unwrap())
-                .arg("local_query::tests::mcp_native_rich_search_matches_core_fixture_in_isolated_timezone_process").args(["--exact","--nocapture"])
-                .env(MARKER,"1").env("TZ","America/New_York").status().unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("local_query::tests::mcp_native_rich_search_matches_core_fixture_in_isolated_timezone_process")
+                .args(["--exact", "--nocapture"])
+                // Explicit POSIX rules keep the fixture's New York calendar and
+                // DST semantics without requiring host-installed IANA tzdata.
+                .env(MARKER, "1")
+                .env("TZ", "EST5EDT,M3.2.0/2,M11.1.0/2")
+                .status()
+                .unwrap();
             assert!(status.success());
             return;
         }
@@ -716,7 +722,10 @@ mod tests {
     fn mcp_native_due_windows_convert_offsets_in_isolated_timezone_process() {
         const MARKER: &str = "MINDWTR_DUE_WINDOW_TZ_CHILD";
         let Ok(zone) = std::env::var(MARKER) else {
-            for zone in ["America/Los_Angeles", "Asia/Shanghai"] {
+            for (zone, rules) in [
+                ("America/Los_Angeles", "PST8PDT,M3.2.0/2,M11.1.0/2"),
+                ("Asia/Shanghai", "CST-8"),
+            ] {
                 let status = std::process::Command::new(std::env::current_exe().unwrap())
                     .args([
                         "local_query::tests::mcp_native_due_windows_convert_offsets_in_isolated_timezone_process",
@@ -724,7 +733,7 @@ mod tests {
                         "--nocapture",
                     ])
                     .env(MARKER, zone)
-                    .env("TZ", zone)
+                    .env("TZ", rules)
                     .status()
                     .unwrap();
                 assert!(status.success(), "{zone}");

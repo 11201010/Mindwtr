@@ -1751,6 +1751,21 @@ pub fn run() {
                 if registered.is_err() || corrected.is_err() {
                     log::warn!("Task link protocol registration unavailable");
                 }
+                #[cfg(target_os = "linux")]
+                {
+                    let outcome = if registered.is_ok() && corrected.is_ok() {
+                        "registered"
+                    } else {
+                        "unavailable"
+                    };
+                    let diagnostic = format!(
+                        "Linux task link handler checked extra.releaseCheck=v1.3.7/linux-task-link-launcher outcome={outcome}"
+                    );
+                    log::info!("{diagnostic}");
+                    // Registration precedes the optional log plugin; persist the
+                    // receipt directly for Settings > Diagnostics exports.
+                    append_native_log_line(app.handle(), &diagnostic);
+                }
             }
             let link_app = app.handle().clone();
             app.deep_link().on_open_url(move |_| show_main(&link_app));

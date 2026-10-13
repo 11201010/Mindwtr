@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 fn desktop_exec(executable: &str) -> io::Result<String> {
@@ -23,17 +23,30 @@ fn desktop_exec(executable: &str) -> io::Result<String> {
     // a fixed executable for percent-bearing paths; env receives the literal path
     // as one argument and launches it directly, without interpreting a shell.
     if executable.contains('%') {
-        Ok(format!("/usr/bin/env -- \"{escaped}\" %u"))
+        Ok(format!("env -- \"{escaped}\" %u"))
     } else {
         Ok(format!("\"{escaped}\" %u"))
     }
 }
 
+fn executable_in_path(name: &str, search_path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(search_path)
+        .map(|directory| directory.join(name))
+        .find(|path| {
+            fs::metadata(path)
+                .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+        })
+}
+
 fn correct_handler(path: &Path, executable: &str) -> io::Result<()> {
     let command = desktop_exec(executable)?;
     if executable.contains('%') {
-        let env = fs::metadata("/usr/bin/env")?;
-        if !env.is_file() || env.permissions().mode() & 0o111 == 0 {
+        // Desktop Exec resolves bare executables through PATH, including on NixOS
+        // where /usr/bin/env is not part of the filesystem layout.
+        if std::env::var_os("PATH")
+            .and_then(|path| executable_in_path("env", &path))
+            .is_none()
+        {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "Desktop executable launcher unavailable",
@@ -111,11 +124,27 @@ mod tests {
         );
         assert_eq!(
             desktop_exec(r#"/home/test/a"b\c%d$e`f & ; app"#).unwrap(),
-            r#"/usr/bin/env -- "/home/test/a\\"b\\\\c%%d\\$e\\`f & ; app" %u"#
+            r#"env -- "/home/test/a\\"b\\\\c%%d\\$e\\`f & ; app" %u"#
         );
         for invalid in ["", "/home/a=b", "/home/a\nb", "/home/a\rb"] {
             assert!(desktop_exec(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn launcher_lookup_requires_a_regular_executable_in_the_supplied_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let search_path = std::env::join_paths([dir.path()]).unwrap();
+        let launcher = dir.path().join("env");
+        assert_eq!(executable_in_path("env", &search_path), None);
+        fs::create_dir(&launcher).unwrap();
+        assert_eq!(executable_in_path("env", &search_path), None);
+        fs::remove_dir(&launcher).unwrap();
+        fs::write(&launcher, b"fixture").unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(executable_in_path("env", &search_path), None);
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(executable_in_path("env", &search_path), Some(launcher));
     }
 
     #[test]
@@ -140,13 +169,24 @@ mod tests {
             eprintln!("GIO launch regression unavailable: gio not installed");
             return;
         }
+        let shell = executable_in_path("sh", &std::env::var_os("PATH").unwrap())
+            .expect("GIO regression requires a POSIX shell in PATH");
         for name in [
             r#"app space"back\$dollar`tick;&"#,
             r#"app space"back\percent%u$dollar`tick;&"#,
         ] {
             let dir = tempfile::tempdir().unwrap();
             let executable = dir.path().join(name);
-            fs::write(&executable, "#!/usr/bin/python3\nimport json, pathlib, sys\npathlib.Path(__file__).with_name('argv.json').write_text(json.dumps(sys.argv[1:]))\n").unwrap();
+            // Resolve the interpreter through the build's PATH. Nix supplies sh
+            // in its store rather than /bin; printf is a shell builtin.
+            fs::write(
+                &executable,
+                format!(
+                    "#!{}\nprintf '%s\\0' \"$@\" > \"${{0%/*}}/argv.bin\"\n",
+                    shell.display()
+                ),
+            )
+            .unwrap();
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
             let handler = dir.path().join("task-link.desktop");
             fs::write(
@@ -163,17 +203,14 @@ mod tests {
                 .status()
                 .unwrap()
                 .success());
-            let output = dir.path().join("argv.json");
+            let output = dir.path().join("argv.bin");
             for _ in 0..100 {
                 if output.exists() {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            assert_eq!(
-                serde_json::from_str::<Vec<String>>(&fs::read_to_string(output).unwrap()).unwrap(),
-                vec![uri]
-            );
+            assert_eq!(fs::read(output).unwrap(), [uri.as_bytes(), b"\0"].concat());
         }
     }
 }
