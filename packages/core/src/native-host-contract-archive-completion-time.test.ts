@@ -5,6 +5,9 @@ import { flushPendingSave, getStorageAdapter, resetForTests, useTaskStore } from
 import { buildSaveSnapshot } from './store-helpers';
 import type { AppData, Project, Task } from './types';
 
+// Each forced failed save waits the store's real retry backoff (250+500+1000+2000 ms), so one such test takes ~3.8 s alone.
+vi.setConfig({ testTimeout: 30_000 });
+
 const NOW = '2026-10-02T13:00:00.000Z';
 const INITIAL = '2026-10-01T12:34:56.789Z';
 const ID = 'archive-completion-task';

@@ -4,6 +4,9 @@ import { taskRevisionOf } from './native-request-receipts';
 import { flushPendingSave, resetForTests, useTaskStore } from './store';
 import type { AppData, Area, Project, Section, Task } from './types';
 
+// Each forced failed save waits the store's real retry backoff (250+500+1000+2000 ms), so one such test takes ~3.8 s alone.
+vi.setConfig({ testTimeout: 30_000 });
+
 const NOW = '2026-10-02T13:00:00.000Z';
 const TASK_ID = 'reference-task';
 const DELETE_ID = '00000000-0000-4000-8000-000000000186';

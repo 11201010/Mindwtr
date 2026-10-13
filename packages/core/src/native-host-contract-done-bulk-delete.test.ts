@@ -7,6 +7,9 @@ import { flushPendingSave, getStorageAdapter, resetForTests, useTaskStore } from
 import type { Task } from './types';
 import { deterministicHash128 } from './uuid';
 
+// Each forced failed save waits the store's real retry backoff (250+500+1000+2000 ms), so one such test takes ~3.8 s alone.
+vi.setConfig({ testTimeout: 30_000 });
+
 const NOW = '2026-10-02T13:00:00.000Z';
 const BEFORE = '2026-09-30T12:34:56.789Z';
 const DEVICE = 'done-delete-device';
